@@ -12,16 +12,25 @@ namespace Omicron.Core.Sessions;
 /// A stateful agent session that owns conversation history, coordinates
 /// tool calls, emits durable-shaped events, and manages provider state.
 ///
-/// This is the new session abstraction that will eventually replace
-/// direct use of the old <see cref="Agent"/> class in the CLI.
-/// </summary>
+/// Event delivery model:
+///   - PromptAsync / ContinueAsync yield session-scoped events:
+///     turns, user messages, assistant deltas, tool invocations, errors.
+///   - Reset() is synchronous and emits SessionResetEvent only to the
+///     IEventSink; it is not yielded from the async stream.
+///   - Nested service events (execution, provider-state) are emitted
+///     directly to the shared IEventSink but are NOT yielded from
+///     the async stream. Frontends that need the complete event log
+///     should read from the IEventSink directly.
+///   - This makes the async stream a convenient live UI feed, while
+///     the IEventSink is the authoritative audit/durability stream.
+/// </summary> 
 public sealed class AgentSession
 {
     private readonly List<Message> _messages = [];
     private readonly IToolRegistry _toolRegistry;
     private readonly IPermissionService _permissions;
-    private readonly IEventSink _eventSink;
-    private readonly IProviderConversationStateStore _providerState;
+    private readonly IProviderStateManager _providerState;
+    private readonly SessionEventWriter _writer;
     private bool _sessionStarted;
 
     /// <summary>Session identity.</summary>
@@ -59,7 +68,7 @@ public sealed class AgentSession
         IToolRegistry toolRegistry,
         IPermissionService permissions,
         IEventSink eventSink,
-        IProviderConversationStateStore providerState,
+        IProviderStateManager providerState,
         string? systemPrompt = null,
         string? apiKey = null)
     {
@@ -70,7 +79,7 @@ public sealed class AgentSession
         ApiKey = apiKey;
         _toolRegistry = toolRegistry;
         _permissions = permissions;
-        _eventSink = eventSink;
+        _writer = new SessionEventWriter(eventSink, Id, AgentId);
         _providerState = providerState;
     }
 
@@ -344,7 +353,6 @@ public sealed class AgentSession
 
     private OmicronEvent Emit(OmicronEvent evt)
     {
-        // Sink stamps a global sequence number; return the stamped copy.
-        return _eventSink.Emit(evt);
+        return _writer.Emit(evt);
     }
 }

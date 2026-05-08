@@ -17,8 +17,9 @@ public interface IEventSink
 
     /// <summary>
     /// Emit a batch of events atomically where the implementation supports it.
+    /// Returns the stamped events with sequence numbers assigned by the sink.
     /// </summary>
-    void EmitBatch(IReadOnlyList<OmicronEvent> events);
+    IReadOnlyList<OmicronEvent> EmitBatch(IReadOnlyList<OmicronEvent> events);
 }
 
 /// <summary>
@@ -42,16 +43,20 @@ public sealed class InMemoryEventSink : IEventSink
         return stamped;
     }
 
-    public void EmitBatch(IReadOnlyList<OmicronEvent> events)
+    public IReadOnlyList<OmicronEvent> EmitBatch(IReadOnlyList<OmicronEvent> events)
     {
+        var stamped = new List<OmicronEvent>(events.Count);
         lock (_lock)
         {
             foreach (var evt in events)
             {
                 var seq = Interlocked.Increment(ref _globalSequence);
-                _events.Add(evt with { Sequence = seq });
+                var s = evt with { Sequence = seq };
+                _events.Add(s);
+                stamped.Add(s);
             }
         }
+        return stamped;
     }
 
     /// <summary>

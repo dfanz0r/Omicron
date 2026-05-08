@@ -18,20 +18,75 @@ READ_ONLY/             external/reference snapshots, not edited in place
 
 The broader package layout in RFC 0001 is still the target architecture. The current codebase has not yet split out `Omicron.UI.Abstractions`, `Omicron.Text`, `Omicron.Rendering.Terminal`, `Omicron.Terminal.Emulation`, `Omicron.Persistence`, `Omicron.Workspace`, `Omicron.Sandboxing`, `Omicron.Plugins`, `Omicron.Plugins.Wasm`, `Omicron.Remoting`, or dedicated frontend projects.
 
-## Implemented Core MVP
+## Composition Root (`OmicronHost`)
 
-Implemented in `Omicron.Core`:
+`Omicron.Core.OmicronHost` is the central composition root. It wires together:
 
-- Stateful `Agent` loop with a conversation transcript, tool registration, reset, max-iteration guard, and streaming `IAsyncEnumerable<AgentEvent>` output.
-- Current agent event enum: `Start`, `TextDelta`, `ToolCallStart`, `ToolCallEnd`, `Response`, `Error`.
-- Message model with user, assistant, tool-result, image content, tool-call content, reasoning text, usage, stop reason, and timestamps.
-- Simple `Tool` contract with JSON-schema parameters and async string result.
-- Provider abstraction (`IChatProvider`) with streaming and non-streaming convenience collection.
-- Provider/model separation: `Model` carries provider name, base URL, `ApiType`, context window, token limits, image/reasoning flags, costs, and resolved provider instance.
-- Shape-based provider base for providers that differ mainly by wire format.
-- TOML-backed config manager storing API keys and general settings.
+- `IEventSink` / `InMemoryEventSink` — global event log with monotonic sequence stamping.
+- `IToolRegistry` / `ToolRegistry` — tool registration and lookup.
+- `ICommandRegistry` / `CommandRegistry` — command registration and lookup.
+- `IPermissionService` / `AllowAllPermissionService` — permission gating.
+- `IWorkspace` / `HostWorkspace` — file-system access with path containment.
+- `IExecutionBroker` / `LocalExecutionBroker` — shell command execution (session-scoped).
+- `IProviderRegistry` / `ProviderFactory` — LLM provider registration/lookup.
+- `IModelCatalog` / `ModelCatalogService` — model discovery and free-model tracking.
+- `IExtensionRegistry` / `ExtensionRegistry` — built-in and third-party extensions.
+- `IProviderStateManager` / `ProviderStateManager` — provider turn state (response IDs, conversation IDs).
+- `IProviderConversationStateStore` / `InMemoryProviderConversationStateStore` — raw storage primitive (storage-only, no event emission).
 
-Current event contracts are simpler than RFC 0001's planned append-only typed record stream. They are adequate for the console MVP but are not yet persistence/replay-grade.
+Built-in extensions are loaded via `LoadBuiltinExtensions()`:
+
+- `BuiltinToolsExtension` — calculator, get_current_time.
+- `BuiltinWorkspaceToolsExtension` — read_path (via `IWorkspace`).
+- `BuiltinExecutionToolsExtension` — shell (via `IExecutionBroker` + `IWorkspace`).
+
+## Session Runtime (`AgentSession`)
+
+`Omicron.Core.Sessions.AgentSession` is the only active session/agent runtime. The legacy `Agent` class has been removed.
+
+Key features:
+- `PromptAsync(text)` — starts a session (fires `SessionStartedEvent` once per session lifecycle) and runs the LLM loop.
+- `ContinueAsync()` — continues the conversation; throws if `_messages.Count == 0` (e.g., after reset).
+- `Reset()` — clears messages and provider state; does NOT re-emit `SessionStartedEvent` (same-session policy).
+- Uses `SessionEventWriter` for event emission (wraps `IEventSink`).
+- Receives `IProviderStateManager` for provider state management.
+- Receives `IToolRegistry` and `IPermissionService` for tool execution.
+- Emits durable-shaped events: `TurnStartedEvent`, `UserMessageEvent`, `AssistantTextDeltaEvent`, `ToolInvocationStartedEvent`, `ToolInvocationCompletedEvent`, `AssistantResponseCompleteEvent`, `SessionErrorEvent`, `SessionResetEvent`.
+
+## Events
+
+Event contracts in `Omicron.Core.Events`:
+- All events inherit from `OmicronEvent` with `Id`, `Sequence`, `Timestamp`, `SessionId`.
+- `IEventSink.Emit()` stamps a global monotonic sequence number on every event, replacing any per-producer sequence.
+- `IEventSink.EmitBatch()` returns the stamped events.
+- `InMemoryEventSink` provides `GetAllEvents()` and `GetSessionEvents(SessionId)`.
+
+### Event Delivery Model
+
+Events flow through two channels:
+
+1. **Async stream** (`AgentSession.PromptAsync()` / `ContinueAsync()`) — yields session-scoped events for live UI rendering: turns, user messages, assistant deltas, tool invocations, errors.
+   `Reset()` is synchronous and emits `SessionResetEvent` only to the sink, not the async stream.
+2. **IEventSink** (shared event log) — receives all session events plus nested service events from `LocalExecutionBroker` (execution start/complete) and `ProviderStateManager` (state updated/cleared).
+
+Nested service events are **not** yielded from the async stream. Frontends that need the complete event audit log should read from `IEventSink.GetSessionEvents()` or `GetAllEvents()`. The async stream is a convenient live UI feed; the sink is the authoritative durability stream.
+
+Event hierarchy:
+- `SessionStartedEvent`, `SessionResetEvent`, `SessionErrorEvent`
+- `TurnStartedEvent`
+- `UserMessageEvent`
+- `AssistantTextDeltaEvent`, `AssistantResponseCompleteEvent`
+- `ToolInvocationStartedEvent`, `ToolInvocationCompletedEvent`
+- `PermissionRequestedEvent`
+- `ExecutionStartedEvent`, `ExecutionCompletedEvent` (with `ExitCode`, `DurationMs`, `TimedOut`, `ToolCallId`, `Cancelled`, `Error`)
+- `ProviderStateUpdatedEvent`, `ProviderStateClearedEvent`
+
+## Provider State
+
+- `ProviderStateKey` — scoped to session + agent + provider + model + API type; provider name is case-normalized.
+- `ProviderTurnState` — carries `PreviousResponseId`, `ConversationId`, `SessionAffinityKey`, `ProviderMetadata`.
+- `IProviderConversationStateStore` / `InMemoryProviderConversationStateStore` — storage-only (no event emission). `Clear()` returns `bool` indicating whether state was actually removed. `ClearSession()` returns the keys that were removed for that session.
+- `IProviderStateManager` / `ProviderStateManager` — wraps store + `IEventSink`; emits `ProviderStateUpdatedEvent` / `ProviderStateClearedEvent` on mutations. Events include an optional `Reason` string. Keys are normalized before emission. Clear events are only emitted when state was actually removed.
 
 ## Implemented Providers and API Shapes
 
@@ -41,7 +96,7 @@ Implemented provider classes:
 - `AnthropicProvider`
 - `OpenCodeProvider` for OpenCode Zen and Go model discovery/use
 - `OpenRouterProvider`
-- `ProviderFactory`
+- `ProviderFactory` (implements `IProviderRegistry`)
 
 Implemented/declared API shapes:
 
@@ -52,39 +107,21 @@ Implemented/declared API shapes:
 
 Provider support includes SSE parsing, tool-call accumulation, usage data where available, and reasoning-text preservation/echo behavior needed by reasoning models such as DeepSeek-style APIs.
 
-Near-term provider gap: OpenAI's stateful Responses API should be supported as a first-class API style. That requires provider turn state such as `previous_response_id`, `/v1/responses` request bodies, typed Responses streaming-event parsing, and function-call output item round trips. This should be implemented through session/provider abstractions rather than as a CLI-specific workaround.
-
 ## Implemented Tools
 
-Registered by the CLI:
+Registered through built-in extensions:
 
-- `calculator` inline helper.
-- `get_current_time` inline helper.
-- `read_path` via `FileTools.Create(workspaceRoot)`.
-- `shell` via `ShellTools.Create(workspaceRoot)`.
+- `calculator` — basic arithmetic expression evaluation.
+- `get_current_time` — returns current UTC/local time.
+- `read_path` — file reads with line numbers, offset/limit, binary detection, directory listings, truncation.
+- `shell` — command execution via `IExecutionBroker`, workspace-confined `cwd`, timeout clamping, output truncation.
 
-Current file/shell tools are direct host tools. They enforce workspace-root path containment and output truncation, but they do not yet go through the RFC 0006 VFS, RFC 0007 execution broker, permission prompts, audit events, or sandbox providers.
-
-`read_path` currently supports:
-
-- file reads with line numbers;
-- offset/limit and chunk-based continuation;
-- binary detection;
-- directory listings with counts/sizes;
-- truncation around 50 KB / 2000 lines.
-
-`shell` currently supports:
-
-- dynamic detection of common shells (`bash`, `sh`, `zsh`, `fish`, `dash`, `pwsh`, `powershell`, `cmd` as available);
-- workspace-confined `cwd` resolution;
-- timeout clamping;
-- output truncation around 50 KB / 2000 lines.
+All tools sit behind their respective abstractions (workspace, execution, permission, tool registry).
 
 ## Implemented CLI MVP
 
 Implemented in `Omicron.CLI`:
-
-- Startup banner and provider registration display.
+- Consumes `OmicronHost`, `AgentSession`, `IModelCatalog`, `IProviderRegistry`.
 - Model discovery on startup and manual `refresh`.
 - Fallback built-in models for OpenAI and Anthropic.
 - Model menu showing keyed/free providers and last-used model first.
@@ -92,16 +129,34 @@ Implemented in `Omicron.CLI`:
 - Basic line editor (`LineEditor`) for chat input.
 - Chat loop with `exit`, `reset`, streaming output, Escape-to-cancel polling, tool-call display, and usage display.
 - Output truncation helper for long tool results.
+- Event stream dispatcher reads from `session.PromptAsync()`. Per the current event-delivery model, only yielded session events reach the live renderer:
+  `UserMessageEvent`, `AssistantTextDeltaEvent`, `ToolInvocationStartedEvent`, `ToolInvocationCompletedEvent`, `SessionStartedEvent`, `PermissionRequestedEvent`, `SessionErrorEvent`.
+  Switch cases for `ExecutionStartedEvent`, `ExecutionCompletedEvent`, `ProviderStateUpdatedEvent`, `ProviderStateClearedEvent`, and `SessionResetEvent` exist but are not reached in the current flow because these events are emitted directly to the sink (not yielded from `PromptAsync()`).
 
-This is an inline console frontend, not the planned fullscreen TUI in RFC 0003/0004/0009 and not a separate `Omicron.Frontend.Tui` project.
+## Execution Broker
+
+- `LocalExecutionBroker` implements `IExecutionBroker`.
+- `ExecutionRequest.SessionId` is required (first positional parameter).
+- Execution events are always emitted for brokered execution; no synthetic/random session IDs.
+- Completion events use `DateTimeOffset.UtcNow` (not start time).
+- Events include `ToolCallId`, `Cancelled`, `Error` fields.
+- Events are emitted for all exit paths (normal, timeout, cancellation, unknown shell).
+
+## Model Catalog
+
+- `IModelCatalog` / `ModelCatalogService` handles fallback seeding and provider-specific discovery.
+- Free models tracked by catalog keys.
+- OpenRouter discovery marks models free only when parsed prompt and completion prices are both zero; missing/unparseable pricing is treated as not-free.
+- Provider-specific discovery logic is centralized in the catalog; `IModelDiscoveryProvider` deferred to Plan 2.
 
 ## Not Yet Implemented
 
-The following RFC capabilities remain planned/research unless otherwise noted in code:
+The following RFC capabilities remain planned/research unless otherwise noted:
 
 - Persistence/session event logs, snapshots, replay, and resume.
 - Workspace VFS, overlays, transactions, diff manifests, and host reconciliation.
-- Permission system and command system.
+- Stateful OpenAI Responses API as a first-class provider path.
+- Canonical conversation format / typed item APIs.
 - Plugin model, semantic UI abstractions, panels/status providers, WASM runtime.
 - Text store, grapheme/cell layout, frame buffers, differential renderer, app-owned fullscreen scrollback.
 - Embedded PTY/virtual terminal panes.
@@ -111,19 +166,33 @@ The following RFC capabilities remain planned/research unless otherwise noted in
 - GUI frontend.
 - Rust/C# FFI layer and OpenTUI native backend spike.
 - Markdown parsing, syntax highlighting, theme system.
+- Provider-contributed model discovery (`IModelDiscoveryProvider`).
+- Credential env-var metadata (currently in CLI code).
+- Shell-specific argument escaping.
 
 ## Current Tests
 
-`Omicron.Core.Tests` currently covers core message/model/tool behavior, agent loop behavior with fake providers, provider parsing/shape behavior, and config/provider helper behavior.
+Tests are split into focused files by subsystem:
 
-As of this review, `dotnet test Omicron.slnx --nologo` passes after restoring compatibility between `AssistantToolCallMessage` and both the legacy single-tool-call property plus the newer multi-tool-call list.
+- `AgentSessionTests.cs` — AgentSession lifecycle and event emission.
+- `EventSinkTests.cs` — EventId, event types, InMemoryEventSink behavior.
+- `ProviderStateTests.cs` — ProviderStateKey, store, manager, event emission.
+- `ExecutionBrokerTests.cs` — LocalExecutionBroker event emission (platform-aware).
+- `ToolRegistryTests.cs` — ToolRegistry, CommandRegistry, PermissionService, Workspace.
+- `ExtensionRegistryTests.cs` — ExtensionRegistry, OmicronHost composition.
+- `ModelCatalogTests.cs` — ModelCatalogService free model tracking.
+- `AgentTests.cs` (now `CoreModelTests`) — Message, ToolSchema, Model, LlmResult, UsageInfo.
+- `ProviderTests.cs` — provider parsing/shape behavior.
 
-## RFC Targeting Notes
+`dotnet test Omicron.slnx --nologo` passes with 0 warnings, 0 errors.
 
-Near-term work should treat the current code as a Phase 0 MVP:
+## Plan 2 Handoff Points
 
-1. Harden `AgentEvent` and `StreamEvent` into the stable append-only contracts in RFC 0001 before building persistence or remoting on top.
-2. Move direct host file/shell tools behind permission, VFS, and execution broker seams before expanding tool authority.
-3. Keep `Omicron.CLI` as the smoke-test console frontend while extracting core abstractions into future packages.
-4. Preserve provider/API-shape separation; it is one of the MVP pieces already aligned with the target architecture.
-5. Update this baseline whenever substantial implementation changes land, so roadmap work can be targeted against reality rather than only the long-term RFC design.
+After Plan 1.5 cleanup, Plan 2 should use:
+
+- `AgentSession` as the only active runtime path.
+- `IModelCatalog` for model/API classification.
+- `IProviderRegistry` for provider lookup/registration.
+- `ProviderStateManager` for `previous_response_id`, conversation IDs, session affinity, and state-clearing behavior.
+- `IEventSink` / `SessionEventWriter` for provider request, response, fallback, and state events.
+- `ToolRegistry` and `ToolInvocationContext` for tool/function-call round trips.

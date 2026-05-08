@@ -168,11 +168,13 @@ public sealed record ProviderStateUpdatedEvent(
     SessionId SessionId,
     ProviderStateKey Key,
     string? PreviousResponseId,
-    string? ConversationId) : OmicronEvent(Id, Sequence, Timestamp, SessionId);
+    string? ConversationId,
+    string? Reason = null) : OmicronEvent(Id, Sequence, Timestamp, SessionId);
 
 public sealed record ProviderStateClearedEvent(
     EventId Id,
     long Sequence,
     DateTimeOffset Timestamp,
     SessionId SessionId,
-    ProviderStateKey Key) : OmicronEvent(Id, Sequence, Timestamp, SessionId);
+    ProviderStateKey Key,
+    string? Reason = null) : OmicronEvent(Id, Sequence, Timestamp, SessionId);

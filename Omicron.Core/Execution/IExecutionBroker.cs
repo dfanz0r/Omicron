@@ -6,16 +6,14 @@ using Omicron.Core.Events;
 namespace Omicron.Core.Execution;
 
 /// <summary>
-/// Request to execute a command.
-/// SessionId is required for event emission; if not provided, execution events
-/// are suppressed and no session-scoped event log entries are created.
+/// Request to execute a command scoped to a session.
 /// </summary>
 public sealed record ExecutionRequest(
+    SessionId SessionId,
     string Command,
     string? ShellId,
     string? WorkingDirectory,
     int TimeoutSeconds = 120,
-    SessionId? SessionId = null,
     ToolCallId? ToolCallId = null);
 
 /// <summary>
@@ -89,18 +87,16 @@ public sealed class LocalExecutionBroker : IExecutionBroker
         ExecutionResult Complete(int exitCode, long durationMs, bool timedOut, bool cancelled,
             string? output, string? error)
         {
-            if (sessionId.HasValue)
-                _eventSink?.Emit(new ExecutionCompletedEvent(
-                    EventId.New(), 0, DateTimeOffset.UtcNow, sessionId.Value, request.Command,
-                    exitCode, durationMs, timedOut, toolCallId, cancelled, error));
+            _eventSink?.Emit(new ExecutionCompletedEvent(
+                EventId.New(), 0, DateTimeOffset.UtcNow, sessionId, request.Command,
+                exitCode, durationMs, timedOut, toolCallId, cancelled, error));
             return new ExecutionResult(output ?? "", exitCode, durationMs, timedOut, cancelled, error);
         }
 
-        // Emit execution started event (only if session is known)
-        if (sessionId.HasValue)
-            _eventSink?.Emit(new ExecutionStartedEvent(
-                EventId.New(), 0, startTime, sessionId.Value,
-                request.Command, request.WorkingDirectory ?? Environment.CurrentDirectory, toolCallId));
+        // Emit execution started event
+        _eventSink?.Emit(new ExecutionStartedEvent(
+            EventId.New(), 0, startTime, sessionId,
+            request.Command, request.WorkingDirectory ?? Environment.CurrentDirectory, toolCallId));
         var shellDef = KnownShells.FirstOrDefault(s => s.Id == shellId);
 
         if (shellDef is null)

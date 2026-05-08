@@ -4,7 +4,10 @@ using Xunit;
 
 namespace Omicron.Core.Tests;
 
-public class AgentTests
+/// <summary>
+/// Tests for core model types: Message, ToolSchema, Model, LlmResult, UsageInfo.
+/// </summary>
+public class CoreModelTests
 {
     [Fact]
     public void CreateMessage_UserMessage_HasCorrectRole()
@@ -85,104 +88,6 @@ public class AgentTests
         Assert.Contains("\"name\"", json);
         Assert.Contains("\"age\"", json);
         Assert.Contains("\"required\"", json);
-    }
-
-    [Fact]
-    public void Agent_Constructor_SetsModelAndSystemPrompt()
-    {
-        var model = new Model
-        {
-            Id = "test-model",
-            Name = "Test Model",
-            ProviderName = "test"
-        };
-
-        var agent = new Agent(model, "You are a test assistant.");
-
-        Assert.Same(model, agent.Model);
-        Assert.Equal("You are a test assistant.", agent.SystemPrompt);
-        Assert.Empty(agent.Messages);
-        Assert.Empty(agent.Tools);
-    }
-
-    [Fact]
-    public void Agent_AddTool_RegistersTool()
-    {
-        var model = new Model { Id = "test", ProviderName = "test" };
-        var agent = new Agent(model);
-
-        var tool = new Tool
-        {
-            Name = "calculator",
-            Description = "Do math",
-            ExecuteAsync = (id, args) => Task.FromResult("42")
-        };
-
-        agent.AddTool(tool);
-        Assert.Single(agent.Tools);
-        Assert.Equal("calculator", agent.Tools[0].Name);
-    }
-
-    [Fact]
-    public void Agent_AddTool_ReplacesExistingToolWithSameName()
-    {
-        var model = new Model { Id = "test", ProviderName = "test" };
-        var agent = new Agent(model);
-
-        agent.AddTool(new Tool { Name = "calc", Description = "v1" });
-        agent.AddTool(new Tool { Name = "calc", Description = "v2" });
-
-        Assert.Single(agent.Tools);
-        Assert.Equal("v2", agent.Tools[0].Description);
-    }
-
-    [Fact]
-    public void Agent_AddUserMessage_AppendsToTranscript()
-    {
-        var model = new Model { Id = "test", ProviderName = "test" };
-        var agent = new Agent(model);
-
-        agent.AddUserMessage("Hello");
-        Assert.Single(agent.Messages);
-        Assert.Equal(MessageRole.User, agent.Messages[0].Role);
-        Assert.Equal("Hello", agent.Messages[0].Text);
-    }
-
-    [Fact]
-    public void Agent_Reset_ClearsTranscript()
-    {
-        var model = new Model { Id = "test", ProviderName = "test" };
-        var agent = new Agent(model);
-
-        agent.AddUserMessage("Hello");
-        agent.Reset();
-
-        Assert.Empty(agent.Messages);
-    }
-
-    [Fact]
-    public void Agent_ClearTools_RemovesAll()
-    {
-        var model = new Model { Id = "test", ProviderName = "test" };
-        var agent = new Agent(model);
-        agent.AddTool(new Tool { Name = "test" });
-
-        agent.ClearTools();
-        Assert.Empty(agent.Tools);
-    }
-
-    [Fact]
-    public async Task Agent_PromptAsync_WithoutProvider_Throws()
-    {
-        var model = new Model { Id = "test", ProviderName = "test" };
-        var agent = new Agent(model);
-
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-        {
-            await foreach (var _ in agent.PromptAsync("Hello")) { }
-        });
-
-        Assert.Contains("no provider", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

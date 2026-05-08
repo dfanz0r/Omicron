@@ -19,6 +19,7 @@ public readonly record struct ProviderStateKey(
     /// <summary>
     /// Create a key with a case-normalized provider name.
     /// </summary>
+    /// <exception cref="ArgumentException">Thrown if providerName or modelId is null or whitespace.</exception>
     public static ProviderStateKey Create(
         SessionId sessionId,
         AgentId agentId,
@@ -26,6 +27,8 @@ public readonly record struct ProviderStateKey(
         string modelId,
         ApiType apiType)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelId);
         return new ProviderStateKey(
             sessionId,
             agentId,
@@ -60,8 +63,10 @@ public interface IProviderConversationStateStore
 {
     ProviderTurnState? Get(ProviderStateKey key);
     void Set(ProviderTurnState state);
-    void Clear(ProviderStateKey key);
-    void ClearSession(SessionId sessionId);
+    /// <summary>Clear provider state for a key. Returns true if state was actually removed.</summary>
+    bool Clear(ProviderStateKey key);
+    /// <summary>Clear all provider state for a session. Returns the keys that were removed.</summary>
+    IReadOnlyList<ProviderStateKey> ClearSession(SessionId sessionId);
 
     /// <summary>Get all keys stored for a given session.</summary>
     IReadOnlyList<ProviderStateKey> GetSessionKeys(SessionId sessionId);
@@ -71,25 +76,15 @@ public interface IProviderConversationStateStore
 /// Default in-memory implementation of IProviderConversationStateStore.
 /// Thread-safe via a concurrent dictionary.
 ///
-/// Optionally accepts an IEventSink to emit ProviderStateUpdatedEvent
-/// and ProviderStateClearedEvent on mutations.
-///
-/// NOTE: Event emission from the raw store is MVP-only. Plan 2 should
-/// introduce a ProviderStateManager that wraps the store and emits
-/// richer events (including provider/model display names, reason for
-/// update, previous-vs-new response IDs, storage policy, and whether
-/// the update came from a stateful Responses continuation, fallback,
-/// reset, or fork). At that point the raw store should become a pure
-/// persistence primitive without event emission responsibility.
+/// This is a pure storage primitive. Event emission is handled by
+/// ProviderStateManager, which wraps this store and an IEventSink.
 /// </summary>
 public sealed class InMemoryProviderConversationStateStore : IProviderConversationStateStore
 {
     private readonly ConcurrentDictionary<ProviderStateKey, ProviderTurnState> _states = new();
-    private readonly IEventSink? _eventSink;
 
-    public InMemoryProviderConversationStateStore(IEventSink? eventSink = null)
+    public InMemoryProviderConversationStateStore()
     {
-        _eventSink = eventSink;
     }
 
     /// <summary>
@@ -111,36 +106,28 @@ public sealed class InMemoryProviderConversationStateStore : IProviderConversati
             state.PreviousResponseId, state.ConversationId,
             state.SessionAffinityKey, state.ProviderMetadata);
         _states[normalizedKey] = normalizedState;
-
-        _eventSink?.Emit(new ProviderStateUpdatedEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, normalizedKey.SessionId,
-            normalizedKey, normalizedState.PreviousResponseId, normalizedState.ConversationId));
     }
 
-    public void Clear(ProviderStateKey key)
+    public bool Clear(ProviderStateKey key)
     {
         var normalizedKey = Normalize(key);
-
-        if (_states.TryRemove(normalizedKey, out var removed))
-        {
-            _eventSink?.Emit(new ProviderStateClearedEvent(
-                EventId.New(), 0, DateTimeOffset.UtcNow, normalizedKey.SessionId,
-                normalizedKey));
-        }
+        return _states.TryRemove(normalizedKey, out _);
     }
 
-    public void ClearSession(SessionId sessionId)
+    public IReadOnlyList<ProviderStateKey> ClearSession(SessionId sessionId)
     {
         var keysToRemove = _states.Keys
             .Where(k => k.SessionId == sessionId)
             .ToList();
 
+        var removed = new List<ProviderStateKey>(keysToRemove.Count);
         foreach (var key in keysToRemove)
         {
-            _states.TryRemove(key, out _);
-            _eventSink?.Emit(new ProviderStateClearedEvent(
-                EventId.New(), 0, DateTimeOffset.UtcNow, sessionId, key));
+            if (_states.TryRemove(key, out _))
+                removed.Add(key);
         }
+
+        return removed;
     }
 
     public IReadOnlyList<ProviderStateKey> GetSessionKeys(SessionId sessionId)

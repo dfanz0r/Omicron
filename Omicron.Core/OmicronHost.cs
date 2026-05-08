@@ -48,7 +48,10 @@ public sealed class OmicronHost
     /// <summary>In-memory event log for testing/replay.</summary>
     public InMemoryEventSink EventLog { get; }
 
-    /// <summary>Provider conversation state store.</summary>
+    /// <summary>Provider state manager — wraps the store and emits events.</summary>
+    public IProviderStateManager ProviderStateManager { get; }
+
+    /// <summary>Raw provider conversation state store (for direct store access).</summary>
     public IProviderConversationStateStore ProviderState { get; }
 
     /// <summary>
@@ -66,7 +69,8 @@ public sealed class OmicronHost
         Permissions = new AllowAllPermissionService();
         Workspace = new HostWorkspace(workspaceRoot);
         Execution = new LocalExecutionBroker(EventLog);
-        ProviderState = new InMemoryProviderConversationStateStore(EventLog);
+        ProviderState = new InMemoryProviderConversationStateStore();
+        ProviderStateManager = new ProviderStateManager(ProviderState, EventLog);
         Providers = new ProviderFactory();
         ModelCatalog = new ModelCatalogService(Providers);
         Extensions = new ExtensionRegistry(Tools, Commands);
@@ -101,7 +105,7 @@ public sealed class OmicronHost
             Tools,
             Permissions,
             Events,
-            ProviderState,
+            ProviderStateManager,
             systemPrompt,
             apiKey);
         return session;

@@ -72,8 +72,8 @@ public sealed class BuiltinExecutionToolsExtension : IOmicronExtension
                 }
 
                 var result = await _execution.ExecuteAsync(
-                    new ExecutionRequest(command, shellId, workDir, timeout,
-                        ctx.SessionId, ctx.ToolCallId),
+                    new ExecutionRequest(ctx.SessionId, command, shellId, workDir, timeout,
+                        ctx.ToolCallId),
                     ctx.CancellationToken);
 
                 // Build header similar to old ShellTools output

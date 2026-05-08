@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Omicron.Core.Models;
@@ -88,19 +89,21 @@ public class OpenRouterProvider : ShapeBasedProvider
                 if (item.TryGetProperty("context_length", out var ctxEl) && ctxEl.ValueKind == JsonValueKind.Number)
                     contextLength = ctxEl.GetInt32();
 
-                // Parse pricing
-                double? promptCost = null, completionCost = null;
+                // Parse pricing. Missing/unparseable pricing is treated as unknown,
+                // not free, so catalog filtering does not expose paid models as free.
+                var promptCost = double.PositiveInfinity;
+                var completionCost = double.PositiveInfinity;
                 if (item.TryGetProperty("pricing", out var pricingEl))
                 {
-                    if (pricingEl.TryGetProperty("prompt", out var pEl) && pEl.ValueKind == JsonValueKind.String)
-                        double.TryParse(pEl.GetString(), out var pVal);
-                    if (pricingEl.TryGetProperty("completion", out var cEl) && cEl.ValueKind == JsonValueKind.String)
-                        double.TryParse(cEl.GetString(), out var cVal);
+                    if (pricingEl.TryGetProperty("prompt", out var pEl))
+                        promptCost = ParseOpenRouterPrice(pEl) ?? double.PositiveInfinity;
+                    if (pricingEl.TryGetProperty("completion", out var cEl))
+                        completionCost = ParseOpenRouterPrice(cEl) ?? double.PositiveInfinity;
                 }
 
                 models.Add(new OpenRouterModelEntry(
                     id, name ?? id, contextLength ?? 128000,
-                    promptCost ?? 0, completionCost ?? 0
+                    promptCost, completionCost
                 ));
             }
             return models;
@@ -109,6 +112,20 @@ public class OpenRouterProvider : ShapeBasedProvider
         {
             return [];
         }
+    }
+
+    private static double? ParseOpenRouterPrice(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.Number when element.TryGetDouble(out var value) => value,
+            JsonValueKind.String when double.TryParse(
+                element.GetString(),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out var value) => value,
+            _ => null
+        };
     }
 }
 

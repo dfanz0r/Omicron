@@ -1,7 +1,7 @@
 # Implementation Plan 0002: Provider API Abstraction and Stateful Responses Support
 
-Status: Draft  
-Inputs: `docs/reports/stateful-vs-stateless-api-abstraction.md`, RFC 0001, RFC 0009, Implementation Plan 0001
+Status: Ready to start  
+Inputs: `docs/reports/stateful-vs-stateless-api-abstraction.md`, RFC 0001, RFC 0009, `docs/rfcs/IMPLEMENTATION-BASELINE.md`, Implementation Plans 0001 and 0001.5
 
 ## Purpose
 
@@ -9,7 +9,7 @@ Omicron must support both stateless transcript-resend APIs and stateful provider
 
 This plan defines the provider architecture needed before implementing first-class Responses support.
 
-Plan 0001 prerequisite: the core groundwork plan should already introduce minimal provider-state seams (`ProviderStateKey`, `ProviderTurnState`, `IProviderConversationStateStore`) and keep provider state out of the CLI. This plan extends those seams; it should not reintroduce a separate provider-state abstraction.
+Plan 0001/0001.5 prerequisite: the core groundwork now includes `AgentSession`, `ProviderStateKey`, `ProviderTurnState`, `IProviderConversationStateStore`, `IProviderStateManager` / `ProviderStateManager`, session-scoped execution, and an authoritative `IEventSink`. This plan extends those seams; it should not reintroduce a separate provider-state abstraction or route provider state through the CLI.
 
 ## Architectural Decision
 
@@ -120,7 +120,7 @@ Initial descriptors can be small. Add fields only when tests or providers requir
 
 Stateful APIs need provider-managed continuation state, but Omicron must still own the logical session.
 
-The minimal shape from Plan 0001 should be retained and expanded rather than replaced:
+The Plan 0001.5 shape should be retained and expanded rather than replaced:
 
 ```csharp
 public readonly record struct ProviderStateKey(
@@ -135,11 +135,13 @@ public sealed record ProviderTurnState(
     string? PreviousResponseId,
     string? ConversationId,
     string? SessionAffinityKey,
-    ProviderStoragePolicy StoragePolicy,
     JsonElement? ProviderMetadata);
+
+// Plan 0002 should add, in place, when policy work begins:
+// ProviderStoragePolicy StoragePolicy
 ```
 
-If Plan 0001 initially ships a smaller `ProviderTurnState`, Plan 0002 should evolve it in place through additive fields/migration helpers.
+Plan 0002 should evolve this in place through additive fields/migration helpers rather than introducing a parallel state type.
 
 Rules:
 
@@ -251,19 +253,22 @@ The current `IApiShape.BuildRequestBody` / `ParseSseChunk` can evolve in this di
 
 ## Implementation Phases
 
-### Phase A: Validate Plan 0001 Provider Seams
+### Phase A: Validate Plan 0001.5 Provider Seams
 
 Deliverables:
 
-- verify `ProviderStateKey`, `ProviderTurnState`, and `IProviderConversationStateStore` exist from Plan 0001;
+- verify `ProviderStateKey`, `ProviderTurnState`, `IProviderConversationStateStore`, and `IProviderStateManager` exist from Plans 0001/0001.5;
+- verify raw provider state storage remains storage-only and event emission goes through `ProviderStateManager`;
 - verify provider state is not owned or manipulated by CLI code;
+- verify `AgentSession.Reset()` clears provider state through `ProviderStateManager`;
 - verify model catalog/registry exposes per-model `ApiType`;
-- verify provider invocation can receive a context object capable of carrying provider state.
+- verify provider invocation can receive a context object capable of carrying provider state keys, current state, storage policy, and the manager/sink needed to persist updates;
+- verify nested provider-state/debug events are emitted to `IEventSink`, the authoritative durability stream, not assumed to be yielded from `PromptAsync()`.
 
 Acceptance criteria:
 
 - no separate/duplicate provider-state abstraction is introduced in Plan 0002;
-- reset clears provider state through the shared store;
+- reset clears provider state through `ProviderStateManager`;
 - real Responses work can proceed without another CLI orchestration rewrite.
 
 ### Phase B: Provider Metadata and Compatibility
@@ -285,16 +290,17 @@ Acceptance criteria:
 
 Deliverables:
 
-- extend Plan 0001 `ProviderTurnState` with storage policy/session affinity fields if not already present;
-- add provider-state update/clear events;
-- add debug/audit projection for provider state changes;
+- extend the existing `ProviderTurnState` in place with `ProviderStoragePolicy` and any missing Responses-specific continuation metadata;
+- retain existing `SessionAffinityKey` unless replaced by a richer compatibility/policy object;
+- enrich existing provider-state update/clear events only as needed (`Reason` already exists from Plan 0001.5);
+- add debug/audit projection for provider state changes if useful for diagnostics;
 - define fork semantics: clear by default, explicitly continue only by policy.
 
 Acceptance criteria:
 
 - tests prove state is scoped by `ProviderStateKey` including `ApiType`;
 - reset/fork semantics are explicit even before persistence;
-- provider state changes are observable through core events.
+- provider state changes are observable through `IEventSink` events emitted by `ProviderStateManager`.
 
 ### Phase D: Canonical Conversation Seed
 
@@ -319,7 +325,7 @@ Deliverables:
 - Responses SSE parser for typed events;
 - function-call argument accumulation;
 - parser emits Omicron `StreamEvent`s for text, tool call start/delta/end, done, error, usage if available;
-- completed response ID captured and stored as `ProviderTurnState.PreviousResponseId`.
+- completed response ID captured and stored as `ProviderTurnState.PreviousResponseId` through `ProviderStateManager`.
 
 Acceptance criteria:
 
@@ -374,7 +380,7 @@ Fallback:
   if stateful continuation fails, retry stateless full-context once when safe
 
 Debuggability:
-  log selected provider, model, ApiType, stateful/stateless mode, storage policy, and response ID updates
+  emit/log selected provider, model, ApiType, stateful/stateless mode, storage policy, fallback decisions, and response ID updates through the authoritative event/debug path
 ```
 
 ## Risks
@@ -394,7 +400,7 @@ This provider abstraction phase is complete when:
 
 - models are classified by API family at model-discovery/config time;
 - provider compatibility is explicit and test-covered;
-- Plan 0001 provider turn state has been expanded in place and remains session-scoped;
+- Plan 0001/0001.5 provider turn state and `ProviderStateManager` have been expanded in place and remain session-scoped;
 - OpenAI Responses has a real request builder and stream parser;
 - Responses function calling works through the same tool pipeline as Chat Completions;
 - stateful and stateless fallback modes are both tested;
