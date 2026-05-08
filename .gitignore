@@ -1,0 +1,116 @@
+# .NET / C#
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.dsym
+*.nupkg
+*.snupkg
+*.nuspec
+*.nuget.props
+*.nuget.targets
+*.nupkg.metadata
+*.sha512
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.sln.docstates
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# JetBrains Rider / ReSharper
+.idea/
+*.sln.iml
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# NuGet
+packages/
+*.nuget/
+**/[Pp]ackages/*/
+!**/[Pp]ackages/build/
+*.nupkg
+
+# Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+*.coverage
+*.coveragexml
+
+# Benchmark / profiling
+[Bb]enchmark[Rr]esults/
+[Bb]enchmark[Bb]uilds/
+
+# OS files
+[Dd]esktop.ini
+[Tt]humbs.db
+*.DS_Store
+*~
+
+# Windows
+*.cab
+*.msi
+*.msm
+*.msp
+
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build Results
+[Dd]ebug[Rr]elease/
+x64/
+x86/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+
+# RoslynAnalyzer
+[Rr]oslyn[A]nalyzer/
+
+# dotnet
+*.nupkg
+*.snupkg
+
+# NBench
+[Nn]Bench[Rr]esults/
+
+# Sequel Ace / Sequel Pro
+*.rdb
+
+# Local SQLite DBs
+*.db
+*.sqlite
+*.sqlite3
+
+# Project-specific
+READ_ONLY/
+
+# End of https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
