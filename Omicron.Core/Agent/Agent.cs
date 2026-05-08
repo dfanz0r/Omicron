@@ -39,8 +39,16 @@ public class AgentEvent
 }
 
 /// <summary>
-/// A stateful agent that manages a conversation with an LLM,
+/// Legacy stateful agent that manages a conversation with an LLM,
 /// supports tool calling, and emits streaming events.
+///
+/// Kept for backwards compatibility during the Plan 1 transition.
+/// New code should use AgentSession instead, which provides
+/// event-sink integration, provider state management, and a
+/// durable event log.
+///
+/// This class may be removed once all consumers have migrated
+/// to AgentSession.
 /// </summary>
 public class Agent
 {

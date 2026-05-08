@@ -4,7 +4,7 @@ namespace Omicron.Core.Providers;
 /// Simple factory that creates and caches IChatProvider instances by name.
 /// No complex registry pattern — just a straightforward map.
 /// </summary>
-public class ProviderFactory
+public class ProviderFactory : IProviderRegistry
 {
     private readonly Dictionary<string, IChatProvider> _providers = new(StringComparer.OrdinalIgnoreCase);
     private readonly HttpClient _http;

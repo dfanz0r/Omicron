@@ -344,7 +344,6 @@ public static class ShellTools
         {
             paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), name + ".exe"));
             paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), name));
-            paths.Add(Path.Combine(Environment.SpecialFolder.ProgramFiles.ToString(), "PowerShell", "7", "pwsh.exe"));
             paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe"));
             paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "bin", name + ".exe"));
             paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "usr", "bin", name + ".exe"));

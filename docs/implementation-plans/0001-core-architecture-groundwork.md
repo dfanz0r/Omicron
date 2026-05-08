@@ -3,6 +3,10 @@
 Status: Draft  
 Target: upgrade the current C# MVP into a stable architecture that can support the long-term RFCs incrementally.
 
+Related plan: [0002-provider-api-abstraction.md](0002-provider-api-abstraction.md) covers the provider/session architecture for stateful APIs such as OpenAI Responses.
+
+Important boundary: this plan must not create provider/session abstractions that Plan 0002 later has to undo. Plan 0001 should establish minimal stable seams and, where necessary, pull forward small provider-state primitives from Plan 0002 so the groundwork is a stepping stone rather than a dead end.
+
 ## Purpose
 
 Before implementing the larger RFC features, Omicron needs a clean internal architecture with stable seams. The immediate goal is **not** to build WASM plugins, remoting, GUI, sandboxing, persistence, or a full TUI yet. The goal is to shape the C# codebase so those capabilities can be added later without rewriting the agent loop.
@@ -23,6 +27,7 @@ This plan turns the current MVP into a modular core with:
 4. **Keep direct host access behind interfaces.** File and shell tools can remain direct for now, but must sit behind workspace/execution/permission abstractions.
 5. **Make events durable-shaped early.** Even before persistence exists, events should have IDs, timestamps, sequence numbers, and typed payloads.
 6. **Avoid premature project explosion.** Add projects when they clarify boundaries; avoid adding empty projects with no code.
+7. **Do not bake in Chat Completions assumptions.** Current `Message`/`Tool` types can remain as compatibility types, but new seams must allow typed item APIs, provider turn state, and stateless/stateful request strategies.
 
 ## Current Starting Point
 
@@ -95,6 +100,39 @@ Omicron.Execution             sandbox/execution broker implementation
 
 Do not split projects until namespace boundaries are clear and tested inside `Omicron.Core`.
 
+## Plan 0001 / Plan 0002 Boundary
+
+Plan 0001 owns the architectural seams needed by all later work:
+
+- composition host;
+- registries;
+- extension registration;
+- tool invocation pipeline;
+- session identity;
+- durable-shaped event envelope;
+- provider/model registry boundary;
+- minimal provider turn-state seam;
+- CLI extraction.
+
+Plan 0002 owns the provider-specific depth:
+
+- canonical conversation content model;
+- provider compatibility matrix;
+- OpenAI Responses request/stream implementation;
+- stateful/stateless fallback policy;
+- cross-API replay transforms;
+- tool-call ID normalization rules beyond the minimal seam;
+- storage/cache/session-affinity policy.
+
+To avoid duplicate work, Plan 0001 should **pull forward only these pieces from Plan 0002**:
+
+1. provider state identity/scoping types;
+2. a minimal provider state store interface;
+3. provider/model registry APIs that expose `ApiType` without assuming one provider equals one API;
+4. request/session context objects broad enough to carry provider state later.
+
+Plan 0001 should **not** implement the full canonical content model or real Responses API parser. It should only make sure later implementation can add them without changing the CLI or extension/tool contracts.
+
 ## Target Core Concepts
 
 ### 1. Omicron Host
@@ -108,12 +146,14 @@ public sealed class OmicronHost
 {
     public IExtensionRegistry Extensions { get; }
     public IProviderRegistry Providers { get; }
+    public IModelCatalog Models { get; }
     public ICommandRegistry Commands { get; }
     public IToolRegistry Tools { get; }
     public IPermissionService Permissions { get; }
     public IWorkspace Workspace { get; }
     public IExecutionBroker Execution { get; }
     public ISessionManager Sessions { get; }
+    public IProviderConversationStateStore ProviderState { get; }
 }
 ```
 
@@ -319,7 +359,70 @@ public sealed class AgentSession
 
 The current `Agent` can either become this type or be used internally by it. The key is that session identity, events, tools, model, config, and cancellation are coordinated outside the CLI.
 
-### 10. Semantic UI / Content Blocks Minimal Seed
+### 10. Stateful Provider Sessions and API-Agnostic Conversation State
+
+The provider layer must support both stateless transcript-resend APIs and stateful conversation APIs such as OpenAI's Responses API.
+
+Current MVP note: `ApiType.OpenAiResponses` exists, but `OpenAiResponsesShape` currently falls back to the OpenAI Chat Completions request/stream format. That is not sufficient for first-class Responses API support.
+
+Plan 0001 should introduce only the **minimal state seam**, not the full provider abstraction from Plan 0002:
+
+```csharp
+public readonly record struct ProviderStateKey(
+    SessionId SessionId,
+    AgentId AgentId,
+    string ProviderName,
+    string ModelId,
+    ApiType ApiType);
+
+public sealed record ProviderTurnState(
+    ProviderStateKey Key,
+    string? PreviousResponseId,
+    string? ConversationId,
+    string? SessionAffinityKey,
+    JsonElement? ProviderMetadata);
+
+public interface IProviderConversationStateStore
+{
+    ProviderTurnState? Get(ProviderStateKey key);
+    void Set(ProviderTurnState state);
+    void Clear(ProviderStateKey key);
+    void ClearSession(SessionId sessionId);
+}
+```
+
+Design requirements for Plan 0001:
+
+- the core session owns logical conversation history regardless of provider API style;
+- provider state is scoped by session + agent + provider + model + API type;
+- reset clears provider state through `ClearSession`;
+- the CLI never directly reads/writes `previous_response_id` or other provider continuation details;
+- provider registries/model catalogs continue to expose `ApiType` per model;
+- request/session context objects can carry provider state later without changing public CLI-facing code.
+
+Deferred to Plan 0002:
+
+- full canonical conversation content model;
+- storage/cache policy;
+- real Responses request bodies and streaming parser;
+- function-call output item conversion;
+- cross-API replay/fallback transforms;
+- provider compatibility descriptors.
+
+OpenAI Responses-specific requirements:
+
+- send requests to `/v1/responses`, not `/chat/completions`;
+- use `input` items rather than `messages`;
+- include `previous_response_id` on subsequent turns when stateful mode is enabled;
+- capture `response.completed` IDs and store them as provider turn state;
+- parse typed streaming events such as `response.output_text.delta`, `response.function_call_arguments.delta`, `response.output_item.done`, `response.completed`, `response.failed`, and `error`;
+- accumulate function-call arguments until the function-call item is complete;
+- return tool results as `function_call_output` input items with the matching `call_id`;
+- keep a stateless fallback mode that can rebuild input from Omicron's local transcript if provider-side state is unavailable or intentionally disabled.
+
+This should be part of the provider/session groundwork, not a one-off patch inside the CLI. Plan 0001 provides the seam; [Implementation Plan 0002](0002-provider-api-abstraction.md) fills it with the detailed provider API abstraction informed by the stateful-vs-stateless API report.
+
+### 11. Semantic UI / Content Blocks Minimal Seed
 
 Do not build rich rendering yet, but define minimal neutral content types.
 
@@ -346,6 +449,7 @@ Goals:
 - create `OmicronHost` composition root;
 - move provider registration/model discovery service out of `Program.cs`;
 - move built-in tool registration out of `Program.cs`;
+- introduce provider turn-state contracts so stateful APIs such as OpenAI Responses can be supported cleanly;
 - keep CLI behavior equivalent.
 
 Deliverables:
@@ -355,13 +459,17 @@ Deliverables:
 - `Extensions/` registry interfaces;
 - `Providers/ProviderRegistry` or equivalent;
 - `Models/ModelCatalogService` for discovery and fallback models;
-- tests for host composition and provider/model registry.
+- minimal `ProviderStateKey`, `ProviderTurnState`, and `IProviderConversationStateStore`;
+- request/session context types that carry model `ApiType` and can later carry provider state;
+- tests for host composition, provider/model registry, and provider-state scoping.
 
 Acceptance criteria:
 
 - CLI still runs and selects models;
 - tests pass;
-- `Program.cs` is materially smaller and mostly frontend flow.
+- `Program.cs` is materially smaller and mostly frontend flow;
+- no new core abstraction assumes Chat Completions is the only request shape;
+- provider state is not manipulated directly by the CLI.
 
 ### Phase B: Internal C# Extension System
 
@@ -419,6 +527,7 @@ Goals:
 - make session identity and event ordering explicit;
 - introduce event sink and in-memory event log;
 - bridge old UI events to new core events;
+- add provider-state events for response IDs/conversation IDs/tool output correlation IDs;
 - prepare for persistence without implementing disk storage yet.
 
 Deliverables:
@@ -434,7 +543,29 @@ Acceptance criteria:
 - prompt → tool call → tool result → final response emits deterministic ordered core events;
 - CLI rendering is fed by event adaptation, not direct ad hoc callbacks where practical.
 
-### Phase E: Command and Minimal Content Block Layer
+### Phase E: Provider Abstraction Handoff Checkpoint
+
+Goals:
+
+- verify that the groundwork from this plan is ready for Plan 0002;
+- avoid starting a real Responses API implementation until provider state, model classification, and session contexts are in place;
+- document any remaining blockers before Plan 0002 begins.
+
+Deliverables:
+
+- checklist showing where provider state is stored, cleared, and exposed to providers;
+- tests proving reset clears provider state;
+- model catalog exposes `ApiType` per model;
+- provider invocation path can receive a context object rather than only a raw `IReadOnlyList<Message>` where practical;
+- documented migration notes for `OpenAiResponsesShape` replacement in Plan 0002.
+
+Acceptance criteria:
+
+- implementing Plan 0002 does not require another CLI orchestration rewrite;
+- implementing Plan 0002 does not require replacing the extension/tool pipeline;
+- implementing real Responses support is isolated to provider/session abstractions, not frontend code.
+
+### Phase F: Command and Minimal Content Block Layer
 
 Goals:
 
@@ -455,7 +586,7 @@ Acceptance criteria:
 - extensions can contribute commands;
 - responses/tool outputs can be represented as basic content blocks.
 
-### Phase F: Cleanup and Boundary Enforcement
+### Phase G: Cleanup and Boundary Enforcement
 
 Goals:
 
@@ -483,10 +614,13 @@ The first code PR should be deliberately small:
 
 1. Add ID value types and base event contracts.
 2. Add `IEventSink` and `InMemoryEventSink`.
-3. Add `IExtensionRegistry`, `IExtensionContext`, and `IOmicronExtension` with tests.
-4. Move calculator/time tool registration into `BuiltinToolsExtension`.
-5. Keep `FileTools` and `ShellTools` as-is for the moment.
-6. Update CLI to load built-in extensions and register their tools.
+3. Add minimal provider state primitives: `ProviderStateKey`, `ProviderTurnState`, `IProviderConversationStateStore`, in-memory implementation.
+4. Add `IExtensionRegistry`, `IExtensionContext`, and `IOmicronExtension` with tests.
+5. Move calculator/time tool registration into `BuiltinToolsExtension`.
+6. Keep `FileTools` and `ShellTools` as-is for the moment.
+7. Update CLI to load built-in extensions and register their tools.
+
+Do **not** implement real OpenAI Responses in this first PR. The goal is to create the seam Plan 0002 will use.
 
 This proves the extension seam without touching the riskiest areas first.
 
@@ -499,6 +633,7 @@ This proves the extension seam without touching the riskiest areas first.
 | CLI regression | Keep CLI behavior tests/manual smoke tests for model menu, config, chat, tools. |
 | WASM design mismatch | Design extension contracts as host-level semantic APIs, not .NET-specific implementation details. Future WASM adapter can translate. |
 | Event model churn | Start with durable IDs/sequences/timestamps but keep payloads small and versionable. |
+| Duplicating Plan 0002 work badly | Pull forward only minimal provider-state seams; defer canonical transforms and real Responses parsing to Plan 0002. |
 | Project split churn | Use namespaces first, split projects only when real code justifies it. |
 
 ## Definition of Done for Groundwork
@@ -511,6 +646,7 @@ The groundwork phase is complete when:
 - file and shell capabilities sit behind workspace/execution/permission seams;
 - sessions emit durable-shaped ordered events;
 - there is an in-memory event log and projection tests;
+- provider turn state is session-scoped and cleared on reset;
 - command and minimal content block contracts exist;
 - all current tests pass and new architecture tests cover the seams;
 - RFC baseline documentation is updated to reflect the new state.

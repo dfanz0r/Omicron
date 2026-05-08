@@ -47,10 +47,12 @@ Implemented/declared API shapes:
 
 - `OpenAiChat`
 - `AnthropicMessages`
-- `OpenAiResponses`
+- `OpenAiResponses` is declared, but the current shape falls back to Chat Completions formatting/parsing and is **not** a first-class stateful Responses API implementation yet.
 - `GoogleGenAi` is declared in `ApiType` but not a complete first-class provider path yet.
 
 Provider support includes SSE parsing, tool-call accumulation, usage data where available, and reasoning-text preservation/echo behavior needed by reasoning models such as DeepSeek-style APIs.
+
+Near-term provider gap: OpenAI's stateful Responses API should be supported as a first-class API style. That requires provider turn state such as `previous_response_id`, `/v1/responses` request bodies, typed Responses streaming-event parsing, and function-call output item round trips. This should be implemented through session/provider abstractions rather than as a CLI-specific workaround.
 
 ## Implemented Tools
 

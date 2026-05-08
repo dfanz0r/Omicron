@@ -36,6 +36,7 @@ The old monolithic design document has been superseded. Current planning lives i
 - [`docs/rfcs/IMPLEMENTATION-BASELINE.md`](docs/rfcs/IMPLEMENTATION-BASELINE.md) — what exists in the current codebase.
 - [`docs/rfcs/TRACEABILITY.md`](docs/rfcs/TRACEABILITY.md) — mapping from the old seed document to the RFCs.
 - [`docs/implementation-plans/0001-core-architecture-groundwork.md`](docs/implementation-plans/0001-core-architecture-groundwork.md) — first implementation plan for preparing the C# core architecture.
+- [`docs/implementation-plans/0002-provider-api-abstraction.md`](docs/implementation-plans/0002-provider-api-abstraction.md) — provider architecture for stateless/stateful APIs, including OpenAI Responses.
 
 ## Near-Term Direction
 

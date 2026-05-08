@@ -1,11 +1,9 @@
-using System.Data;
-using System.Diagnostics;
 using System.Text;
 using Omicron.Core;
 using Omicron.Core.Config;
+using Omicron.Core.Events;
 using Omicron.Core.Models;
-using Omicron.Core.Providers;
-using Omicron.Core.Tools;
+using Omicron.Core.Sessions;
 using Omicron.CLI;
 
 Console.OutputEncoding = Encoding.UTF8;
@@ -18,6 +16,10 @@ Console.WriteLine("║   Providers: OpenAI · Anthropic · OpenCode · OR ║");
 Console.WriteLine("╚══════════════════════════════════════════════════╝");
 Console.WriteLine();
 
+// --- Host ---
+var host = new OmicronHost(Environment.CurrentDirectory);
+host.LoadBuiltinExtensions();
+
 // --- Config ---
 var configManager = new ConfigManager();
 configManager.Load();
@@ -26,48 +28,20 @@ var cfg = configManager.Config;
 Console.WriteLine($"Config: {configManager.GetConfigPath()}");
 
 // --- Provider setup ---
-var providerFactory = new ProviderFactory();
 Console.WriteLine("Registered providers:");
-foreach (var name in providerFactory.ProviderNames)
+foreach (var name in host.Providers.ProviderNames)
     Console.WriteLine($"  \u2022 {name}");
 
-// --- Model discovery (auto on startup) ---
+// --- Model catalog ---
 Console.WriteLine();
-var models = new Dictionary<string, Model>(StringComparer.OrdinalIgnoreCase);
-
-// Always include these fallbacks in case discovery fails
-void EnsureModel(string key, Model m)
-{
-    if (!models.ContainsKey(key))
-    {
-        if (m.Provider is null && providerFactory.TryGetProvider(m.ProviderName, out var p))
-            m.Provider = p;
-        models[key] = m;
-    }
-}
-
-// Seed with minimal hardcoded set (will be replaced by discovery)
-EnsureModel("openai:gpt-4o", MakeModel("gpt-4o", "GPT-4o", "openai", ApiType.OpenAiChat, "https://api.openai.com/v1", 128000, 16384, true));
-EnsureModel("openai:gpt-4o-mini", MakeModel("gpt-4o-mini", "GPT-4o Mini", "openai", ApiType.OpenAiChat, "https://api.openai.com/v1", 128000, 16384, true));
-EnsureModel("anthropic:claude-sonnet-4", MakeModel("claude-sonnet-4-20250514", "Claude Sonnet 4", "anthropic", ApiType.AnthropicMessages, "https://api.anthropic.com/v1", 200000, 8192, true));
+var catalog = host.ModelCatalog;
 
 // Auto-discover from all providers
-var freeModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-bool IsFreeModel(Model m) => freeModels.Contains(m.Id) || freeModels.Contains($"{m.ProviderName}:{m.Id}");
-
-await RefreshModels(providerFactory, models, configManager, quiet: true);
-
-// Resolve providers for any remaining unresolved models
-foreach (var model in models.Values)
-{
-    if (model.Provider is null && providerFactory.TryGetProvider(model.ProviderName, out var p))
-        model.Provider = p;
-}
+await catalog.DiscoverAsync(quiet: true);
 
 while (true)
 {
-    ShowMenu(models, cfg);
+    ShowMenu(catalog, cfg);
     var input = Console.ReadLine()?.Trim() ?? "";
     if (input == "0") break;
 
@@ -79,19 +53,21 @@ while (true)
 
     if (input.Equals("refresh", StringComparison.OrdinalIgnoreCase))
     {
-        await RefreshModels(providerFactory, models, configManager, quiet: false);
+        Console.WriteLine("\n--- Refreshing models ---");
+        var added = await catalog.DiscoverAsync(quiet: false);
+        Console.WriteLine($"  {catalog.Models.Count} models total ({catalog.FreeModelKeys.Count} free)");
         continue;
     }
 
-    if (!int.TryParse(input, out var choice) || choice < 1 || choice > models.Count)
+    if (!int.TryParse(input, out var choice) || choice < 1)
     {
         Console.WriteLine("Invalid choice.");
         continue;
     }
 
-    // Build visible list matching ShowMenu ordering for correct index lookup
-    var visibleList = models
-        .Where(kv => cfg.ApiKeys.ContainsKey(kv.Value.ProviderName) || IsFreeModel(kv.Value))
+    // Build visible list matching ShowMenu ordering
+    var visibleList = catalog.Models
+        .Where(kv => cfg.ApiKeys.ContainsKey(kv.Value.ProviderName) || catalog.IsFreeModel(kv.Key))
         .OrderBy(kv => kv.Key == cfg.LastModel ? 0 : 1)
         .ThenBy(kv => kv.Value.ProviderName)
         .ThenBy(kv => kv.Value.Name)
@@ -107,7 +83,7 @@ while (true)
     cfg.LastModel = modelKey;
     configManager.Save();
 
-    // Resolve API key — check config first, then env var, then prompt
+    // Resolve API key
     var envVarName = selectedModel.ProviderName.ToLowerInvariant() switch
     {
         "openai" => "OPENAI_API_KEY",
@@ -117,7 +93,9 @@ while (true)
         _ => null
     };
 
-    var apiKey = envVarName is not null ? configManager.GetApiKey(selectedModel.ProviderName, envVarName) : null;
+    var apiKey = envVarName is not null
+        ? configManager.GetApiKey(selectedModel.ProviderName, envVarName)
+        : null;
 
     if (apiKey is null)
     {
@@ -127,7 +105,6 @@ while (true)
             Console.WriteLine("API key required for this provider.");
             continue;
         }
-        // Save to config
         configManager.SetApiKey(selectedModel.ProviderName, apiKey);
         Console.WriteLine("  (saved to config)");
     }
@@ -138,16 +115,16 @@ while (true)
     Console.WriteLine($"  Base URL: {selectedModel.BaseUrl}");
     Console.WriteLine("Type your message (or 'exit' to go back, 'reset' to clear history).\n");
 
-    var agent = new Agent(selectedModel, cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.")
-    {
-        MaxTokens = cfg.DefaultMaxTokens,
-        Temperature = cfg.DefaultTemperature,
-        ApiKey = apiKey,
-        MaxIterations = cfg.MaxIterations
-    };
+    // Create session via host
+    var session = host.CreateSession(
+        selectedModel,
+        cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.");
+    session.MaxTokens = cfg.DefaultMaxTokens;
+    session.Temperature = cfg.DefaultTemperature;
+    session.ApiKey = apiKey;
+    session.MaxIterations = cfg.MaxIterations;
 
-    RegisterTools(agent);
-    await ChatLoop(agent);
+    await ChatLoop(session);
 }
 
 Console.WriteLine("Goodbye!");
@@ -157,14 +134,14 @@ return;
 // Local functions
 // ---------------------------------------------------------------
 
-void ShowMenu(Dictionary<string, Model> allModels, AgentConfig cfg)
+void ShowMenu(IModelCatalog catalog, AgentConfig cfg)
 {
     // Only show models for providers with API keys, or free models
     var visible = new List<(string Key, Model Model, bool IsFree)>();
-    foreach (var (key, m) in allModels)
+    foreach (var (key, m) in catalog.Models)
     {
         bool hasKey = cfg.ApiKeys.ContainsKey(m.ProviderName);
-        bool isFree = IsFreeModel(m);
+        bool isFree = catalog.IsFreeModel(key);
         if (hasKey || isFree)
             visible.Add((key, m, isFree && !hasKey));
     }
@@ -311,90 +288,6 @@ void ShowConfig(ConfigManager cm)
     }
 }
 
-async Task RefreshModels(ProviderFactory factory, Dictionary<string, Model> models, ConfigManager cm, bool quiet)
-{
-    if (!quiet)
-    {
-        Console.WriteLine("\n--- Refreshing models ---\n");
-    }
-
-    var before = models.Count;
-    var addedCount = 0;
-
-    void AddDiscovered(string prefix, string id, string name, string provider, ApiType apiType, string baseUrl, int ctx, int maxTokens, bool isFree, bool? supportsImages = null)
-    {
-        var key = $"{prefix}:{id}";
-        if (models.ContainsKey(key)) return;
-
-        var model = MakeModel(id, name, provider, apiType, baseUrl, ctx, maxTokens,
-            supportsImages ?? (apiType != ApiType.AnthropicMessages));
-        if (factory.TryGetProvider(provider, out var p))
-            model.Provider = p;
-        models[key] = model;
-
-        if (isFree) freeModels.Add(key);
-
-        addedCount++;
-        if (!quiet && addedCount <= 15)
-            Console.WriteLine($"    + {id} [{apiType}]{(isFree ? " free" : "")}");
-    }
-
-    // OpenCode Zen
-    if (factory.TryGetProvider("opencode", out var zen) && zen is OpenCodeProvider ocp)
-    {
-        if (!quiet) Console.Write("OpenCode Zen... ");
-        var entries = await ocp.FetchModelsAsync();
-        if (!quiet) Console.WriteLine($"{entries.Count} models");
-        foreach (var e in entries)
-        {
-            var apiType = OpenCodeProvider.ResolveApiType(e.Id);
-            var baseUrl = apiType == ApiType.AnthropicMessages
-                ? "https://opencode.ai/zen"
-                : "https://opencode.ai/zen/v1";
-            AddDiscovered("zen", e.Id, $"{e.Name} (Zen)", "opencode", apiType, baseUrl, 128000, 16384, false);
-        }
-    }
-
-    // OpenCode Go
-    if (factory.TryGetProvider("opencode-go", out var go) && go is OpenCodeProvider ocpGo)
-    {
-        if (!quiet) Console.Write("OpenCode Go... ");
-        var entries = await ocpGo.FetchModelsAsync();
-        if (!quiet) Console.WriteLine($"{entries.Count} models");
-        foreach (var e in entries)
-            AddDiscovered("go", e.Id, $"{e.Name} (Go)", "opencode-go", ApiType.OpenAiChat,
-                "https://opencode.ai/zen/go/v1", 128000, 16384, false);
-    }
-
-    // OpenRouter
-    if (factory.TryGetProvider("openrouter", out var or) && or is OpenRouterProvider orp)
-    {
-        if (!quiet) Console.Write("OpenRouter... ");
-        var entries = await orp.FetchModelsAsync();
-        if (!quiet) Console.WriteLine($"{entries.Count} models");
-        foreach (var e in entries)
-        {
-            var isFree = e.PromptCost == 0 && e.CompletionCost == 0;
-            var displayName = e.Name.Length > 36 ? e.Name[..33] + "..." : e.Name;
-            AddDiscovered("or", e.Id, $"{displayName} (OR)", "openrouter", ApiType.OpenAiChat,
-                "https://openrouter.ai/api/v1", e.ContextLength, 16384, isFree);
-        }
-    }
-
-    var totalAdded = models.Count - before;
-    if (!quiet || totalAdded > 0)
-    {
-        Console.WriteLine($"  {models.Count} models total ({freeModels.Count} free){(!quiet ? "" : "")}");
-    }
-
-    // Re-resolve providers
-    foreach (var m in models.Values)
-    {
-        if (m.Provider is null && factory.TryGetProvider(m.ProviderName, out var p))
-            m.Provider = p;
-    }
-}
-
 string? PromptForApiKey(string provider)
 {
     Console.Write($"  Enter your {provider} API key (will be saved to config): ");
@@ -421,87 +314,14 @@ string ReadPassword()
     return sb.ToString();
 }
 
-static Model MakeModel(string id, string name, string provider, ApiType apiType, string baseUrl,
-    int ctx, int maxTokens, bool supportsImages = false)
-{
-    return new Model
-    {
-        Id = id,
-        Name = name,
-        ProviderName = provider,
-        ApiType = apiType,
-        BaseUrl = baseUrl,
-        ContextWindow = ctx,
-        MaxTokens = maxTokens,
-        SupportsImages = supportsImages
-    };
-}
-
-static void RegisterTools(Agent agent)
-{
-    agent.AddTool(new Tool
-    {
-        Name = "calculator",
-        Description = "Evaluate a mathematical expression",
-        Parameters = ToolSchema.Object(
-            new Dictionary<string, System.Text.Json.JsonElement>
-            {
-                ["expression"] = ToolSchema.StringProperty("The mathematical expression to evaluate (e.g., '2 + 2 * 3')")
-            },
-            new[] { "expression" }
-        ),
-        ExecuteAsync = (id, args) =>
-        {
-            var expr = args?.GetValueOrDefault("expression")?.ToString() ?? "";
-            try
-            {
-                var result = new DataTable().Compute(expr, "");
-                return Task.FromResult($"```\n{expr} = {result}\n```");
-            }
-            catch (Exception ex)
-            {
-                return Task.FromResult($"Error evaluating '{expr}': {ex.Message}");
-            }
-        }
-    });
-
-    agent.AddTool(new Tool
-    {
-        Name = "get_current_time",
-        Description = "Get the current date and time",
-        Parameters = ToolSchema.Object(
-            new Dictionary<string, System.Text.Json.JsonElement>
-            {
-                ["timezone"] = ToolSchema.StringProperty("Optional timezone (e.g., 'UTC', 'America/New_York')")
-            },
-            new[] { "timezone" }
-        ),
-        ExecuteAsync = (id, args) =>
-        {
-            var tz = args?.GetValueOrDefault("timezone")?.ToString();
-            var now = string.IsNullOrEmpty(tz)
-                ? DateTime.UtcNow
-                : TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, tz!);
-            return Task.FromResult(
-                $"Current time: {now:yyyy-MM-dd HH:mm:ss} {(string.IsNullOrEmpty(tz) ? "UTC" : tz)}");
-        }
-    });
-
-    // File system tool
-    agent.AddTool(FileTools.Create(Environment.CurrentDirectory));
-
-    // Shell execution tool
-    agent.AddTool(ShellTools.Create(Environment.CurrentDirectory));
-}
-
-async Task ChatLoop(Agent agent)
+async Task ChatLoop(AgentSession session)
 {
     var editor = new LineEditor();
 
     while (true)
     {
         var input = editor.ReadLine("You: ");
-        if (input is null) break;  // Ctrl+C at empty prompt
+        if (input is null) break;
         if (string.IsNullOrWhiteSpace(input)) continue;
 
         if (input.Equals("exit", StringComparison.OrdinalIgnoreCase))
@@ -509,7 +329,7 @@ async Task ChatLoop(Agent agent)
 
         if (input.Equals("reset", StringComparison.OrdinalIgnoreCase))
         {
-            agent.Reset();
+            session.Reset();
             Console.WriteLine("(Conversation reset)");
             continue;
         }
@@ -519,18 +339,15 @@ async Task ChatLoop(Agent agent)
         using var cts = new CancellationTokenSource();
         var interrupted = false;
 
-        // Start agent in background; poll for Escape in foreground
-        var agentTask = ReadAgentOutput(agent, input, cts.Token);
+        var sessionTask = ReadSessionOutput(session, input, cts.Token);
 
-        while (!agentTask.IsCompleted)
+        while (!sessionTask.IsCompleted)
         {
-            // Check for Escape key every 100ms
             var delay = Task.Delay(100);
-            var completed = await Task.WhenAny(agentTask, delay);
+            var completed = await Task.WhenAny(sessionTask, delay);
 
             if (completed == delay)
             {
-                // Poll for Escape
                 while (Console.KeyAvailable)
                 {
                     var key = Console.ReadKey(intercept: true);
@@ -546,8 +363,7 @@ async Task ChatLoop(Agent agent)
             if (interrupted) break;
         }
 
-        // Wait for agent to finish cancelling
-        try { await agentTask; }
+        try { await sessionTask; }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
@@ -565,42 +381,52 @@ async Task ChatLoop(Agent agent)
     }
 }
 
-async Task ReadAgentOutput(Agent agent, string input, CancellationToken ct)
+async Task ReadSessionOutput(AgentSession session, string input, CancellationToken ct)
 {
-    await foreach (var evt in agent.PromptAsync(input, ct: ct))
+    await foreach (var evt in session.PromptAsync(input, ct))
     {
-        switch (evt.Type)
+        switch (evt)
         {
-            case AgentEventType.TextDelta:
-                Console.Write(evt.Text);
+            case AssistantTextDeltaEvent delta:
+                Console.Write(delta.Delta);
                 break;
 
-            case AgentEventType.ToolCallStart:
-                Console.Write($"\n\n  \u2699\ufe0f Calling tool: {evt.Text}... ");
+            case ToolInvocationStartedEvent toolStart:
+                Console.Write($"\n\n  \u2699\ufe0f Calling tool: {toolStart.ToolName}... ");
                 break;
 
-            case AgentEventType.ToolCallEnd:
+            case ToolInvocationCompletedEvent toolEnd:
                 Console.WriteLine("done.");
                 Console.WriteLine();
-                DisplayHelpers.DisplayTruncated(evt.ToolResult ?? "", cfg.DisplayLineWidth, cfg.DisplayMaxLines);
+                DisplayHelpers.DisplayTruncated(toolEnd.Result, cfg.DisplayLineWidth, cfg.DisplayMaxLines);
                 Console.WriteLine();
                 break;
 
-            case AgentEventType.Response:
+            case AssistantResponseCompleteEvent complete:
                 Console.WriteLine();
-                if (evt.Usage is not null)
-                {
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.WriteLine(
-                        $"\n(Used {evt.Usage.InputTokens}\u2191 + {evt.Usage.OutputTokens}\u2193 tokens)");
-                    Console.ResetColor();
-                }
-                break;
-
-            case AgentEventType.Error:
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"\n[Error: {evt.ErrorMessage}]");
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine(
+                    $"\n(Used {complete.InputTokens}\u2191 + {complete.OutputTokens}\u2193 tokens)");
                 Console.ResetColor();
+                break;
+
+            case SessionErrorEvent error:
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"\n[Error: {error.Message}]");
+                Console.ResetColor();
+                break;
+
+            case UserMessageEvent:
+            case SessionStartedEvent:
+            case TurnStartedEvent:
+            case SessionEndedEvent:
+            case SessionResetEvent:
+            case PermissionRequestedEvent:
+            case ExecutionStartedEvent:
+            case ExecutionCompletedEvent:
+            case ProviderStateUpdatedEvent:
+            case ProviderStateClearedEvent:
+                // Not displayed in console
                 break;
         }
     }
@@ -608,10 +434,6 @@ async Task ReadAgentOutput(Agent agent, string input, CancellationToken ct)
 
 public static class DisplayHelpers
 {
-    /// <summary>
-    /// Write output to the console, truncating every line to <paramref name="lineWidth"/>
-    /// to prevent terminal wrapping, and capping at <paramref name="maxLines"/> lines.
-    /// </summary>
     public static void DisplayTruncated(string text, int lineWidth, int maxLines)
     {
         if (string.IsNullOrEmpty(text)) return;
@@ -630,7 +452,7 @@ public static class DisplayHelpers
             var prev = Console.ForegroundColor;
             Console.ForegroundColor = ConsoleColor.DarkGray;
             Console.WriteLine($"  [display limit: {maxLines}/{totalLines:N0} lines, width {lineWidth}]");
-            Console.ForegroundColor = prev;
+            Console.ResetColor();
         }
     }
 
