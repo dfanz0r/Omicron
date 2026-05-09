@@ -31,6 +31,7 @@ public sealed class AgentSession
     private readonly IPermissionService _permissions;
     private readonly IProviderStateManager _providerState;
     private readonly SessionEventWriter _writer;
+    private readonly HashSet<string> _usedToolCallIds = new(StringComparer.Ordinal);
     private bool _sessionStarted;
 
     /// <summary>Session identity.</summary>
@@ -141,6 +142,7 @@ public sealed class AgentSession
     public void Reset()
     {
         _messages.Clear();
+        _usedToolCallIds.Clear();
         _providerState.ClearSession(Id);
         Emit(new SessionResetEvent(
             EventId.New(), 0, DateTimeOffset.UtcNow, Id));
@@ -276,16 +278,20 @@ public sealed class AgentSession
             // Handle tool calls
             if (toolCalls.Count > 0)
             {
+                var normalizedToolCalls = toolCalls
+                    .Select(tc => tc with { Id = ReserveUniqueToolCallId(tc.Id) })
+                    .ToList();
+
                 _messages.Add(new Message
                 {
                     Role = MessageRole.Assistant,
                     Text = fullText,
                     Reasoning = fullReasoning,
-                    ToolCalls = [.. toolCalls],
+                    ToolCalls = [.. normalizedToolCalls],
                     Timestamp = DateTime.UtcNow
                 });
 
-                foreach (var toolCall in toolCalls)
+                foreach (var toolCall in normalizedToolCalls)
                 {
                     ct.ThrowIfCancellationRequested();
                     var toolCallId = new ToolCallId(toolCall.Id);
@@ -379,6 +385,23 @@ public sealed class AgentSession
     // ================================================================
     // Helpers
     // ================================================================
+
+    private string ReserveUniqueToolCallId(string? providerId)
+    {
+        var baseId = string.IsNullOrWhiteSpace(providerId)
+            ? $"call_{Guid.NewGuid():N}"[..17]
+            : providerId;
+
+        if (_usedToolCallIds.Add(baseId))
+            return baseId;
+
+        for (var i = 2; ; i++)
+        {
+            var candidate = $"{baseId}_{i}";
+            if (_usedToolCallIds.Add(candidate))
+                return candidate;
+        }
+    }
 
     private OmicronEvent Emit(OmicronEvent evt)
     {

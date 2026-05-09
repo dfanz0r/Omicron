@@ -132,6 +132,62 @@ public class AgentSessionTests
     }
 
     [Fact]
+    public async Task AgentSession_DeduplicatesRepeatedProviderToolCallIds()
+    {
+        var eventSink = new InMemoryEventSink();
+        var toolRegistry = new ToolRegistry();
+        toolRegistry.Register(new ToolDefinition(
+            "test_tool", "A test tool", null,
+            ctx => Task.FromResult(new ToolResult($"result for {ctx.ToolCallId.Value}"))));
+
+        var permissionService = new AllowAllPermissionService();
+        var providerState = new ProviderStateManager(new InMemoryProviderConversationStateStore(), eventSink);
+
+        var fakeProvider = new FakeProvider();
+        fakeProvider.Responses.Add(() => Task.FromResult(new LlmResult
+        {
+            ToolCalls = [new ToolCallContent("dup_call", "test_tool", new Dictionary<string, object?>())],
+            StopReason = StopReason.ToolUse
+        }));
+        fakeProvider.Responses.Add(() => Task.FromResult(new LlmResult
+        {
+            ToolCalls = [new ToolCallContent("dup_call", "test_tool", new Dictionary<string, object?>())],
+            StopReason = StopReason.ToolUse
+        }));
+        fakeProvider.Responses.Add(() => Task.FromResult(new LlmResult
+        {
+            Text = "done",
+            StopReason = StopReason.Stop
+        }));
+
+        var model = new Model
+        {
+            Id = "test-model",
+            Name = "Test Model",
+            ProviderName = "fake",
+            Provider = fakeProvider
+        };
+
+        var session = new AgentSession(
+            model, toolRegistry, permissionService, eventSink, providerState);
+
+        await foreach (var _ in session.PromptAsync("Use tools twice")) { }
+
+        var assistantToolCallIds = session.Messages
+            .Where(m => m.Role == MessageRole.Assistant)
+            .SelectMany(m => m.ToolCalls ?? [])
+            .Select(tc => tc.Id)
+            .ToList();
+        var toolResultIds = session.Messages
+            .Where(m => m.Role == MessageRole.ToolResult)
+            .Select(m => m.ToolCallId)
+            .ToList();
+
+        Assert.Equal(["dup_call", "dup_call_2"], assistantToolCallIds);
+        Assert.Equal(["dup_call", "dup_call_2"], toolResultIds);
+    }
+
+    [Fact]
     public async Task AgentSession_Reset_ClearsProviderState()
     {
         var eventSink = new InMemoryEventSink();
