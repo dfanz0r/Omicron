@@ -1,6 +1,6 @@
 # Implementation Plan 0002: Provider API Abstraction and Stateful Responses Support
 
-Status: Ready to start  
+Status: Implemented (see docs/code-reviews/0017-plan-2-final-review.md)  
 Inputs: `docs/reports/stateful-vs-stateless-api-abstraction.md`, RFC 0001, RFC 0009, `docs/rfcs/IMPLEMENTATION-BASELINE.md`, Implementation Plans 0001 and 0001.5
 
 ## Purpose

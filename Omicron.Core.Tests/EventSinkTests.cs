@@ -50,12 +50,10 @@ public class EventSinkTests
     public void OmicronEvent_HasIdSequenceTimestampAndSession()
     {
         var sessionId = SessionId.New();
-        var evt = new SessionStartedEvent(
-            EventId.New(), 1, DateTimeOffset.UtcNow, sessionId,
-            AgentId.New(), "gpt-4o", "openai");
+        var evt = new SessionStartedEvent(new EventEnvelope(EventId.New(), 7, DateTimeOffset.UtcNow, sessionId), AgentId.New(), "gpt-4o", "openai");
 
         Assert.NotEqual(default, evt.Id);
-        Assert.Equal(1, evt.Sequence);
+        Assert.Equal(7, evt.Sequence);
         Assert.Equal(sessionId, evt.SessionId);
     }
 
@@ -64,7 +62,7 @@ public class EventSinkTests
     {
         var sessionId = SessionId.New();
         var evt = new UserMessageEvent(
-            EventId.New(), 1, DateTimeOffset.UtcNow, sessionId, "Hello");
+                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, sessionId), "Hello");
 
         Assert.Equal("Hello", evt.Text);
     }
@@ -74,7 +72,7 @@ public class EventSinkTests
     {
         var sessionId = SessionId.New();
         var evt = new AssistantTextDeltaEvent(
-            EventId.New(), 1, DateTimeOffset.UtcNow, sessionId, "Hello", null);
+                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, sessionId), "Hello", null);
 
         Assert.Equal("Hello", evt.Delta);
         Assert.Null(evt.ReasoningDelta);
@@ -85,13 +83,13 @@ public class EventSinkTests
     {
         var sessionId = SessionId.New();
         var evt = new AssistantResponseCompleteEvent(
-            EventId.New(), 1, DateTimeOffset.UtcNow, sessionId,
-            "Full response", "reasoning", 10, 20);
+                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, sessionId), "Full response", "reasoning",
+                new TokenUsage(10, 20));
 
         Assert.Equal("Full response", evt.FullText);
         Assert.Equal("reasoning", evt.ReasoningText);
-        Assert.Equal(10, evt.InputTokens);
-        Assert.Equal(20, evt.OutputTokens);
+        Assert.Equal(10, evt.Usage.InputTokens);
+        Assert.Equal(20, evt.Usage.OutputTokens);
     }
 
     [Fact]
@@ -99,9 +97,7 @@ public class EventSinkTests
     {
         var sessionId = SessionId.New();
         var args = new Dictionary<string, object?> { ["expr"] = "2+2" };
-        var evt = new ToolInvocationStartedEvent(
-            EventId.New(), 1, DateTimeOffset.UtcNow, sessionId,
-            new ToolCallId("call_1"), "calculator", args);
+        var evt = new ToolInvocationStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), new ToolCallId("call_1"), "calculator", args);
 
         Assert.Equal("calculator", evt.ToolName);
         Assert.Equal("2+2", evt.Arguments["expr"]?.ToString());
@@ -112,8 +108,8 @@ public class EventSinkTests
     {
         var sessionId = SessionId.New();
         var evt = new ToolInvocationCompletedEvent(
-            EventId.New(), 1, DateTimeOffset.UtcNow, sessionId,
-            new ToolCallId("call_1"), "calculator", "42", IsError: false);
+            new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId),
+            new ToolCallId("call_1"), "calculator", "42", false);
 
         Assert.Equal("42", evt.Result);
         Assert.False(evt.IsError);
@@ -124,9 +120,7 @@ public class EventSinkTests
     {
         var sink = new InMemoryEventSink();
         var sessionId = SessionId.New();
-        var evt = new SessionStartedEvent(
-            EventId.New(), 1, DateTimeOffset.UtcNow, sessionId,
-            AgentId.New(), "gpt-4o", "openai");
+        var evt = new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), AgentId.New(), "gpt-4o", "openai");
 
         sink.Emit(evt);
 
@@ -142,10 +136,10 @@ public class EventSinkTests
         var session2 = SessionId.New();
 
         sink.Emit(new SessionStartedEvent(
-            EventId.New(), 1, DateTimeOffset.UtcNow, session1,
+            new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, session1),
             AgentId.New(), "gpt-4o", "openai"));
         sink.Emit(new SessionStartedEvent(
-            EventId.New(), 2, DateTimeOffset.UtcNow, session2,
+            new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, session2),
             AgentId.New(), "claude-3", "anthropic"));
 
         var session1Events = sink.GetSessionEvents(session1);
@@ -161,7 +155,7 @@ public class EventSinkTests
         var sink = new InMemoryEventSink();
         var sessionId = SessionId.New();
         sink.Emit(new SessionStartedEvent(
-            EventId.New(), 1, DateTimeOffset.UtcNow, sessionId,
+            new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId),
             AgentId.New(), "gpt-4o", "openai"));
 
         sink.Clear();
@@ -177,9 +171,11 @@ public class EventSinkTests
 
         var events = new List<OmicronEvent>
         {
-            new SessionStartedEvent(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId, agentId, "m1", "p1"),
-            new UserMessageEvent(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId, "Hello"),
-            new TurnStartedEvent(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId, "Hello")
+            new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), agentId, "m1", "p1"),
+            new UserMessageEvent(
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), "Hello"),
+            new TurnStartedEvent(
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), "Hello")
         };
 
         var stamped = sink.EmitBatch(events);
@@ -203,14 +199,14 @@ public class EventSinkTests
         var agentId = AgentId.New();
 
         sink.Emit(new SessionStartedEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, sessionId, agentId, "m1", "p1"));
+            new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), agentId, "m1", "p1"));
         var s2 = SessionId.New();
         sink.Emit(new SessionStartedEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, s2, agentId, "m2", "p2"));
+            new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, s2), agentId, "m2", "p2"));
         sink.Emit(new UserMessageEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, sessionId, "Hello"));
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), "Hello"));
         sink.Emit(new AssistantTextDeltaEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, s2, "Delta", null));
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, s2), "Delta", null));
 
         var all = sink.GetAllEvents();
 
@@ -226,3 +222,7 @@ public class EventSinkTests
                 $"Session event {i} out of order");
     }
 }
+
+
+
+

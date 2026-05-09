@@ -3,11 +3,13 @@ namespace Omicron.Core.Events;
 /// <summary>
 /// Lightweight event writer scoped to a session.
 /// Delegates to the shared IEventSink for sequence stamping.
-/// Consumers still supply EventId.New() and DateTimeOffset.UtcNow
-/// for each event; the sink stamps only the sequence number.
+/// Provides a convenience Envelope() factory so producers can write:
 ///
-/// Helper factory methods (NewEventId, Now) are provided for
-/// callers that do not need custom IDs/timestamps.
+///   yield return Emit(new UserMessageEvent(_writer.Envelope(), text));
+///
+/// instead of repeating:
+///
+///   new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, Id)
 /// </summary>
 public sealed class SessionEventWriter
 {
@@ -27,15 +29,21 @@ public sealed class SessionEventWriter
     }
 
     /// <summary>
-    /// Emit an event. The sink stamps the global sequence number;
-    /// producers pass sequence=0. Returns the stamped copy.
+    /// Emit an event. The sink stamps the global sequence number
+    /// (replacing Envelope.Sequence = 0 with the stamped value).
+    /// Returns the stamped copy.
     /// </summary>
     public T Emit<T>(T evt) where T : OmicronEvent
         => (T)_sink.Emit(evt);
 
-    /// <summary>Shortcut for EventId.New().</summary>
-    public static EventId NewEventId() => EventId.New();
-
-    /// <summary>Shortcut for DateTimeOffset.UtcNow.</summary>
-    public static DateTimeOffset Now() => DateTimeOffset.UtcNow;
+    /// <summary>
+    /// Create a standard EventEnvelope for this session.
+    /// Producers should use this when constructing events:
+    ///
+    ///   _writer.Emit(new UserMessageEvent(_writer.Envelope(), text));
+    ///
+    /// The sink stamps the sequence number; pass 0.
+    /// </summary>
+    public EventEnvelope Envelope()
+        => new(EventId.New(), 0, DateTimeOffset.UtcNow, SessionId);
 }

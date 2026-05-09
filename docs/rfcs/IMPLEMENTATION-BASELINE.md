@@ -22,7 +22,8 @@ The broader package layout in RFC 0001 is still the target architecture. The cur
 
 `Omicron.Core.OmicronHost` is the central composition root. It wires together:
 
-- `IEventSink` / `InMemoryEventSink` — global event log with monotonic sequence stamping.
+- `IEventSink` / `PersistentEventSink` over `InMemoryEventSink` — authoritative event stream with global monotonic sequence stamping plus session-store persistence.
+- `ISessionStore` — constructor-injected, get-only session catalog/event store; defaults to `InMemorySessionStore` and can be supplied as `JsonlSessionStore`.
 - `IToolRegistry` / `ToolRegistry` — tool registration and lookup.
 - `ICommandRegistry` / `CommandRegistry` — command registration and lookup.
 - `IPermissionService` / `AllowAllPermissionService` — permission gating.
@@ -60,6 +61,7 @@ Event contracts in `Omicron.Core.Events`:
 - `IEventSink.Emit()` stamps a global monotonic sequence number on every event, replacing any per-producer sequence.
 - `IEventSink.EmitBatch()` returns the stamped events.
 - `InMemoryEventSink` provides `GetAllEvents()` and `GetSessionEvents(SessionId)`.
+- `PersistentEventSink` wraps another sink and synchronously appends stamped events to `ISessionStore` in sequence order. It exposes an `OnError` callback and `PersistedCount` / `FailureCount` diagnostics.
 
 ### Event Delivery Model
 
@@ -67,9 +69,9 @@ Events flow through two channels:
 
 1. **Async stream** (`AgentSession.PromptAsync()` / `ContinueAsync()`) — yields session-scoped events for live UI rendering: turns, user messages, assistant deltas, tool invocations, errors.
    `Reset()` is synchronous and emits `SessionResetEvent` only to the sink, not the async stream.
-2. **IEventSink** (shared event log) — receives all session events plus nested service events from `LocalExecutionBroker` (execution start/complete) and `ProviderStateManager` (state updated/cleared).
+2. **IEventSink** (shared authoritative event log) — receives all session events plus nested service events from `LocalExecutionBroker` (execution start/complete) and `ProviderStateManager` (state updated/cleared). In the default host, this is a `PersistentEventSink`, so events are also appended to the configured `ISessionStore`.
 
-Nested service events are **not** yielded from the async stream. Frontends that need the complete event audit log should read from `IEventSink.GetSessionEvents()` or `GetAllEvents()`. The async stream is a convenient live UI feed; the sink is the authoritative durability stream.
+Nested service events are **not** yielded from the async stream. Frontends that need the complete event audit log should read from `IEventSink.GetSessionEvents()` / `GetAllEvents()` where available, or from `ISessionStore.ReadEventsAsync(...)` for persisted session history. The async stream is a convenient live UI feed; the sink/session store path is the authoritative durability stream.
 
 Event hierarchy:
 - `SessionStartedEvent`, `SessionResetEvent`, `SessionErrorEvent`
@@ -106,6 +108,23 @@ Implemented/declared API shapes:
 - `GoogleGenAi` is declared in `ApiType` but not a complete first-class provider path yet.
 
 Provider support includes SSE parsing, tool-call accumulation, usage data where available, and reasoning-text preservation/echo behavior needed by reasoning models such as DeepSeek-style APIs.
+
+Provider compatibility/state support includes:
+
+- `ProviderCompatibility` and `ProviderStoragePolicy` for model-level capabilities and storage behavior.
+- `CompatibilityDetector` for stateful/stateless support decisions.
+- `ToolCallIdMapper` and session-level duplicate tool-call ID normalization for replay/provider edge cases.
+- OpenRouter Responses routing defaults to stateless full-context replay (`PreferStateless`, no `previous_response_id`) unless provider-managed continuation is known reliable.
+
+## Canonical Conversation Seed
+
+`Omicron.Core.Models.Conversation` implements the current MVP canonical conversation seed:
+
+- `ConversationTurn`, `MessageId`, `ConversationContent`, `ProviderOrigin`.
+- content item records for text, images, reasoning, tool calls, and tool results.
+- `ConversationConverter` converts between the existing flat `Message` model and canonical turns.
+
+This is not yet the sole runtime transcript model; `AgentSession` still keeps `List<Message>` internally and providers bridge from that representation. The canonical records exist to avoid baking provider-specific wire formats into the long-term model.
 
 ## Implemented Tools
 
@@ -152,16 +171,30 @@ Implemented in `Omicron.CLI`:
 - OpenRouter defaults broad model compatibility to Chat, but known Responses-capable model families route to `OpenAiResponses` and use `https://openrouter.ai/api/v1/responses`.
 - The fallback catalog includes `or:openai/gpt-5.4-mini` as a non-free OpenRouter Responses test model; it appears in the CLI when an OpenRouter API key is configured.
 - OpenRouter Responses models default to stateless full-context requests (`PreferStateless`, no `previous_response_id`) because routed backends may reject `function_call_output` continuation against provider-managed state.
-- Provider-specific discovery logic is centralized in the catalog; `IModelDiscoveryProvider` deferred to Plan 2.
+- Provider-specific discovery logic is centralized in the catalog; a dedicated `IModelDiscoveryProvider` abstraction remains deferred.
+
+## Persistence
+
+Implemented in Plan 3 Phase 1 (see `docs/implementation-plans/0003-core-persistence-workspace-foundations.md`):
+
+- `ISessionStore` interface — `CreateSessionAsync`, `ListSessionsAsync`, `GetSessionAsync`, `UpdateSessionAsync`, `AppendEventsAsync`, `ReadEventsAsync`, `GetEventCountAsync`.
+- `SessionRecord` — persisted session metadata (id, model, provider, API type, timestamps, status).
+- `InMemorySessionStore` — thread-safe in-memory implementation for tests/default.
+- `JsonlSessionStore` — file-backed store using per-session `.jsonl` files + `sessions.json` index with `$type` discriminator for polymorphic event serialization.
+- `PersistentEventSink : IEventSink` — wraps any sink and synchronously persists stamped events to `ISessionStore` in sequence order. Exposes `OnError` callback and `PersistedCount`/`FailureCount` counters.
+- `OmicronHost` constructor-injects `ISessionStore` (get-only). The host-level `Events` sink is a `PersistentEventSink` that all producers (`AgentSession`, `ProviderStateManager`, `LocalExecutionBroker`) use, so session, provider-state, and execution events are all durable.
+
+The event sink stamps a global monotonic sequence number on every event before persistence, ensuring ordering is preserved in the event store.
+
+Persistence failure is non-fatal for runtime — errors are reported through the `OnError` callback for logging/debugging.
 
 ## Not Yet Implemented
 
 The following RFC capabilities remain planned/research unless otherwise noted:
 
-- Persistence/session event logs, snapshots, replay, and resume.
+- Session replay projection, snapshots/checkpoints, and resume (Plan 3 Phase 2+).
 - Workspace VFS, overlays, transactions, diff manifests, and host reconciliation.
-- Stateful OpenAI Responses API as a first-class provider path.
-- Canonical conversation format / typed item APIs.
+- Full typed-item canonical conversation runtime replacing the flat `Message` transcript.
 - Plugin model, semantic UI abstractions, panels/status providers, WASM runtime.
 - Text store, grapheme/cell layout, frame buffers, differential renderer, app-owned fullscreen scrollback.
 - Embedded PTY/virtual terminal panes.
@@ -188,16 +221,28 @@ Tests are split into focused files by subsystem:
 - `ModelCatalogTests.cs` — ModelCatalogService free model tracking.
 - `AgentTests.cs` (now `CoreModelTests`) — Message, ToolSchema, Model, LlmResult, UsageInfo.
 - `ProviderTests.cs` — provider parsing/shape behavior.
+- `ProviderCompatibilityTests.cs` — ProviderCompatibility, storage policy, model compatibility.
+- `CompatibilityDetectorTests.cs` — API type/compatibility/storage-policy detection.
+- `ToolCallIdMapperTests.cs` — tool call ID normalization.
+- `ConversationConverterTests.cs` — canonical conversation round-trip.
+- `OpenAiResponsesShapeTests.cs` — Responses API request/parser tests.
+- `SessionStoreTests.cs` — InMemorySessionStore CRUD, events, range queries, concurrency.
+- `JsonlSessionStoreTests.cs` — JSONL file-backed store reopen/round-trip/count/duplicate/integration.
+- `PersistenceIntegrationTests.cs` — OmicronHost + ISessionStore end-to-end, provider-state/execution event persistence, error callback, persist counts.
 
-`dotnet test Omicron.slnx --nologo` passes with 0 warnings, 0 errors.
+`dotnet test Omicron.slnx --nologo` passes with **219 tests**, 0 warnings, 0 errors.
 
-## Plan 2 Handoff Points
+## Current Handoff Points
 
-After Plan 1.5 cleanup, Plan 2 should use:
+The next core phase should build on:
 
 - `AgentSession` as the only active runtime path.
+- host-level `PersistentEventSink` + `ISessionStore` as the durable event/session foundation.
 - `IModelCatalog` for model/API classification.
 - `IProviderRegistry` for provider lookup/registration.
 - `ProviderStateManager` for `previous_response_id`, conversation IDs, session affinity, and state-clearing behavior.
-- `IEventSink` / `SessionEventWriter` for provider request, response, fallback, and state events.
+- `IEventSink` / `SessionEventWriter` for session, provider-state, execution, and audit events.
+- canonical conversation records/converters as the seed for future typed transcript work.
 - `ToolRegistry` and `ToolInvocationContext` for tool/function-call round trips.
+
+Immediate next target: Plan 3 Phase 2 session replay projection over persisted `OmicronEvent` streams.

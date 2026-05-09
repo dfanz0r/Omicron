@@ -151,7 +151,7 @@ public class ProviderStateTests
         // Event should carry normalized key
         var log = sink.GetAllEvents();
         var updatedEvent = log.OfType<ProviderStateUpdatedEvent>().Single();
-        Assert.Equal("openai", updatedEvent.Key.ProviderName);
+        Assert.Equal("openai", updatedEvent.State.Key.ProviderName);
     }
 
     [Fact]
@@ -499,3 +499,6 @@ public class ProviderStateTests
         Assert.Null(state);
     }
 }
+
+
+

@@ -56,8 +56,9 @@ public sealed class ProviderStateManager : IProviderStateManager
         var normalizedState = state with { Key = normalizedKey };
         _store.Set(normalizedState);
         _eventSink?.Emit(new ProviderStateUpdatedEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, normalizedKey.SessionId,
-            normalizedKey, normalizedState.PreviousResponseId, normalizedState.ConversationId, reason));
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, normalizedKey.SessionId),
+                new ProviderStateSnapshot(normalizedKey, normalizedState.PreviousResponseId, normalizedState.ConversationId, normalizedState.SessionAffinityKey, normalizedState.ProviderMetadata, normalizedState.StoragePolicy),
+                reason));
         return normalizedState;
     }
 
@@ -68,7 +69,7 @@ public sealed class ProviderStateManager : IProviderStateManager
         {
             var normalizedKey = key.Normalize();
             _eventSink?.Emit(new ProviderStateClearedEvent(
-                EventId.New(), 0, DateTimeOffset.UtcNow, normalizedKey.SessionId, normalizedKey, reason));
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, normalizedKey.SessionId), normalizedKey, reason));
         }
     }
 
@@ -78,10 +79,11 @@ public sealed class ProviderStateManager : IProviderStateManager
         foreach (var key in removedKeys)
         {
             _eventSink?.Emit(new ProviderStateClearedEvent(
-                EventId.New(), 0, DateTimeOffset.UtcNow, sessionId, key, reason));
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), key, reason));
         }
     }
 
     public IReadOnlyList<ProviderStateKey> GetSessionKeys(SessionId sessionId)
         => _store.GetSessionKeys(sessionId);
 }
+

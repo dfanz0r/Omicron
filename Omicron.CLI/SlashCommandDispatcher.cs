@@ -388,11 +388,11 @@ internal sealed class SlashCommandDispatcher
     {
         UserMessageEvent u => Truncate(u.Text, 60),
         AssistantTextDeltaEvent atd => Truncate(atd.Delta, 60),
-        AssistantResponseCompleteEvent arc => $"{arc.InputTokens}↑ {arc.OutputTokens}↓",
+        AssistantResponseCompleteEvent arc => $"{arc.Usage.InputTokens}↑ {arc.Usage.OutputTokens}↓",
         ToolInvocationStartedEvent tis => $"{tis.ToolName} {FormatArgs(tis.Arguments)}",
         ToolInvocationCompletedEvent tic => $"{tic.ToolName} {(tic.IsError ? "error" : "ok")}",
         SessionErrorEvent se => $"{se.Code}: {Truncate(se.Message, 60)}",
-        ProviderStateUpdatedEvent psu => $"prev_resp_id={Truncate(psu.PreviousResponseId ?? "(none)", 30)} reason={psu.Reason}",
+        ProviderStateUpdatedEvent psu => $"prev_resp_id={Truncate(psu.State.PreviousResponseId ?? "(none)", 30)} reason={psu.Reason}",
         ProviderStateClearedEvent psc => $"reason={psc.Reason}",
         SessionStartedEvent => ctx.Model.Name,
         TurnStartedEvent => Truncate(evt.ToString() ?? "", 60),
@@ -461,3 +461,4 @@ internal sealed class SlashCommandDispatcher
         return value.Length <= maxLength ? value : value[..(maxLength - 1)] + "\u2026";
     }
 }
+

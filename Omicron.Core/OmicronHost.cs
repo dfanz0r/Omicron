@@ -54,23 +54,35 @@ public sealed class OmicronHost
     /// <summary>Raw provider conversation state store (for direct store access).</summary>
     public IProviderConversationStateStore ProviderState { get; }
 
+    /// <summary>Session store for persistence. Set at construction and not replacable — Events captures it.</summary>
+    public ISessionStore SessionStore { get; }
+
     /// <summary>
     /// Creates a new OmicronHost with the default service implementations.
+    /// InMemoryEventSink (EventLog) is the primary event bus.
+    /// Events wraps EventLog with PersistentEventSink so all producers
+    /// (AgentSession, ProviderStateManager, LocalExecutionBroker)
+    /// write stamped events to the ISessionStore.
     /// </summary>
-    public OmicronHost(string workspaceRoot)
+    /// <param name="workspaceRoot">Root directory for workspace file access.</param>
+    /// <param name="sessionStore">Optional session store for event persistence. Defaults to InMemorySessionStore.</param>
+    public OmicronHost(string workspaceRoot, ISessionStore? sessionStore = null)
     {
         // Infrastructure
         EventLog = new InMemoryEventSink();
-        Events = EventLog;
+        SessionStore = sessionStore ?? new InMemorySessionStore();
 
-        // Services
+        // Wrap EventLog with PersistentEventSink so all event producers persist events.
+        Events = new PersistentEventSink(EventLog, SessionStore);
+
+        // Nested service producers use Events directly so their output is persisted
         Tools = new ToolRegistry();
         Commands = new CommandRegistry();
         Permissions = new AllowAllPermissionService();
         Workspace = new HostWorkspace(workspaceRoot);
-        Execution = new LocalExecutionBroker(EventLog);
+        Execution = new LocalExecutionBroker(Events);
         ProviderState = new InMemoryProviderConversationStateStore();
-        ProviderStateManager = new ProviderStateManager(ProviderState, EventLog);
+        ProviderStateManager = new ProviderStateManager(ProviderState, Events);
         Providers = new ProviderFactory();
         ModelCatalog = new ModelCatalogService(Providers);
         Extensions = new ExtensionRegistry(Tools, Commands);
@@ -94,6 +106,8 @@ public sealed class OmicronHost
 
     /// <summary>
     /// Create a new agent session for a given model.
+    /// Creates a session record in the store and returns the session.
+    /// Events are automatically persisted through the host-level PersistentEventSink.
     /// </summary>
     public AgentSession CreateSession(
         Models.Model model,
@@ -108,6 +122,16 @@ public sealed class OmicronHost
             ProviderStateManager,
             systemPrompt,
             apiKey);
+
+        // Create session record in store so events can be persisted
+        var request = new SessionCreateRequest(
+            model.Id,
+            model.ProviderName,
+            model.ApiType,
+            SessionId: session.Id,
+            SystemPrompt: systemPrompt);
+        SessionStore.CreateSessionAsync(request).GetAwaiter().GetResult();
+
         return session;
     }
 }

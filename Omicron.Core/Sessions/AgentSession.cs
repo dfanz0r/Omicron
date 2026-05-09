@@ -30,7 +30,7 @@ public sealed class AgentSession
     private readonly IToolRegistry _toolRegistry;
     private readonly IPermissionService _permissions;
     private readonly IProviderStateManager _providerState;
-    private readonly SessionEventWriter _writer;
+    private SessionEventWriter _writer;
     private readonly HashSet<string> _usedToolCallIds = new(StringComparer.Ordinal);
     private bool _sessionStarted;
 
@@ -97,19 +97,20 @@ public sealed class AgentSession
         if (!_sessionStarted)
         {
             _sessionStarted = true;
+
             yield return Emit(new SessionStartedEvent(
-                EventId.New(), 0, DateTimeOffset.UtcNow, Id, AgentId,
-                Model.Id, Model.ProviderName));
+                _writer.Envelope(),
+                AgentId, Model.Id, Model.ProviderName));
         }
 
         // Add user message
         _messages.Add(Message.UserMessage(text));
         yield return Emit(new UserMessageEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, Id, text));
+            _writer.Envelope(), text));
 
         // TurnStartedEvent marks the start of this model turn
         yield return Emit(new TurnStartedEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, Id, text));
+                _writer.Envelope(), text));
 
         await foreach (var evt in RunLoopAsync(ct))
             yield return evt;
@@ -128,7 +129,7 @@ public sealed class AgentSession
                 "No conversation to continue. Call PromptAsync first.");
 
         yield return Emit(new TurnStartedEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, Id, "(continuation)"));
+                _writer.Envelope(), "(continuation)"));
 
         await foreach (var evt in RunLoopAsync(ct))
             yield return evt;
@@ -145,7 +146,7 @@ public sealed class AgentSession
         _usedToolCallIds.Clear();
         _providerState.ClearSession(Id);
         Emit(new SessionResetEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, Id));
+                _writer.Envelope()));
     }
 
     // ================================================================
@@ -210,7 +211,7 @@ public sealed class AgentSession
                         if (evt.ReasoningText is not null)
                             reasoningText.Append(evt.ReasoningText);
                         yield return Emit(new AssistantTextDeltaEvent(
-                            EventId.New(), 0, DateTimeOffset.UtcNow, Id,
+                            _writer.Envelope(),
                             evt.Delta ?? string.Empty, evt.ReasoningText));
                         break;
 
@@ -255,7 +256,7 @@ public sealed class AgentSession
             {
                 var errMsg = errorMessage ?? "Unknown error";
                 yield return Emit(new SessionErrorEvent(
-                    EventId.New(), 0, DateTimeOffset.UtcNow, Id,
+                    _writer.Envelope(),
                     errMsg, "provider_error"));
                 _messages.Add(new Message
                 {
@@ -291,13 +292,21 @@ public sealed class AgentSession
                     Timestamp = DateTime.UtcNow
                 });
 
+                // Emit an AssistantResponseCompleteEvent to mark the tool-call turn boundary.
+                // This gives the session projector an unambiguous signal to flush the
+                // tool-call batch before subsequent ToolInvocationStarted events arrive.
+                yield return Emit(new AssistantResponseCompleteEvent(
+                    _writer.Envelope(),
+                    fullText, fullReasoning,
+                    TokenUsage.From(usage)));
+
                 foreach (var toolCall in normalizedToolCalls)
                 {
                     ct.ThrowIfCancellationRequested();
                     var toolCallId = new ToolCallId(toolCall.Id);
 
                     yield return Emit(new ToolInvocationStartedEvent(
-                        EventId.New(), 0, DateTimeOffset.UtcNow, Id,
+                        _writer.Envelope(),
                         toolCallId, toolCall.Name,
                         toolCall.Arguments ?? new Dictionary<string, object?>()));
 
@@ -320,7 +329,7 @@ public sealed class AgentSession
 
                         // Emit permission event
                         yield return Emit(new PermissionRequestedEvent(
-                            EventId.New(), 0, DateTimeOffset.UtcNow, Id,
+                            _writer.Envelope(),
                             permRequest.Action, permResult.Allowed));
 
                         if (!permResult.Allowed)
@@ -352,7 +361,7 @@ public sealed class AgentSession
                         toolCall.Id, toolCall.Name, resultText, isError));
 
                     yield return Emit(new ToolInvocationCompletedEvent(
-                        EventId.New(), 0, DateTimeOffset.UtcNow, Id,
+                        _writer.Envelope(),
                         toolCallId, toolCall.Name, resultText, isError));
                 }
 
@@ -369,15 +378,15 @@ public sealed class AgentSession
             });
 
             yield return Emit(new AssistantResponseCompleteEvent(
-                EventId.New(), 0, DateTimeOffset.UtcNow, Id,
+                _writer.Envelope(),
                 fullText, fullReasoning,
-                usage?.InputTokens ?? 0, usage?.OutputTokens ?? 0));
+                TokenUsage.From(usage)));
 
             yield break;
         }
 
         yield return Emit(new SessionErrorEvent(
-            EventId.New(), 0, DateTimeOffset.UtcNow, Id,
+            _writer.Envelope(),
             $"Agent reached maximum iteration limit ({MaxIterations}).",
             "max_iterations"));
     }
@@ -405,6 +414,8 @@ public sealed class AgentSession
 
     private OmicronEvent Emit(OmicronEvent evt)
     {
+        // The event sink (possibly wrapped in PersistentEventSink) handles stamping and persistence.
         return _writer.Emit(evt);
     }
 }
+

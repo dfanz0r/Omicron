@@ -6,7 +6,8 @@ namespace Omicron.Core.Events;
 /// can be swapped in later without changing event producers.
 ///
 /// The sink stamps a global monotonic sequence number on every event.
-/// Producers should pass sequence=0; the sink overwrites it.
+/// Producers should pass Envelope.Sequence = 0; the sink overwrites it
+/// via stamped = evt with { Envelope = evt.Envelope with { Sequence = seq } }.
 /// </summary>
 public interface IEventSink
 {
@@ -35,7 +36,7 @@ public sealed class InMemoryEventSink : IEventSink
     public OmicronEvent Emit(OmicronEvent evt)
     {
         var seq = Interlocked.Increment(ref _globalSequence);
-        var stamped = evt with { Sequence = seq };
+        var stamped = evt with { Envelope = evt.Envelope with { Sequence = seq } };
         lock (_lock)
         {
             _events.Add(stamped);
@@ -51,7 +52,7 @@ public sealed class InMemoryEventSink : IEventSink
             foreach (var evt in events)
             {
                 var seq = Interlocked.Increment(ref _globalSequence);
-                var s = evt with { Sequence = seq };
+                var s = evt with { Envelope = evt.Envelope with { Sequence = seq } };
                 _events.Add(s);
                 stamped.Add(s);
             }

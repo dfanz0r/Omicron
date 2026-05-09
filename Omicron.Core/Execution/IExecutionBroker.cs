@@ -88,14 +88,14 @@ public sealed class LocalExecutionBroker : IExecutionBroker
             string? output, string? error)
         {
             _eventSink?.Emit(new ExecutionCompletedEvent(
-                EventId.New(), 0, DateTimeOffset.UtcNow, sessionId, request.Command,
-                exitCode, durationMs, timedOut, toolCallId, cancelled, error));
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId),
+                request.Command, exitCode, durationMs, timedOut, toolCallId, cancelled, error));
             return new ExecutionResult(output ?? "", exitCode, durationMs, timedOut, cancelled, error);
         }
 
         // Emit execution started event
         _eventSink?.Emit(new ExecutionStartedEvent(
-            EventId.New(), 0, startTime, sessionId,
+            new EventEnvelope(EventId.New(), 0, startTime, sessionId),
             request.Command, request.WorkingDirectory ?? Environment.CurrentDirectory, toolCallId));
         var shellDef = KnownShells.FirstOrDefault(s => s.Id == shellId);
 
@@ -370,3 +370,5 @@ public sealed class LocalExecutionBroker : IExecutionBroker
         public string? WinArgs { get; init; }
     }
 }
+
+

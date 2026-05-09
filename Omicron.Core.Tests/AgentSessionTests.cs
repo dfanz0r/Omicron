@@ -55,8 +55,8 @@ public class AgentSessionTests
 
         var responseComplete = events.OfType<AssistantResponseCompleteEvent>().Single();
         Assert.Equal("Hello from AI!", responseComplete.FullText);
-        Assert.Equal(10, responseComplete.InputTokens);
-        Assert.Equal(20, responseComplete.OutputTokens);
+        Assert.Equal(10, responseComplete.Usage.InputTokens);
+        Assert.Equal(20, responseComplete.Usage.OutputTokens);
 
         var logEvents = eventSink.GetSessionEvents(session.Id);
         Assert.NotEmpty(logEvents);
@@ -322,3 +322,6 @@ public class AgentSessionTests
         Assert.Equal(firstSessionStartCount, allLog.OfType<SessionStartedEvent>().Count());
     }
 }
+
+
+

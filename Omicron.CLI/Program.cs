@@ -401,7 +401,7 @@ async Task ReadSessionOutput(AgentSession session, string input, CancellationTok
                 Console.WriteLine();
                 Console.ForegroundColor = ConsoleColor.DarkGray;
                 Console.WriteLine(
-                    $"\n(Used {complete.InputTokens}\u2191 + {complete.OutputTokens}\u2193 tokens)");
+                    $"\n(Used {complete.Usage.InputTokens}\u2191 + {complete.Usage.OutputTokens}\u2193 tokens)");
                 Console.ResetColor();
                 break;
 
@@ -460,3 +460,4 @@ public static class DisplayHelpers
     public static string Truncate(this string value, int maxLength)
         => value.Length <= maxLength ? value : value[..(maxLength - 1)] + "\u2026";
 }
+
