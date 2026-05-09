@@ -48,6 +48,22 @@ public class ModelCatalogTests
     }
 
     [Fact]
+    public void ModelCatalogService_SeedsOpenRouterGpt54MiniResponsesModel()
+    {
+        var providerFactory = new ProviderFactory();
+        var catalog = new ModelCatalogService(providerFactory);
+
+        Assert.True(catalog.Models.TryGetValue("or:openai/gpt-5.4-mini", out var model));
+        Assert.Equal("openai/gpt-5.4-mini", model.Id);
+        Assert.Equal("openrouter", model.ProviderName);
+        Assert.Equal(ApiType.OpenAiResponses, model.ApiType);
+        Assert.Equal("https://openrouter.ai/api/v1", model.BaseUrl);
+        Assert.False(model.GetEffectiveCompatibility().SupportsPreviousResponseId);
+        Assert.Equal(ProviderStoragePolicy.PreferStateless, model.StoragePolicy);
+        Assert.False(catalog.IsFreeModel("or:openai/gpt-5.4-mini"));
+    }
+
+    [Fact]
     public async Task OpenRouterDiscovery_OnlyMarksZeroPricedModelsAsFree()
     {
         var json = """

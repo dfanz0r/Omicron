@@ -1,3 +1,4 @@
+using System.Net;
 using Omicron.Core.Models;
 using Omicron.Core.Providers;
 using Xunit;
@@ -67,13 +68,33 @@ public class FakeProvider : IChatProvider
         {
             Type = StreamEventType.Done,
             StopReason = result.StopReason,
-            Usage = result.Usage
+            Usage = result.Usage,
+            Delta = result.ResponseId
         };
     }
 }
 
 public class ProviderTests
 {
+    private sealed class CaptureHandler(string responseBody) : HttpMessageHandler
+    {
+        public Uri? RequestUri { get; private set; }
+        public string? RequestBody { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestUri = request.RequestUri;
+            RequestBody = request.Content is null
+                ? null
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseBody)
+            };
+        }
+    }
+
     [Fact]
     public void ProviderFactory_RegistersDefaults()
     {
@@ -225,5 +246,60 @@ public class ProviderTests
 
         Assert.Equal(StopReason.Error, result.StopReason);
         Assert.Equal("API error occurred", result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task OpenRouterProvider_ResponsesModel_RoutesToResponsesEndpoint()
+    {
+        const string response = "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_or_123\",\"status\":\"completed\"}}\n\n";
+        var handler = new CaptureHandler(response);
+        var provider = new OpenRouterProvider(new HttpClient(handler));
+        var model = new Model
+        {
+            Id = "openai/gpt-5.5",
+            ProviderName = "openrouter",
+            ApiType = ApiType.OpenAiResponses,
+            BaseUrl = "https://openrouter.ai/api/v1"
+        };
+
+        var events = new List<StreamEvent>();
+        await foreach (var evt in provider.StreamAsync(
+            model,
+            [Message.UserMessage("Hello")],
+            null,
+            null,
+            new ChatOptions()))
+        {
+            events.Add(evt);
+        }
+
+        Assert.Equal("https://openrouter.ai/api/v1/responses", handler.RequestUri?.ToString());
+        Assert.Contains(events, e => e.Type == StreamEventType.Done && e.Delta == "resp_or_123");
+    }
+
+    [Fact]
+    public async Task OpenRouterProvider_ChatModel_RoutesToChatCompletionsEndpoint()
+    {
+        const string response = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n";
+        var handler = new CaptureHandler(response);
+        var provider = new OpenRouterProvider(new HttpClient(handler));
+        var model = new Model
+        {
+            Id = "openai/gpt-4o",
+            ProviderName = "openrouter",
+            ApiType = ApiType.OpenAiChat,
+            BaseUrl = "https://openrouter.ai/api/v1"
+        };
+
+        await foreach (var _ in provider.StreamAsync(
+            model,
+            [Message.UserMessage("Hello")],
+            null,
+            null,
+            new ChatOptions()))
+        {
+        }
+
+        Assert.Equal("https://openrouter.ai/api/v1/chat/completions", handler.RequestUri?.ToString());
     }
 }

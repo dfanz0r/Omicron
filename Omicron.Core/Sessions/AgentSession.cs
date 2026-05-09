@@ -159,13 +159,21 @@ public sealed class AgentSession
         {
             ct.ThrowIfCancellationRequested();
 
+            // Build provider state context for stateful API support
+            var providerStateKey = ProviderStateKey.Create(
+                Id, AgentId, Model.ProviderName, Model.Id, Model.ApiType);
+            var currentProviderState = _providerState.Get(providerStateKey);
+
             var options = new ChatOptions
             {
                 ApiKey = ApiKey,
                 Temperature = Temperature,
                 MaxTokens = MaxTokens,
                 ReasoningEffort = ReasoningEffort,
-                CancellationToken = ct
+                CancellationToken = ct,
+                ProviderStateKey = providerStateKey,
+                CurrentProviderState = currentProviderState,
+                StoragePolicy = Model.StoragePolicy
             };
 
             // Build tool list from registry
@@ -186,6 +194,7 @@ public sealed class AgentSession
             StopReason stopReason = StopReason.Stop;
             string? errorMessage = null;
             UsageInfo? usage = null;
+            string? responseId = null;
 
             // Stream response
             await foreach (var evt in provider.StreamAsync(
@@ -210,6 +219,26 @@ public sealed class AgentSession
                     case StreamEventType.Done:
                         stopReason = evt.StopReason ?? StopReason.Stop;
                         usage = evt.Usage;
+                        responseId = evt.Delta; // Capture response ID for stateful APIs
+
+                        // Only persist provider state for APIs that support stateful continuation.
+                        // Stateless APIs (Chat, Anthropic) should not create continuation state.
+                        var supportsStateful = CompatibilityDetector.SupportsStatefulContinuation(
+                            Model.ApiType, Model.StoragePolicy);
+                        var compat = Model.GetEffectiveCompatibility();
+                        if (supportsStateful && compat.SupportsPreviousResponseId && responseId is not null)
+                        {
+                            var newState = new ProviderTurnState(
+                                providerStateKey,
+                                responseId,
+                                null,
+                                null,
+                                null)
+                            {
+                                StoragePolicy = Model.StoragePolicy
+                            };
+                            _providerState.Set(newState, reason: "response_completed");
+                        }
                         break;
 
                     case StreamEventType.Error:

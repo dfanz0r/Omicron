@@ -11,9 +11,9 @@ namespace Omicron.Core.Providers;
 /// OpenRouter provides access to hundreds of models from many providers
 /// through a single OpenAI-compatible API.
 ///
-/// All models use the OpenAI Chat Completions API shape, routed through
-/// OpenRouter's base URL. OpenRouter handles model→provider routing
-/// server-side based on the model ID.
+/// Models use OpenAI-compatible API shapes routed through OpenRouter's
+/// base URL. Chat Completions is the default; models classified as
+/// Responses-capable use OpenRouter's /responses endpoint.
 ///
 /// Supports OpenRouter-specific features like provider routing preferences
 /// via additional headers (sent in the request).
@@ -35,7 +35,8 @@ public class OpenRouterProvider : ShapeBasedProvider
     {
         _shapes = new Dictionary<ApiType, IApiShape>
         {
-            [ApiType.OpenAiChat] = new OpenAiChatShape()
+            [ApiType.OpenAiChat] = new OpenAiChatShape(),
+            [ApiType.OpenAiResponses] = new OpenAiResponsesShape()
         };
     }
 

@@ -47,4 +47,37 @@ public class Model
 
     /// <summary>Resolved provider instance that will handle requests for this model.</summary>
     public IChatProvider? Provider { get; set; }
+
+    /// <summary>
+    /// Provider compatibility descriptors for this specific model.
+    /// If set, overrides the default compatibility for the ApiType.
+    /// </summary>
+    public ProviderCompatibility? Compatibility { get; set; }
+
+    /// <summary>
+    /// Storage policy for provider-managed state.
+    /// Controls whether previous_response_id and store flags are used.
+    /// Stateless by default; Responses models should set to AllowProviderStateNoStore
+    /// via CompatibilityDetector.
+    /// </summary>
+    public ProviderStoragePolicy StoragePolicy { get; set; } = ProviderStoragePolicy.PreferStateless;
+
+    /// <summary>
+    /// Get the effective compatibility for this model.
+    /// Returns the model-specific override if set, otherwise the default for the ApiType.
+    /// </summary>
+    public ProviderCompatibility GetEffectiveCompatibility()
+    {
+        if (Compatibility is not null)
+            return Compatibility;
+
+        return ApiType switch
+        {
+            ApiType.OpenAiChat => ProviderCompatibility.OpenAiChat,
+            ApiType.OpenAiResponses => ProviderCompatibility.OpenAiResponses,
+            ApiType.AnthropicMessages => ProviderCompatibility.AnthropicMessages,
+            ApiType.GoogleGenAi => ProviderCompatibility.GoogleGenAi,
+            _ => ProviderCompatibility.OpenAiChat
+        };
+    }
 }

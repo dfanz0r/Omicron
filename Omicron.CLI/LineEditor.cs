@@ -14,7 +14,13 @@ namespace Omicron.CLI;
 public class LineEditor
 {
     private readonly StringBuilder _buf = new();
+    private readonly Func<string, IReadOnlyList<string>>? _completionProvider;
     private int _col;
+
+    public LineEditor(Func<string, IReadOnlyList<string>>? completionProvider = null)
+    {
+        _completionProvider = completionProvider;
+    }
 
     // Paste mode: enters when multiple keys are queued in the console
     // buffer.  Exits when the buffer is drained (KeyAvailable == false).
@@ -92,6 +98,13 @@ public class LineEditor
                 return _buf.ToString();
             }
 
+            // Tab completion
+            if (key.Key == ConsoleKey.Tab)
+            {
+                Complete(prompt);
+                continue;
+            }
+
             // Backspace
             if (key.Key == ConsoleKey.Backspace && _col > 0)
             {
@@ -156,6 +169,63 @@ public class LineEditor
         _col++;
         Console.Write(c);
         RedrawTail();
+    }
+
+    private void Complete(string prompt)
+    {
+        if (_completionProvider is null || _col != _buf.Length)
+            return;
+
+        var current = _buf.ToString();
+        var completions = _completionProvider(current)
+            .Where(c => !string.IsNullOrWhiteSpace(c))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (completions.Count == 0)
+            return;
+
+        if (completions.Count == 1)
+        {
+            ReplaceBuffer(prompt, completions[0]);
+            return;
+        }
+
+        var commonPrefix = LongestCommonPrefix(completions);
+        if (commonPrefix.Length > current.Length)
+        {
+            ReplaceBuffer(prompt, commonPrefix);
+            return;
+        }
+
+        Console.WriteLine();
+        foreach (var completion in completions)
+            Console.WriteLine($"  {completion}");
+        Console.Write(prompt + current);
+    }
+
+    private void ReplaceBuffer(string prompt, string value)
+    {
+        _buf.Clear();
+        _buf.Append(value);
+        _col = _buf.Length;
+        Console.Write("\r" + new string(' ', Console.WindowWidth - 1) + "\r" + prompt + value);
+    }
+
+    private static string LongestCommonPrefix(IReadOnlyList<string> values)
+    {
+        if (values.Count == 0) return string.Empty;
+        var prefix = values[0];
+        for (var i = 1; i < values.Count; i++)
+        {
+            while (!values[i].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                if (prefix.Length == 0) return string.Empty;
+                prefix = prefix[..^1];
+            }
+        }
+        return prefix;
     }
 
     private void RedrawTail()

@@ -51,6 +51,7 @@ public sealed class ProviderStateManager : IProviderStateManager
     public ProviderTurnState Set(ProviderTurnState state, string? reason = null)
     {
         // Normalize the key so storage and event identity are consistent
+        // Use 'with' to preserve all init-only properties (StoragePolicy, etc.)
         var normalizedKey = state.Key.Normalize();
         var normalizedState = state with { Key = normalizedKey };
         _store.Set(normalizedState);

@@ -1,6 +1,9 @@
 using Omicron.Core.Events;
 using Omicron.Core.Models;
+using Omicron.Core.Permissions;
+using Omicron.Core.Providers;
 using Omicron.Core.Sessions;
+using Omicron.Core.Tools;
 using Xunit;
 
 namespace Omicron.Core.Tests;
@@ -239,5 +242,260 @@ public class ProviderStateTests
         Assert.Equal(2, clearEvents.Count);
         Assert.All(clearEvents, e => Assert.Equal("reset_all", e.Reason));
         Assert.All(clearEvents, e => Assert.Equal(sessionId, e.SessionId));
+    }
+
+    [Fact]
+    public void InMemoryProviderConversationStateStore_PreservesStoragePolicy()
+    {
+        var store = new InMemoryProviderConversationStateStore();
+        var sessionId = SessionId.New();
+        var key = ProviderStateKey.Create(sessionId, AgentId.New(), "openai", "gpt-5.5", ApiType.OpenAiResponses);
+
+        // Set state with custom StoragePolicy
+        var state = new ProviderTurnState(key, "resp_123", null, null, null)
+        {
+            StoragePolicy = ProviderStoragePolicy.AllowProviderStoredState
+        };
+        store.Set(state);
+
+        // Retrieve and verify StoragePolicy is preserved
+        var retrieved = store.Get(key);
+        Assert.NotNull(retrieved);
+        Assert.Equal(ProviderStoragePolicy.AllowProviderStoredState, retrieved!.StoragePolicy);
+        Assert.Equal("resp_123", retrieved.PreviousResponseId);
+    }
+
+    [Fact]
+    public void ProviderStateManager_Set_PreservesStoragePolicy()
+    {
+        var sink = new InMemoryEventSink();
+        var manager = new ProviderStateManager(new InMemoryProviderConversationStateStore(), sink);
+        var sessionId = SessionId.New();
+        var key = ProviderStateKey.Create(sessionId, AgentId.New(), "openai", "gpt-5.5", ApiType.OpenAiResponses);
+
+        var state = new ProviderTurnState(key, "resp_123", null, null, null)
+        {
+            StoragePolicy = ProviderStoragePolicy.AllowProviderStoredState
+        };
+        manager.Set(state, reason: "test");
+
+        var retrieved = manager.Get(key);
+        Assert.NotNull(retrieved);
+        Assert.Equal(ProviderStoragePolicy.AllowProviderStoredState, retrieved!.StoragePolicy);
+        Assert.Equal("resp_123", retrieved.PreviousResponseId);
+    }
+
+    [Fact]
+    public async Task AgentSession_PersistsResponseIdOnDone()
+    {
+        var eventSink = new InMemoryEventSink();
+        var toolRegistry = new ToolRegistry();
+        var permissionService = new AllowAllPermissionService();
+        var providerStateManager = new ProviderStateManager(new InMemoryProviderConversationStateStore(), eventSink);
+
+        var model = new Model
+        {
+            Id = "gpt-5.5",
+            Name = "GPT-5.5",
+            ProviderName = "fake",
+            ApiType = ApiType.OpenAiResponses,
+            StoragePolicy = ProviderStoragePolicy.AllowProviderStateNoStore,
+            Provider = new FakeProvider
+            {
+                Responses =
+                {
+                    () => Task.FromResult(new LlmResult
+                    {
+                        Text = "Response from AI",
+                        StopReason = StopReason.Stop,
+                        Usage = new UsageInfo(10, 20),
+                        ResponseId = "resp_abc123"
+                    })
+                }
+            }
+        };
+
+        var session = new AgentSession(
+            model, toolRegistry, permissionService, eventSink, providerStateManager);
+
+        var events = new List<OmicronEvent>();
+        await foreach (var evt in session.PromptAsync("Hello"))
+            events.Add(evt);
+
+        // Verify the response ID was persisted in provider state
+        var key = ProviderStateKey.Create(session.Id, session.AgentId, "fake", "gpt-5.5", ApiType.OpenAiResponses);
+        var state = providerStateManager.Get(key);
+        Assert.NotNull(state);
+        Assert.Equal("resp_abc123", state!.PreviousResponseId);
+
+        // Verify event was emitted
+        var log = eventSink.GetSessionEvents(session.Id);
+        Assert.Contains(log, e => e is ProviderStateUpdatedEvent);
+    }
+
+    [Fact]
+    public async Task ChatModel_DoesNotPersistResponseId()
+    {
+        var eventSink = new InMemoryEventSink();
+        var toolRegistry = new ToolRegistry();
+        var permissionService = new AllowAllPermissionService();
+        var providerStateManager = new ProviderStateManager(new InMemoryProviderConversationStateStore(), eventSink);
+
+        var model = new Model
+        {
+            Id = "gpt-4o",
+            Name = "GPT-4o",
+            ProviderName = "fake",
+            ApiType = ApiType.OpenAiChat,  // Chat API — should NOT persist
+            StoragePolicy = ProviderStoragePolicy.PreferStateless,
+            Provider = new FakeProvider
+            {
+                Responses =
+                {
+                    () => Task.FromResult(new LlmResult
+                    {
+                        Text = "Hello!",
+                        StopReason = StopReason.Stop,
+                        ResponseId = "chatcmpl_xyz"
+                    })
+                }
+            }
+        };
+
+        var session = new AgentSession(
+            model, toolRegistry, permissionService, eventSink, providerStateManager);
+
+        await foreach (var _ in session.PromptAsync("Hi")) { }
+
+        var key = ProviderStateKey.Create(session.Id, session.AgentId, "fake", "gpt-4o", ApiType.OpenAiChat);
+        var state = providerStateManager.Get(key);
+        Assert.Null(state);
+
+        var log = eventSink.GetSessionEvents(session.Id);
+        Assert.DoesNotContain(log, e => e is ProviderStateUpdatedEvent);
+    }
+
+    [Fact]
+    public async Task AnthropicModel_DoesNotPersistResponseId()
+    {
+        var eventSink = new InMemoryEventSink();
+        var toolRegistry = new ToolRegistry();
+        var permissionService = new AllowAllPermissionService();
+        var providerStateManager = new ProviderStateManager(new InMemoryProviderConversationStateStore(), eventSink);
+
+        var model = new Model
+        {
+            Id = "claude-sonnet-4",
+            Name = "Claude Sonnet 4",
+            ProviderName = "fake",
+            ApiType = ApiType.AnthropicMessages,  // Anthropic — should NOT persist
+            StoragePolicy = ProviderStoragePolicy.PreferStateless,
+            Provider = new FakeProvider
+            {
+                Responses =
+                {
+                    () => Task.FromResult(new LlmResult
+                    {
+                        Text = "Hello!",
+                        StopReason = StopReason.Stop,
+                        ResponseId = "msg_xyz"
+                    })
+                }
+            }
+        };
+
+        var session = new AgentSession(
+            model, toolRegistry, permissionService, eventSink, providerStateManager);
+
+        await foreach (var _ in session.PromptAsync("Hi")) { }
+
+        var key = ProviderStateKey.Create(session.Id, session.AgentId, "fake", "claude-sonnet-4", ApiType.AnthropicMessages);
+        var state = providerStateManager.Get(key);
+        Assert.Null(state);
+
+        var log = eventSink.GetSessionEvents(session.Id);
+        Assert.DoesNotContain(log, e => e is ProviderStateUpdatedEvent);
+    }
+
+    [Fact]
+    public async Task ResponsesModel_PreferStateless_DoesNotPersistResponseId()
+    {
+        var eventSink = new InMemoryEventSink();
+        var toolRegistry = new ToolRegistry();
+        var permissionService = new AllowAllPermissionService();
+        var providerStateManager = new ProviderStateManager(new InMemoryProviderConversationStateStore(), eventSink);
+
+        var model = new Model
+        {
+            Id = "gpt-5.5",
+            Name = "GPT-5.5",
+            ProviderName = "fake",
+            ApiType = ApiType.OpenAiResponses,
+            StoragePolicy = ProviderStoragePolicy.PreferStateless,  // PreferStateless — should NOT persist
+            Provider = new FakeProvider
+            {
+                Responses =
+                {
+                    () => Task.FromResult(new LlmResult
+                    {
+                        Text = "Hello!",
+                        StopReason = StopReason.Stop,
+                        ResponseId = "resp_xyz"
+                    })
+                }
+            }
+        };
+
+        var session = new AgentSession(
+            model, toolRegistry, permissionService, eventSink, providerStateManager);
+
+        await foreach (var _ in session.PromptAsync("Hi")) { }
+
+        var key = ProviderStateKey.Create(session.Id, session.AgentId, "fake", "gpt-5.5", ApiType.OpenAiResponses);
+        var state = providerStateManager.Get(key);
+        Assert.Null(state);
+
+        var log = eventSink.GetSessionEvents(session.Id);
+        Assert.DoesNotContain(log, e => e is ProviderStateUpdatedEvent);
+    }
+
+    [Fact]
+    public async Task ResponsesModel_SupportsPreviousResponseIdFalse_DoesNotPersist()
+    {
+        var eventSink = new InMemoryEventSink();
+        var toolRegistry = new ToolRegistry();
+        var permissionService = new AllowAllPermissionService();
+        var providerStateManager = new ProviderStateManager(new InMemoryProviderConversationStateStore(), eventSink);
+
+        var model = new Model
+        {
+            Id = "gpt-5.5",
+            Name = "GPT-5.5",
+            ProviderName = "fake",
+            ApiType = ApiType.OpenAiResponses,
+            StoragePolicy = ProviderStoragePolicy.AllowProviderStateNoStore,
+            Compatibility = new ProviderCompatibility { SupportsPreviousResponseId = false },
+            Provider = new FakeProvider
+            {
+                Responses =
+                {
+                    () => Task.FromResult(new LlmResult
+                    {
+                        Text = "Hello!",
+                        StopReason = StopReason.Stop,
+                        ResponseId = "resp_xyz"
+                    })
+                }
+            }
+        };
+
+        var session = new AgentSession(
+            model, toolRegistry, permissionService, eventSink, providerStateManager);
+
+        await foreach (var _ in session.PromptAsync("Hi")) { }
+
+        var key = ProviderStateKey.Create(session.Id, session.AgentId, "fake", "gpt-5.5", ApiType.OpenAiResponses);
+        var state = providerStateManager.Get(key);
+        Assert.Null(state);
     }
 }

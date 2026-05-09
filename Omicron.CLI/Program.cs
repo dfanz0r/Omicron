@@ -39,70 +39,45 @@ var catalog = host.ModelCatalog;
 // Auto-discover from all providers
 await catalog.DiscoverAsync(quiet: true);
 
+// Create slash command dispatcher
+var slashDispatcher = new SlashCommandDispatcher();
+
+var currentModelKey = SelectStartupModelKey(catalog, cfg);
+if (currentModelKey is null)
+{
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    Console.WriteLine("No models available. Add an API key in config or set a provider API key environment variable.");
+    Console.ResetColor();
+    ShowConfig(configManager);
+    currentModelKey = SelectStartupModelKey(catalog, cfg);
+    if (currentModelKey is null)
+    {
+        Console.WriteLine("Goodbye!");
+        return;
+    }
+}
+
 while (true)
 {
-    ShowMenu(catalog, cfg);
-    var input = Console.ReadLine()?.Trim() ?? "";
-    if (input == "0") break;
-
-    if (input.Equals("config", StringComparison.OrdinalIgnoreCase))
+    if (!catalog.Models.TryGetValue(currentModelKey, out var selectedModel))
     {
-        ShowConfig(configManager);
-        continue;
+        currentModelKey = SelectStartupModelKey(catalog, cfg);
+        if (currentModelKey is null) break;
+        selectedModel = catalog.Models[currentModelKey];
     }
 
-    if (input.Equals("refresh", StringComparison.OrdinalIgnoreCase))
-    {
-        Console.WriteLine("\n--- Refreshing models ---");
-        var added = await catalog.DiscoverAsync(quiet: false);
-        Console.WriteLine($"  {catalog.Models.Count} models total ({catalog.FreeModelKeys.Count} free)");
-        continue;
-    }
-
-    if (!int.TryParse(input, out var choice) || choice < 1)
-    {
-        Console.WriteLine("Invalid choice.");
-        continue;
-    }
-
-    // Build visible list matching ShowMenu ordering
-    var visibleList = catalog.Models
-        .Where(kv => cfg.ApiKeys.ContainsKey(kv.Value.ProviderName) || catalog.IsFreeModel(kv.Key))
-        .OrderBy(kv => kv.Key == cfg.LastModel ? 0 : 1)
-        .ThenBy(kv => kv.Value.ProviderName)
-        .ThenBy(kv => kv.Value.Name)
-        .ToList();
-
-    if (choice > visibleList.Count)
-    {
-        Console.WriteLine("Invalid choice.");
-        continue;
-    }
-
-    var (modelKey, selectedModel) = visibleList[choice - 1];
-    cfg.LastModel = modelKey;
+    cfg.LastModel = currentModelKey;
     configManager.Save();
 
-    // Resolve API key
-    var envVarName = selectedModel.ProviderName.ToLowerInvariant() switch
-    {
-        "openai" => "OPENAI_API_KEY",
-        "anthropic" => "ANTHROPIC_API_KEY",
-        "opencode" or "opencode-go" => "OPENCODE_API_KEY",
-        "openrouter" => "OPENROUTER_API_KEY",
-        _ => null
-    };
-
-    var apiKey = envVarName is not null
-        ? configManager.GetApiKey(selectedModel.ProviderName, envVarName)
-        : null;
-
+    var apiKey = ResolveApiKey(selectedModel);
     if (apiKey is null)
     {
         apiKey = PromptForApiKey(selectedModel.ProviderName);
         if (string.IsNullOrEmpty(apiKey))
         {
             Console.WriteLine("API key required for this provider.");
+            currentModelKey = SelectStartupModelKey(catalog, cfg, excludeKey: currentModelKey);
+            if (currentModelKey is null) break;
             continue;
         }
         configManager.SetApiKey(selectedModel.ProviderName, apiKey);
@@ -113,9 +88,8 @@ while (true)
     Console.WriteLine($"  Provider: {selectedModel.ProviderName}");
     Console.WriteLine($"  API Type: {selectedModel.ApiType}");
     Console.WriteLine($"  Base URL: {selectedModel.BaseUrl}");
-    Console.WriteLine("Type your message (or 'exit' to go back, 'reset' to clear history).\n");
+    Console.WriteLine("Type your message, /help for commands, /models to list, /model <n> to switch.\n");
 
-    // Create session via host
     var session = host.CreateSession(
         selectedModel,
         cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.");
@@ -124,7 +98,18 @@ while (true)
     session.ApiKey = apiKey;
     session.MaxIterations = cfg.MaxIterations;
 
-    await ChatLoop(session);
+    var slashContext = new SlashCommandContext(
+        host, session, selectedModel, currentModelKey, cfg, catalog);
+
+    var loopResult = await ChatLoop(session, slashContext, slashDispatcher);
+    if (loopResult.Reason == ChatLoopExitReason.ExitApp)
+        break;
+    if (loopResult.ModelKey is not null)
+    {
+        currentModelKey = loopResult.ModelKey;
+        continue;
+    }
+    break;
 }
 
 Console.WriteLine("Goodbye!");
@@ -134,60 +119,42 @@ return;
 // Local functions
 // ---------------------------------------------------------------
 
-void ShowMenu(IModelCatalog catalog, AgentConfig cfg)
+IReadOnlyList<KeyValuePair<string, Model>> GetVisibleModels(IModelCatalog catalog, AgentConfig cfg, string? excludeKey = null)
 {
-    // Only show models for providers with API keys, or free models
-    var visible = new List<(string Key, Model Model, bool IsFree)>();
-    foreach (var (key, m) in catalog.Models)
+    return catalog.Models
+        .Where(kv => kv.Key != excludeKey)
+        .Where(kv => catalog.IsFreeModel(kv.Key) || ResolveApiKey(kv.Value) is not null)
+        .OrderBy(kv => kv.Key == cfg.LastModel ? 0 : 1)
+        .ThenBy(kv => kv.Value.ProviderName)
+        .ThenBy(kv => kv.Value.Name)
+        .ToList();
+}
+
+string? SelectStartupModelKey(IModelCatalog catalog, AgentConfig cfg, string? excludeKey = null)
+{
+    var visible = GetVisibleModels(catalog, cfg, excludeKey);
+    if (visible.Count == 0) return null;
+
+    if (cfg.LastModel is not null && excludeKey != cfg.LastModel && visible.Any(kv => kv.Key == cfg.LastModel))
+        return cfg.LastModel;
+
+    return visible[0].Key;
+}
+
+string? ResolveApiKey(Model selectedModel)
+{
+    var envVarName = selectedModel.ProviderName.ToLowerInvariant() switch
     {
-        bool hasKey = cfg.ApiKeys.ContainsKey(m.ProviderName);
-        bool isFree = catalog.IsFreeModel(key);
-        if (hasKey || isFree)
-            visible.Add((key, m, isFree && !hasKey));
-    }
+        "openai" => "OPENAI_API_KEY",
+        "anthropic" => "ANTHROPIC_API_KEY",
+        "opencode" or "opencode-go" => "OPENCODE_API_KEY",
+        "openrouter" => "OPENROUTER_API_KEY",
+        _ => null
+    };
 
-    // Sort: last-used first, then provider, then name
-    visible.Sort((a, b) =>
-    {
-        var aLast = a.Key == cfg.LastModel ? 0 : 1;
-        var bLast = b.Key == cfg.LastModel ? 0 : 1;
-        if (aLast != bLast) return aLast.CompareTo(bLast);
-        var p = string.Compare(a.Model.ProviderName, b.Model.ProviderName, StringComparison.OrdinalIgnoreCase);
-        if (p != 0) return p;
-        return string.Compare(a.Model.Name, b.Model.Name, StringComparison.OrdinalIgnoreCase);
-    });
-
-    Console.WriteLine();
-    var keyCount = cfg.ApiKeys.Count;
-    Console.WriteLine($"Models ({visible.Count} available, {keyCount} provider{(keyCount == 1 ? "" : "s")} with keys)");
-
-    for (int i = 0; i < visible.Count; i++)
-    {
-        var (key, m, freeOnly) = visible[i];
-        var shape = m.ApiType switch
-        {
-            ApiType.OpenAiChat => "Chat",
-            ApiType.AnthropicMessages => "Anthr",
-            ApiType.OpenAiResponses => "Resp",
-            ApiType.GoogleGenAi => "Google",
-            _ => "?"
-        };
-        var marker = key == cfg.LastModel ? "★" : " ";
-        var freeTag = freeOnly ? "free" : "    ";
-        Console.WriteLine($"  [{i + 1,2}] {marker} {freeTag} {m.Name,-36} {m.ProviderName,-12} {shape,-6} {m.ContextWindow,7}");
-    }
-
-    if (visible.Count == 0)
-    {
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("  No models available. Add an API key via [config] or check your connection.");
-        Console.ResetColor();
-    }
-
-    Console.WriteLine("  [ 0] Exit");
-    Console.WriteLine("  [config] Settings & API keys");
-    Console.WriteLine("  [refresh] Re-fetch models from providers");
-    Console.Write("\n> ");
+    return envVarName is not null
+        ? configManager.GetApiKey(selectedModel.ProviderName, envVarName)
+        : null;
 }
 
 void ShowConfig(ConfigManager cm)
@@ -314,9 +281,9 @@ string ReadPassword()
     return sb.ToString();
 }
 
-async Task ChatLoop(AgentSession session)
+async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext slashCtx, SlashCommandDispatcher dispatcher)
 {
-    var editor = new LineEditor();
+    var editor = new LineEditor(input => dispatcher.GetCompletions(input, slashCtx));
 
     while (true)
     {
@@ -324,14 +291,40 @@ async Task ChatLoop(AgentSession session)
         if (input is null) break;
         if (string.IsNullOrWhiteSpace(input)) continue;
 
-        if (input.Equals("exit", StringComparison.OrdinalIgnoreCase))
-            break;
-
-        if (input.Equals("reset", StringComparison.OrdinalIgnoreCase))
+        // Check for slash commands first
+        if (dispatcher.IsCommand(input))
         {
-            session.Reset();
-            Console.WriteLine("(Conversation reset)");
-            continue;
+            var result = dispatcher.Execute(input, slashCtx);
+            switch (result.Action)
+            {
+                case ChatCommandAction.Continue:
+                    continue;
+
+                case ChatCommandAction.ExitSession:
+                    if (result.Message is not null)
+                        Console.WriteLine(result.Message);
+                    return new ChatLoopResult(ChatLoopExitReason.ExitSession);
+
+                case ChatCommandAction.ExitApp:
+                    if (result.Message is not null)
+                        Console.WriteLine(result.Message);
+                    return new ChatLoopResult(ChatLoopExitReason.ExitApp);
+
+                case ChatCommandAction.ResetSession:
+                    continue;
+
+                case ChatCommandAction.ClearProviderState:
+                    continue;
+
+                case ChatCommandAction.SwitchModel:
+                    if (result.ModelKey is not null)
+                    {
+                        if (result.Message is not null)
+                            Console.WriteLine(result.Message);
+                        return new ChatLoopResult(ChatLoopExitReason.ExitSession, result.ModelKey);
+                    }
+                    continue;
+            }
         }
 
         Console.Write("Agent: ");
@@ -379,6 +372,8 @@ async Task ChatLoop(AgentSession session)
             Console.ResetColor();
         }
     }
+
+    return new ChatLoopResult(ChatLoopExitReason.ExitSession);
 }
 
 async Task ReadSessionOutput(AgentSession session, string input, CancellationToken ct)

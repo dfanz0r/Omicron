@@ -2,11 +2,13 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Omicron.Core.Models;
+using Omicron.Core.Sessions;
 
 namespace Omicron.Core.Providers;
 
 /// <summary>
 /// Options for a single LLM call.
+/// Also carries provider state context for stateful API support.
 /// </summary>
 public record ChatOptions
 {
@@ -15,6 +17,33 @@ public record ChatOptions
     public string? ApiKey { get; init; }
     public string? ReasoningEffort { get; init; }
     public CancellationToken CancellationToken { get; init; }
+
+    // ============================================================
+    // Provider state context (for stateful API support)
+    // These are immutable request context fields set by AgentSession.
+    // Providers must NOT mutate session or provider state directly;
+    // all state persistence is owned by AgentSession.
+    // ============================================================
+
+    /// <summary>
+    /// The provider state key scoping this request.
+    /// Set by AgentSession before calling the provider.
+    /// </summary>
+    public ProviderStateKey? ProviderStateKey { get; init; }
+
+    /// <summary>
+    /// The current provider turn state (if any) for stateful continuation.
+    /// When present and the model supports stateful mode, the provider
+    /// should send previous_response_id and only new input items.
+    /// </summary>
+    public ProviderTurnState? CurrentProviderState { get; init; }
+
+    /// <summary>
+    /// Storage policy for this request. Overrides Model.StoragePolicy
+    /// if set. Used by Responses API shape to decide store flag and
+    /// whether to use previous_response_id.
+    /// </summary>
+    public ProviderStoragePolicy? StoragePolicy { get; init; }
 }
 
 /// <summary>
@@ -188,6 +217,7 @@ public abstract class ShapeBasedProvider : IChatProvider
         var endpoint = model.ApiType switch
         {
             ApiType.AnthropicMessages => $"{baseUrl.TrimEnd('/')}/messages",
+            ApiType.OpenAiResponses => $"{baseUrl.TrimEnd('/')}/responses",
             _ => $"{baseUrl.TrimEnd('/')}/chat/completions"
         };
 

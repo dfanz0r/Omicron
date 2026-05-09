@@ -102,7 +102,7 @@ Implemented/declared API shapes:
 
 - `OpenAiChat`
 - `AnthropicMessages`
-- `OpenAiResponses` is declared, but the current shape falls back to Chat Completions formatting/parsing and is **not** a first-class stateful Responses API implementation yet.
+- `OpenAiResponses` has a first-class `/responses` request builder/parser for OpenAI-compatible providers that register the shape, including OpenAI, OpenCode, and OpenRouter.
 - `GoogleGenAi` is declared in `ApiType` but not a complete first-class provider path yet.
 
 Provider support includes SSE parsing, tool-call accumulation, usage data where available, and reasoning-text preservation/echo behavior needed by reasoning models such as DeepSeek-style APIs.
@@ -127,7 +127,9 @@ Implemented in `Omicron.CLI`:
 - Model menu showing keyed/free providers and last-used model first.
 - TOML config UI for API keys, system prompt, max tokens, temperature, display width/line limits, and max iterations.
 - Basic line editor (`LineEditor`) for chat input.
-- Chat loop with `exit`, `reset`, streaming output, Escape-to-cancel polling, tool-call display, and usage display.
+- Chat loop starts directly with the last-used visible model (or first visible model) instead of an initial model-selection menu.
+- Slash-command chat UX with `/help`, `/model`, `/models`, `/model <n|key>`, `/status`, `/tools`, `/events`, `/provider-state`, `/clear-state`, `/reset`, `/exit`, and `/quit`.
+- Chat loop with streaming output, Escape-to-cancel polling, tool-call display, and usage display.
 - Output truncation helper for long tool results.
 - Event stream dispatcher reads from `session.PromptAsync()`. Per the current event-delivery model, only yielded session events reach the live renderer:
   `UserMessageEvent`, `AssistantTextDeltaEvent`, `ToolInvocationStartedEvent`, `ToolInvocationCompletedEvent`, `SessionStartedEvent`, `PermissionRequestedEvent`, `SessionErrorEvent`.
@@ -147,6 +149,9 @@ Implemented in `Omicron.CLI`:
 - `IModelCatalog` / `ModelCatalogService` handles fallback seeding and provider-specific discovery.
 - Free models tracked by catalog keys.
 - OpenRouter discovery marks models free only when parsed prompt and completion prices are both zero; missing/unparseable pricing is treated as not-free.
+- OpenRouter defaults broad model compatibility to Chat, but known Responses-capable model families route to `OpenAiResponses` and use `https://openrouter.ai/api/v1/responses`.
+- The fallback catalog includes `or:openai/gpt-5.4-mini` as a non-free OpenRouter Responses test model; it appears in the CLI when an OpenRouter API key is configured.
+- OpenRouter Responses models default to stateless full-context requests (`PreferStateless`, no `previous_response_id`) because routed backends may reject `function_call_output` continuation against provider-managed state.
 - Provider-specific discovery logic is centralized in the catalog; `IModelDiscoveryProvider` deferred to Plan 2.
 
 ## Not Yet Implemented

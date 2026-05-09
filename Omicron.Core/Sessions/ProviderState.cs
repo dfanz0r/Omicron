@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
+using Omicron.Core.Providers;
 
 namespace Omicron.Core.Sessions;
 
@@ -44,16 +45,48 @@ public readonly record struct ProviderStateKey(
 }
 
 /// <summary>
-/// Minimal provider continuation state for stateful APIs such as OpenAI Responses.
+/// Provider continuation state for stateful APIs such as OpenAI Responses.
 /// Allows the provider to carry conversation/response IDs between turns without
 /// the CLI or core session needing to know the wire-level details.
+///
+/// StoragePolicy controls whether Omicron requests server-side storage and whether
+/// it uses provider continuation tokens (previous_response_id).
 /// </summary>
 public sealed record ProviderTurnState(
     ProviderStateKey Key,
     string? PreviousResponseId,
     string? ConversationId,
     string? SessionAffinityKey,
-    JsonElement? ProviderMetadata);
+    JsonElement? ProviderMetadata)
+{
+    /// <summary>
+    /// Storage policy for this provider turn state.
+    /// Controls whether previous_response_id and store flags are used.
+    /// </summary>
+    public ProviderStoragePolicy StoragePolicy { get; init; } = ProviderStoragePolicy.AllowProviderStateNoStore;
+
+    /// <summary>
+    /// Whether this state represents a stateful continuation (has a PreviousResponseId).
+    /// </summary>
+    public bool IsStateful => !string.IsNullOrEmpty(PreviousResponseId);
+
+    /// <summary>
+    /// Clear the continuation state, keeping only the session identity.
+    /// Used for stateless fallback or fork semantics.
+    /// </summary>
+    public ProviderTurnState ClearContinuation() => this with
+    {
+        PreviousResponseId = null,
+        ConversationId = null,
+        ProviderMetadata = null
+    };
+
+    /// <summary>
+    /// Return true if this state is compatible with the given fork policy.
+    /// By default, fork clears provider continuation unless explicitly continued.
+    /// </summary>
+    public bool CanFork() => false;
+}
 
 /// <summary>
 /// Stores and retrieves provider continuation state scoped by session + provider + model.
@@ -102,9 +135,8 @@ public sealed class InMemoryProviderConversationStateStore : IProviderConversati
     public void Set(ProviderTurnState state)
     {
         var normalizedKey = Normalize(state.Key);
-        var normalizedState = new ProviderTurnState(normalizedKey,
-            state.PreviousResponseId, state.ConversationId,
-            state.SessionAffinityKey, state.ProviderMetadata);
+        // Use 'with' to preserve all init-only properties (StoragePolicy, etc.)
+        var normalizedState = state with { Key = normalizedKey };
         _states[normalizedKey] = normalizedState;
     }
 
