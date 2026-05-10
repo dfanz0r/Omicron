@@ -250,7 +250,14 @@ public sealed class SessionProjector : ISessionProjector
         }
 
         foreach (var evt in events)
+        {
+            // Intentionally ignored event types (metadata, not conversational):
+            //   ModalityUsedEvent, TransactionStartedEvent, TransactionStagedEvent,
+            //   TransactionCommittedEvent, TransactionRolledBackEvent, TurnStartedEvent,
+            //   SessionEndedEvent, PermissionRequestedEvent, ExecutionStartedEvent,
+            //   ExecutionCompletedEvent
             HandleEvent(evt);
+        }
 
         // Final flush
         FlushToolCallRun();
