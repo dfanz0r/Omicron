@@ -222,12 +222,19 @@ internal sealed class SlashCommandDispatcher
     private static ChatCommandResult ShowModel(SlashCommandContext context)
     {
         var m = context.Model;
+        var ctxWindow = context.Catalog.GetEffectiveContextWindow(m);
+        var maxOut = context.Catalog.GetEffectiveMaxOutputTokens(m);
+        var meta = context.Catalog.GetMetadata(m);
+
         Console.WriteLine();
         Console.WriteLine($"  Model:    {m.Name} ({m.Id})");
         Console.WriteLine($"  Provider: {m.ProviderName}");
         Console.WriteLine($"  API Type: {m.ApiType}");
         Console.WriteLine($"  Base URL: {m.BaseUrl}");
-        Console.WriteLine($"  Context:  {m.ContextWindow:N0} tokens");
+        Console.WriteLine($"  Context:  {FormatTokenCount(ctxWindow)}");
+        Console.WriteLine($"  Max out:  {FormatTokenCount(maxOut)}");
+        if (meta?.Source is not null)
+            Console.WriteLine($"  Metadata: {meta.Source}");
         Console.WriteLine($"  Supports reasoning: {m.SupportsReasoning}");
         var compat = m.GetEffectiveCompatibility();
         Console.WriteLine($"  Supports store: {compat.SupportsStore}");
@@ -257,7 +264,8 @@ internal sealed class SlashCommandDispatcher
             var free = context.Catalog.IsFreeModel(key) && !HasProviderEnvironmentKey(m.ProviderName) && !context.Config.ApiKeys.ContainsKey(m.ProviderName)
                 ? "free"
                 : "    ";
-            Console.WriteLine($"    [{i + 1,2}] {marker} {free} {m.Name,-36} {m.ProviderName,-12} {m.ApiType,-16} {key}");
+            var ctxWindow = context.Catalog.GetEffectiveContextWindow(m);
+            Console.WriteLine($"    [{i + 1,2}] {marker} {free} {m.Name,-36} {m.ProviderName,-12} {m.ApiType,-16} {FormatTokenCountCompact(ctxWindow),-6} {key}");
         }
         Console.WriteLine();
         Console.WriteLine("  Switch with: /model <number>  or  /model <catalog-key>");
@@ -727,5 +735,16 @@ internal sealed class SlashCommandDispatcher
         if (string.IsNullOrEmpty(value)) return "";
         return value.Length <= maxLength ? value : value[..(maxLength - 1)] + "\u2026";
     }
-}
 
+    private static string FormatTokenCount(int? tokens)
+        => tokens.HasValue ? $"{tokens.Value:N0} tokens" : "unknown";
+
+    private static string FormatTokenCountCompact(int? tokens)
+    {
+        if (!tokens.HasValue) return "?";
+        var t = tokens.Value;
+        if (t < 1_000) return t.ToString();
+        if (t < 1_000_000) return $"{t / 1_000}k";
+        return $"{t / 1_000_000.0:F1}M";
+    }
+}

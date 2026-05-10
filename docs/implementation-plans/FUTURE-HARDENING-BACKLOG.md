@@ -80,29 +80,6 @@ Potential follow-up:
 
 ---
 
-### FH-0023: Add `WorkspaceTransaction` commit failure recovery test
-
-Status: Open  
-Area: `Omicron.Core.Tests/WorkspaceTransactionTests.cs`  
-Priority: Medium.
-
-Current state:
-
-- `CommitAsync` has a try/catch that sets `_committed = false` on failure, and attempts rollback via operation journaling (FH-0019 implementation is complete).
-- No test verifies this behavior or the partial-commit scenario.
-
-Risk:
-
-- Commit failure semantics are untested.
-
-Potential follow-up:
-
-- Add a test using a mock `HostWorkspaceFileSystem` that throws mid-commit.
-- Verify rollback reverses earlier operations.
-- Verify `TransactionRolledBackEvent` is emitted.
-
----
-
 ## Session Resume / Fork Hardening
 
 ### FH-0011: Session slash commands synchronously block on async store calls

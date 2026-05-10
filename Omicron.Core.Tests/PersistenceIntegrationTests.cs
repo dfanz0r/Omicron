@@ -31,7 +31,7 @@ public class PersistenceIntegrationTests
             }
         };
 
-        var session = host.CreateSession(model, "You are a test.");
+        var session = host.CreateSession(SessionConfig.Create(model, "You are a test."));
 
         var record = await store.GetSessionAsync(session.Id);
         Assert.NotNull(record);

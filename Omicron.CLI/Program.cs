@@ -30,7 +30,7 @@ var sessionStoreDir = Path.Combine(
     Path.GetDirectoryName(configManager.GetConfigPath())!,
     "sessions");
 var sessionStore = new JsonlSessionStore(sessionStoreDir);
-var host = new OmicronHost(Environment.CurrentDirectory, sessionStore);
+using var host = new OmicronHost(Environment.CurrentDirectory, sessionStore);
 host.LoadBuiltinExtensions();
 Console.WriteLine($"Session store: {sessionStore.StoreDirectory}");
 
@@ -45,6 +45,21 @@ var catalog = host.ModelCatalog;
 
 // Auto-discover from all providers
 await catalog.DiscoverAsync(quiet: true);
+
+// Best-effort metadata refresh (models.dev) with 3-second timeout
+try
+{
+    using var metaCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    await host.RefreshModelMetadataAsync(metaCts.Token);
+}
+catch (OperationCanceledException) when (host.ModelCatalog is not null)
+{
+    // timeout — metadata stays at static baseline
+}
+catch
+{
+    // non-fatal, metadata stays at static baseline
+}
 
 // Create slash command dispatcher
 var slashDispatcher = new SlashCommandDispatcher();
@@ -106,13 +121,14 @@ while (true)
             Console.WriteLine($"  Base URL: {selectedModel.BaseUrl}");
             Console.WriteLine("Type your message, /help for commands, /models to list, /model <n> to switch.\n");
 
-            resumedSession = host.CreateSession(
+            var sessionConfig = SessionConfig.Create(
                 selectedModel,
                 cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.",
                 currentApiKey,
                 cfg.DefaultMaxTokens,
                 cfg.DefaultTemperature,
-                cfg.MaxIterations);
+                maxIterations: cfg.MaxIterations);
+            resumedSession = host.CreateSession(sessionConfig);
             resumedModel = selectedModel;
         }
 

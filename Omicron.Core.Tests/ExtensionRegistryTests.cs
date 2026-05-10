@@ -2,6 +2,7 @@ using System.Text.Json;
 using Omicron.Core.Commands;
 using Omicron.Core.Extensions;
 using Omicron.Core.Models;
+using Omicron.Core.Sessions;
 using Omicron.Core.Tools;
 using Xunit;
 
@@ -89,7 +90,7 @@ public class OmicronHostTests
             ProviderName = "test"
         };
 
-        var session = host.CreateSession(model, "You are a test.");
+        var session = host.CreateSession(SessionConfig.Create(model, "You are a test."));
 
         Assert.NotNull(session);
         Assert.Equal(model, session.Model);

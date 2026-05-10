@@ -234,7 +234,7 @@ public class JsonlSessionStoreTests : IDisposable
             }
         };
 
-        var session = host.CreateSession(model);
+        var session = host.CreateSession(SessionConfig.Create(model));
         await foreach (var _ in session.PromptAsync("Hi")) { }
 
         // Verify via reopened store

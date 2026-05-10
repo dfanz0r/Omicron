@@ -1,3 +1,4 @@
+using System.Threading;
 using Omicron.Core.Providers;
 
 namespace Omicron.Core.Models;
@@ -11,12 +12,20 @@ public sealed class ModelCatalogService : IModelCatalog
     private readonly Dictionary<string, Model> _models = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _freeModelKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly IProviderRegistry _providerRegistry;
+    private readonly IModelMetadataMerger _merger = new ModelMetadataMerger();
+    private Dictionary<(string, string), ModelMetadata> _metadata = new(new CaseInsensitiveTupleComparer());
 
     /// <summary>All models in the catalog.</summary>
     public IReadOnlyDictionary<string, Model> Models => _models;
 
     /// <summary>Keys of models known to be free.</summary>
     public IReadOnlySet<string> FreeModelKeys => _freeModelKeys;
+
+    /// <summary>
+    /// Layered model metadata, indexed by (ModelId, ProviderName).
+    /// Populated via <see cref="RefreshMetadataAsync"/>.
+    /// </summary>
+    public IReadOnlyDictionary<(string, string), ModelMetadata> Metadata => _metadata;
 
     public ModelCatalogService(IProviderRegistry providerRegistry)
     {
@@ -148,6 +157,53 @@ public sealed class ModelCatalogService : IModelCatalog
             _freeModelKeys.Add(id);
             _freeModelKeys.Add($"{provider}:{id}");
         }
+    }
+
+    /// <summary>
+    /// Refresh layered metadata from the given sources.
+    /// Earlier sources provide baseline; later sources override for non-null fields.
+    /// Propagates <see cref="OperationCanceledException"/> if cancelled.
+    /// If all sources return empty, preserves the previous metadata and returns its count.
+    /// Non-cancellation source failures are silently skipped.
+    /// </summary>
+    public async ValueTask<int> RefreshMetadataAsync(
+        IReadOnlyList<IModelMetadataSource> sources,
+        CancellationToken ct = default)
+    {
+        if (sources is null || sources.Count == 0) return 0;
+
+        var previousCount = _metadata.Count; // preserve if refresh fails
+        var inputs = new List<IReadOnlyList<ModelMetadata>>(sources.Count);
+        foreach (var source in sources)
+        {
+            if (source is null) continue;
+            try
+            {
+                var entries = await source.LoadAsync(ct);
+                inputs.Add(entries);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Source failed closed — skip
+            }
+        }
+
+        var merged = _merger.Merge(inputs.ToArray());
+
+        // If no sources returned data, preserve the previous metadata
+        if (merged.Count == 0)
+            return previousCount;
+
+        var newDict = new Dictionary<(string, string), ModelMetadata>(new CaseInsensitiveTupleComparer());
+        foreach (var entry in merged)
+            newDict[(entry.ModelId, entry.ProviderName)] = entry;
+
+        Interlocked.Exchange(ref _metadata, newDict);
+        return merged.Count;
     }
 
     private static Model MakeModel(string id, string name, string provider, ApiType apiType,

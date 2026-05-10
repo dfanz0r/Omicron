@@ -16,8 +16,11 @@ namespace Omicron.Core;
 /// The CLI and other frontends consume this host rather than
 /// manually wiring services together.
 /// </summary>
-public sealed class OmicronHost
+public sealed class OmicronHost : IDisposable
 {
+    private bool _disposed;
+    private readonly bool _ownsHttpClient;
+
     /// <summary>Extension registry — extensions contribute tools, commands, etc.</summary>
     public IExtensionRegistry Extensions { get; }
 
@@ -63,6 +66,8 @@ public sealed class OmicronHost
     /// <summary>Session store for persistence. Set at construction and not replacable — Events captures it.</summary>
     public ISessionStore SessionStore { get; }
 
+    private readonly HttpClient _metadataHttp;
+
     /// <summary>
     /// Creates a new OmicronHost with the default service implementations.
     /// InMemoryEventSink (EventLog) is the primary event bus.
@@ -72,16 +77,15 @@ public sealed class OmicronHost
     /// </summary>
     /// <param name="workspaceRoot">Root directory for workspace file access.</param>
     /// <param name="sessionStore">Optional session store for event persistence. Defaults to InMemorySessionStore.</param>
-    public OmicronHost(string workspaceRoot, ISessionStore? sessionStore = null)
+    /// <param name="httpClient">Optional HttpClient for metadata fetching. A new one is created if not provided.</param>
+    public OmicronHost(string workspaceRoot, ISessionStore? sessionStore = null, HttpClient? httpClient = null)
     {
-        // Infrastructure
         EventLog = new InMemoryEventSink();
+        _ownsHttpClient = httpClient is null;
+        _metadataHttp = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
         SessionStore = sessionStore ?? new InMemorySessionStore();
-
-        // Wrap EventLog with PersistentEventSink so all event producers persist events.
         Events = new PersistentEventSink(EventLog, SessionStore);
 
-        // Nested service producers use Events directly so their output is persisted
         Tools = new ToolRegistry();
         Commands = new CommandRegistry();
         Permissions = new AllowAllPermissionService();
@@ -102,30 +106,47 @@ public sealed class OmicronHost
     /// </summary>
     public void LoadBuiltinExtensions()
     {
-        // Calculator and time tools
         Extensions.Register(new BuiltinToolsExtension());
-
-        // Workspace tools (read_path via IWorkspace)
         Extensions.Register(new BuiltinWorkspaceToolsExtension(Workspace));
-
-        // Execution tools (shell via IExecutionBroker)
         Extensions.Register(new BuiltinExecutionToolsExtension(Execution, Workspace));
     }
 
+    // ============================================================
+    // Model metadata refresh
+    // ============================================================
+
     /// <summary>
-    /// Create a new agent session for a given model.
-    /// Creates a session record in the store and returns the session.
-    /// Events are automatically persisted through the host-level PersistentEventSink.
+    /// Refresh model metadata from the default sources (static + models.dev).
+    /// Best-effort: propagates cancellation but fails closed on errors.
+    /// Returns the number of metadata entries loaded.
     /// </summary>
-    public AgentSession CreateSession(
-        Models.Model model,
-        string? systemPrompt = null,
-        string? apiKey = null,
-        int? maxTokens = null,
-        double? temperature = null,
-        int maxIterations = 100)
+    public async ValueTask<int> RefreshModelMetadataAsync(CancellationToken ct = default)
     {
-        var config = SessionConfig.Create(model, systemPrompt, apiKey, maxTokens, temperature, maxIterations: maxIterations);
+        var sources = new IModelMetadataSource[]
+        {
+            new StaticModelMetadataSource(ModelCatalog),
+            new ModelsDevMetadataSource(_metadataHttp)
+        };
+
+        if (ModelCatalog is ModelCatalogService svc)
+            return await svc.RefreshMetadataAsync(sources, ct);
+
+        return 0;
+    }
+
+    // ============================================================
+    // Session creation — async-first
+    // ============================================================
+
+    /// <summary>
+    /// Create a new agent session from a <see cref="SessionConfig"/>.
+    /// Async-first API: the store I/O is naturally async.
+    /// </summary>
+    public async ValueTask<AgentSession> CreateSessionAsync(
+        SessionConfig config,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(config);
         var session = new AgentSession(
             config,
             Tools,
@@ -133,83 +154,128 @@ public sealed class OmicronHost
             Events,
             ProviderStateManager);
 
-        // Create session record in store so events can be persisted
         var request = new SessionCreateRequest(
-            model.Id,
-            model.ProviderName,
-            model.ApiType,
+            config.Model.Id,
+            config.Model.ProviderName,
+            config.Model.ApiType,
             SessionId: session.Id,
-            SystemPrompt: systemPrompt);
-        SessionStore.CreateSessionAsync(request).GetAwaiter().GetResult();
+            SystemPrompt: config.SystemPrompt);
+        await SessionStore.CreateSessionAsync(request, ct);
 
         return session;
     }
+
+    /// <summary>
+    /// Sync convenience wrapper over <see cref="CreateSessionAsync"/>.
+    /// </summary>
+    public AgentSession CreateSession(SessionConfig config)
+        => CreateSessionAsync(config).GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Legacy parameter-list overload — delegates to <see cref="CreateSession(SessionConfig)"/>.
+    /// Prefer constructing a <see cref="SessionConfig"/> explicitly.
+    /// </summary>
+    public AgentSession CreateSession(
+        Model model,
+        string? systemPrompt = null,
+        string? apiKey = null,
+        int? maxTokens = null,
+        double? temperature = null,
+        int maxIterations = 100)
+        => CreateSession(SessionConfig.Create(model, systemPrompt, apiKey, maxTokens, temperature, maxIterations: maxIterations));
+
+    // ============================================================
+    // Session resume / fork
+    // ============================================================
 
     /// <summary>
     /// Resume a persisted session: hydrate from stored events, restore transcript.
     /// Uses the same session ID and restores provider state when safe (same model/provider/API).
     /// </summary>
     public async Task<AgentSession?> ResumeSessionAsync(
-        SessionId sessionId,
-        Model model,
-        string? apiKey = null,
+        SessionResumeRequest request,
         CancellationToken ct = default)
     {
-        var record = await SessionStore.GetSessionAsync(sessionId, ct);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Model);
+        var record = await SessionStore.GetSessionAsync(request.SessionId, ct);
         if (record is null) return null;
 
         var events = new List<OmicronEvent>();
-        await foreach (var e in SessionStore.ReadEventsAsync(sessionId, EventSequenceRange.All, ct))
+        await foreach (var e in SessionStore.ReadEventsAsync(request.SessionId, EventSequenceRange.All, ct))
             events.Add(e);
 
         var projector = new SessionProjector();
         var projection = projector.Project(events);
 
-        // Same provider/model/API → safe to restore provider state
-        bool sameProvider = string.Equals(record.ProviderName, model.ProviderName, StringComparison.OrdinalIgnoreCase);
-        bool restoreProvider = sameProvider && record.ModelId == model.Id && record.ApiType == model.ApiType;
+        bool sameProvider = string.Equals(record.ProviderName, request.Model.ProviderName, StringComparison.OrdinalIgnoreCase);
+        bool restoreProvider = sameProvider && record.ModelId == request.Model.Id && record.ApiType == request.Model.ApiType;
 
-        var config = SessionConfig.Create(model, record.SystemPrompt, apiKey);
+        var config = SessionConfig.Create(request.Model, record.SystemPrompt, request.ApiKey);
         return AgentSession.FromProjection(
-            projection, config, sessionId, Tools, Permissions, Events, ProviderStateManager, restoreProvider);
+            projection, config, request.SessionId, Tools, Permissions, Events, ProviderStateManager, restoreProvider);
     }
+
+    /// <summary>
+    /// Legacy overload — convenience for callers that prefer individual parameters.
+    /// </summary>
+    public Task<AgentSession?> ResumeSessionAsync(
+        SessionId sessionId,
+        Model model,
+        string? apiKey = null,
+        CancellationToken ct = default)
+        => ResumeSessionAsync(new SessionResumeRequest(sessionId, model, apiKey), ct);
 
     /// <summary>
     /// Fork a persisted session: replay transcript into a new session.
     /// Always clears provider state. Allows model/provider change.
     /// </summary>
     public async Task<AgentSession?> ForkSessionAsync(
-        SessionId sourceId,
-        Model model,
-        string? systemPrompt = null,
-        string? apiKey = null,
+        SessionForkRequest request,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Model);
         var events = new List<OmicronEvent>();
-        await foreach (var e in SessionStore.ReadEventsAsync(sourceId, EventSequenceRange.All, ct))
+        await foreach (var e in SessionStore.ReadEventsAsync(request.SourceSessionId, EventSequenceRange.All, ct))
             events.Add(e);
 
         var projector = new SessionProjector();
         var projection = projector.Project(events);
 
-        // Fork creates a new session (new ID, no provider state)
-        var config = SessionConfig.Create(model, systemPrompt, apiKey);
+        var config = SessionConfig.Create(request.Model, request.SystemPrompt, request.ApiKey);
         var session = AgentSession.FromProjection(
             projection, config, null, Tools, Permissions, Events, ProviderStateManager, restoreProviderState: false);
 
-        // Create session record
-        var sourceRecord = await SessionStore.GetSessionAsync(sourceId, ct);
-        var forkSystemPrompt = systemPrompt ?? sourceRecord?.SystemPrompt;
-        var request = new SessionCreateRequest(
-            model.Id,
-            model.ProviderName,
-            model.ApiType,
+        var sourceRecord = await SessionStore.GetSessionAsync(request.SourceSessionId, ct);
+        var forkSystemPrompt = request.SystemPrompt ?? sourceRecord?.SystemPrompt;
+        var createRequest = new SessionCreateRequest(
+            request.Model.Id,
+            request.Model.ProviderName,
+            request.Model.ApiType,
             SessionId: session.Id,
             SystemPrompt: forkSystemPrompt);
-        await SessionStore.CreateSessionAsync(request, ct);
+        await SessionStore.CreateSessionAsync(createRequest, ct);
 
-        // Build replay events from projection — go through Events.EmitBatch
-        // so PersistentEventSink stamps sequences and mirrors to EventLog
+        var replayEvents = BuildForkReplayEvents(session, request.Model, projection);
+        Events.EmitBatch(replayEvents);
+
+        return session;
+    }
+
+    /// <summary>
+    /// Legacy overload — convenience for callers that prefer individual parameters.
+    /// </summary>
+    public Task<AgentSession?> ForkSessionAsync(
+        SessionId sourceId,
+        Model model,
+        string? systemPrompt = null,
+        string? apiKey = null,
+        CancellationToken ct = default)
+        => ForkSessionAsync(new SessionForkRequest(sourceId, model, systemPrompt, apiKey), ct);
+
+    private static List<OmicronEvent> BuildForkReplayEvents(AgentSession session, Model model, SessionProjection projection)
+    {
         var replayEvents = new List<OmicronEvent>();
         replayEvents.Add(new SessionStartedEvent(
             EventEnvelope.ForSession(session.Id),
@@ -227,7 +293,6 @@ public sealed class OmicronHost
 
                 case MessageRole.Assistant:
                 {
-                    // Emit tool-call events if present
                     var toolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? new List<ToolCallContent> { msg.ToolCall } : null);
                     if (toolCalls is { Count: > 0 })
                     {
@@ -240,7 +305,6 @@ public sealed class OmicronHost
                         }
                     }
 
-                    // Emit the response event (text may be empty for tool-call-only turns)
                     replayEvents.Add(new AssistantResponseCompleteEvent(
                         EventEnvelope.ForSession(session.Id),
                         msg.Text ?? "", msg.Reasoning, new TokenUsage(0, 0)));
@@ -257,9 +321,16 @@ public sealed class OmicronHost
             }
         }
 
-        // Emit through the host event sink for proper sequence stamping
-        Events.EmitBatch(replayEvents);
+        return replayEvents;
+    }
 
-        return session;
+    public void Dispose()
+    {
+        if (!_disposed)
+        {
+            _disposed = true;
+            if (_ownsHttpClient)
+                _metadataHttp?.Dispose();
+        }
     }
 }

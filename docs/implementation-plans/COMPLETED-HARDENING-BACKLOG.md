@@ -279,3 +279,25 @@ Source reviews:
 
 - `docs/code-reviews/0065-plan-3-comprehensive-pre-plan-4-review.md`
 - `docs/code-reviews/0074-plan-3.6-comprehensive-review.md`
+
+---
+
+## Workspace Transaction Test Hardening
+
+### FH-0023: Add `WorkspaceTransaction` commit failure recovery test
+
+Status: **Completed 2026-05-10**  
+Area: `Omicron.Core.Tests/WorkspaceTransactionTests.cs`  
+Priority: Medium.
+
+Completion note:
+
+- Added commit failure recovery tests in `WorkspaceTransactionTests.cs`.
+- Verified failed write rollback reverses earlier committed operations.
+- Verified failed move rollback restores the original file state.
+- Verified `TransactionRolledBackEvent` is emitted on commit failure.
+
+Source reviews:
+
+- `docs/code-reviews/0074-plan-3.6-comprehensive-review.md`
+- `docs/code-reviews/0083-plan-3.8-closure-verification.md`
