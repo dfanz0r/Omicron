@@ -120,7 +120,7 @@ public class WorkspaceTests
     [Fact]
     public void HostWorkspace_Constructor_SetsRoot()
     {
-        var ws = new HostWorkspace(Environment.CurrentDirectory);
-        Assert.Equal(Path.GetFullPath(Environment.CurrentDirectory), ws.RootPath);
+        var vfs = new HostWorkspaceFileSystem(Environment.CurrentDirectory);
+        Assert.Equal(Path.GetFullPath(Environment.CurrentDirectory), vfs.RootPath);
     }
 }

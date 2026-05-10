@@ -139,6 +139,64 @@ Potential follow-up:
 - Move `OmicronHost_WorkspaceIsVfsBacked_AndReadsFile` to `WorkspaceVfsTests.cs`, `OmicronHostIntegrationTests.cs`, or another workspace/host-focused test file.
 - Keep the assertion coverage unchanged.
 
+## Workspace / Read Model Hardening
+
+Source reviews:
+
+- `docs/code-reviews/0049-workspace-read-model-final-verification.md`
+
+### FH-0006: Workspace read continuation hints should be structured
+
+Status: Open  
+Area: `Omicron.Core/Workspace/WorkspaceReadContent.cs`, `WorkspaceLlmTextRenderer`  
+Priority: Low before Phase 4; medium before richer edit/read UX.
+
+Current state:
+
+- `WorkspaceReadService` supports chunk-relative `offset` when `chunk` is set.
+- `WorkspaceFileContent.NextOffset` is rendered as a simple text hint: `[Use offset=N to continue.]`.
+- The hinted offset is currently a valid continuation path when used without `chunk`, but the text does not explicitly say whether to keep or omit `chunk`.
+
+Risk:
+
+- Models or future UIs may combine the hint with the prior `chunk`, causing confusing continuation behavior because offset is chunk-relative when chunk is present.
+
+Potential follow-up:
+
+- Add structured continuation metadata to `WorkspaceFileContent`, such as `ContinuationReadOptions` or an explicit absolute/relative marker.
+- Render clearer LLM text, e.g. `[Use offset=N without chunk to continue.]`.
+- Allow future UI/web renderers to expose continuation as an action rather than parsing text.
+
+## Workspace Transaction Hardening
+
+Source reviews:
+
+- `docs/code-reviews/0060-workspace-transactions-final-verification.md`
+
+### FH-0007: Workspace transaction commit is non-atomic
+
+Status: Open  
+Area: `Omicron.Core/Workspace/WorkspaceTransaction.cs`  
+Priority: Medium before high-reliability edit tools; low for current transaction MVP.
+
+Current state:
+
+- `WorkspaceTransaction.CommitAsync()` applies staged host mutations sequentially.
+- If one operation fails midway, earlier operations may already have changed the host workspace.
+- The transaction resets `_committed` on failure so callers can retry or roll back staged state, but it cannot automatically undo host mutations already applied.
+
+Risk:
+
+- Future edit tools may assume transaction commit is atomic when it is currently best-effort.
+- Partial commit failures can leave the host workspace in a mixed state.
+
+Potential follow-up:
+
+- Preflight validate all staged operations before applying.
+- Apply writes through temp files/backups and rename where feasible.
+- Journal host mutations and attempt rollback on failure.
+- Emit transaction audit events only after fully successful commits.
+
 ## Review Cadence
 
 Revisit this backlog:

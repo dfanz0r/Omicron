@@ -27,7 +27,7 @@ The broader package layout in RFC 0001 is still the target architecture. The cur
 - `IToolRegistry` / `ToolRegistry` — tool registration and lookup.
 - `ICommandRegistry` / `CommandRegistry` — command registration and lookup.
 - `IPermissionService` / `AllowAllPermissionService` — permission gating.
-- `IWorkspace` / `HostWorkspace` — file-system access with path containment.
+- `IWorkspaceFileSystem` / `HostWorkspaceFileSystem` plus `IWorkspace` / `VfsWorkspaceAdapter` — raw contained workspace file-system operations with a thin LLM-facing read adapter.
 - `IExecutionBroker` / `LocalExecutionBroker` — shell command execution (session-scoped).
 - `IProviderRegistry` / `ProviderFactory` — LLM provider registration/lookup.
 - `IModelCatalog` / `ModelCatalogService` — model discovery and free-model tracking.
@@ -132,7 +132,7 @@ Registered through built-in extensions:
 
 - `calculator` — basic arithmetic expression evaluation.
 - `get_current_time` — returns current UTC/local time.
-- `read_path` — file reads with line numbers, offset/limit, binary detection, directory listings, truncation.
+- `read_path` — file reads with line numbers, offset/limit/chunk, binary detection, directory listings, truncation, backed by `WorkspaceReadService` + `WorkspaceLlmTextRenderer` over structured `WorkspaceReadContent`.
 - `shell` — command execution via `IExecutionBroker`, workspace-confined `cwd`, timeout clamping, output truncation.
 
 All tools sit behind their respective abstractions (workspace, execution, permission, tool registry).
@@ -188,18 +188,63 @@ The event sink stamps a global monotonic sequence number on every event before p
 
 Persistence failure is non-fatal for runtime — errors are reported through the `OnError` callback for logging/debugging.
 
+## Workspace VFS and Read Model
+
+Implemented in Plan 3 Phase 3 plus follow-up cleanup:
+
+- `IWorkspaceFileSystem` — raw workspace file-system abstraction with contained `Resolve`, `StatAsync`, `ReadDirectoryAsync`, `ReadFileAsync`, `WriteFileAsync`, `DeleteAsync`, and `MoveAsync`.
+- `HostWorkspaceFileSystem` — host-backed implementation with containment checks at every operation boundary, including manually constructed unsafe `WorkspacePath` values.
+- `WorkspacePath`, `FileStat`, and `DirectoryEntry` — VFS path and metadata primitives.
+- `VfsWorkspaceAdapter : IWorkspace` — thin compatibility adapter for existing tool-facing workspace reads.
+- `WorkspaceReadContent` model — source-independent structured read representation, with `WorkspaceFileContent`, `WorkspaceBinaryFileContent`, `WorkspaceDirectoryContent`, and `WorkspaceReadErrorContent`.
+- `WorkspaceReadService` — builds structured read content from the host VFS, including offset/limit/chunk handling, total line counts, deterministic directory sorting, truncation, binary/not-found/escape-root cases.
+- `WorkspaceLlmTextRenderer` — renders structured read content to deterministic `read_path` LLM-context text preserving `[FILE]`/`[DIR]`, line numbers, and truncation behavior.
+
+The VFS is intentionally raw/backend-focused. LLM text rendering is separate from the VFS through the structured read model, leaving room for future snapshots, remote workspaces, and UI/web content-block renderers.
+
+## Native Diff Engine
+
+Implemented in Plan 3.1:
+
+- `TextDiffEngine` — facade for line-based text diffs.
+- `TraceMyersDiffStrategy` — common-case trace-based Myers strategy for small/medium inputs.
+- `DivideAndConquerMyersDiffStrategy` — lower-memory fallback strategy for larger inputs.
+- `TextDiffEditNormalizer` — canonicalizes adjacent edit operations into stable replacement edits.
+- `TextDiffHunkBuilder` — builds context-aware hunks.
+- `UnifiedDiffRenderer` — renders unified diff text with output truncation markers.
+- `TextLineSplitter` — shared line-splitting behavior consistent with workspace reads.
+
+The engine is structured separately from workspace transactions so future UI/web diff renderers or edit harness diagnostics can consume structured edits/hunks without depending on transaction internals.
+
+## Workspace Transactions and Diffs
+
+Implemented in Plan 3 Phase 4:
+
+- `WorkspaceTransactionId`, `WorkspaceChangeKind`, `WorkspaceFileDiff`, and `WorkspaceDiff`.
+- `IWorkspaceTransaction` / `WorkspaceTransaction` — stages writes, deletes, and moves.
+- `TransactionFileSystem : IWorkspaceFileSystem` — overlay VFS exposed as `IWorkspaceTransaction.Files`; stat/read/list reflect staged state.
+- `GetDiffAsync()` — returns text diffs through the native diff engine and metadata-only binary diffs.
+- `CommitAsync()` — applies staged changes to the host VFS.
+- `RollbackAsync()` / `DisposeAsync()` — discard staged changes.
+
+Current limitations:
+
+- transaction commit is non-atomic and tracked as `FH-0007`;
+- transaction audit events are deferred until transaction/session ownership semantics are defined;
+- no public edit tool is wired on top of transactions yet.
+
 ## Not Yet Implemented
 
 The following RFC capabilities remain planned/research unless otherwise noted:
 
-- Session replay projection, snapshots/checkpoints, and resume (Plan 3 Phase 2+).
-- Workspace VFS, overlays, transactions, diff manifests, and host reconciliation.
+- Session snapshots/checkpoints and CLI resume/fork UX.
+- Workspace snapshots/manifests and host reconciliation beyond transaction MVP.
 - Full typed-item canonical conversation runtime replacing the flat `Message` transcript.
 - Plugin model, semantic UI abstractions, panels/status providers, WASM runtime.
 - Text store, grapheme/cell layout, frame buffers, differential renderer, app-owned fullscreen scrollback.
 - Embedded PTY/virtual terminal panes.
 - Sandboxing/execution broker/audit policy model.
-- High-reliability edit harness, anchors, AST context curation, multi-file transactions.
+- High-reliability edit harness, anchors, AST context curation.
 - Remoting protocol/backends/attachment model.
 - GUI frontend.
 - Rust/C# FFI layer and OpenTUI native backend spike.
@@ -230,7 +275,7 @@ Tests are split into focused files by subsystem:
 - `JsonlSessionStoreTests.cs` — JSONL file-backed store reopen/round-trip/count/duplicate/integration.
 - `PersistenceIntegrationTests.cs` — OmicronHost + ISessionStore end-to-end, provider-state/execution event persistence, error callback, persist counts.
 
-`dotnet test Omicron.slnx --nologo` passes with **219 tests**, 0 warnings, 0 errors.
+`dotnet test Omicron.slnx --nologo` passes with **338 tests**, 0 warnings, 0 errors.
 
 ## Current Handoff Points
 
@@ -245,4 +290,4 @@ The next core phase should build on:
 - canonical conversation records/converters as the seed for future typed transcript work.
 - `ToolRegistry` and `ToolInvocationContext` for tool/function-call round trips.
 
-Immediate next target: Plan 3 Phase 2 session replay projection over persisted `OmicronEvent` streams.
+Immediate next target: choose between session resume/fork UX, semantic content/command primitives, or first transaction-backed edit harness tooling.

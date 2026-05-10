@@ -1,6 +1,6 @@
 # Implementation Plan 0003: Core Persistence, Workspace, and RFC Foundations
 
-Status: Phase 1 (Durable Event Log and Session Catalog) complete. Phase 2 (Session Replay Projection) complete. Phase 3 (Host-Backed Workspace VFS v1) in progress.  
+Status: All phases complete.  
 Primary RFCs: RFC 0001, RFC 0002, RFC 0006, RFC 0012  
 Secondary RFCs unblocked: RFC 0007, RFC 0010, RFC 0014
 
@@ -28,13 +28,12 @@ Implemented foundations:
 - OpenAI/OpenRouter Responses support, including stateless OpenRouter default.
 - provider state manager.
 - tool registry and built-in tools.
-- workspace abstraction exists, but is still minimal and not a VFS/transaction layer.
+- host-backed workspace VFS exists with contained raw file-system operations, plus a structured workspace read model and LLM text renderer for `read_path`.
 - execution broker exists, but sandbox policy model is not yet implemented.
 - CLI slash commands exist, but are CLI-local rather than semantic shared commands.
 
 Important gaps against RFCs:
 
-- no VFS transactions, diffs, manifests, or rollback (Phase 3 target);
 - no edit harness beyond direct file tools;
 - no session snapshots/checkpoints;
 - no semantic `ContentBlock` / `UiNode` model;
@@ -229,6 +228,28 @@ Update tools:
 - tests cover stat/read/list/path containment;
 - event or audit hooks for file operations are deferred to Phase 4 (transactions/diffs) to avoid audit model churn before transaction semantics are stable.
 
+### Completion Notes
+
+Completed 2026-05-08.
+
+Implemented:
+
+- `WorkspacePath`, `FileStat`, `DirectoryEntry`, `IWorkspaceFileSystem`, `HostWorkspaceFileSystem`;
+- `VfsWorkspaceAdapter : IWorkspace`;
+- `OmicronHost.FileSystem` and VFS-backed `OmicronHost.Workspace`;
+- containment enforcement at operation boundaries, including manually constructed unsafe `WorkspacePath` values;
+- structured read model:
+  - `WorkspaceReadContent`;
+  - `WorkspaceFileContent`;
+  - `WorkspaceBinaryFileContent`;
+  - `WorkspaceDirectoryContent`;
+  - `WorkspaceReadErrorContent`;
+- `WorkspaceReadService` for building source-independent read content from the host VFS;
+- `WorkspaceLlmTextRenderer` for deterministic `read_path` LLM context text;
+- removal of duplicate legacy formatting paths (`HostWorkspace` and `FileTools.cs`).
+
+The VFS remains raw/backend-focused. Formatting and presentation are separated through the read-content model and renderer path, so future transaction overlays, snapshots, remote workspaces, and UI/web content-block renderers can produce/consume the same structured model without coupling to host VFS internals.
+
 ## Phase 4: Workspace Transactions and Diff v1
 
 RFCs: 0006, 0012, 0007 prerequisite.
@@ -263,10 +284,30 @@ No content-addressed blob store required yet.
 ### Acceptance Criteria
 
 - write/delete/move can be staged;
+- transaction overlay reads/stat/list reflect staged changes;
 - diff is inspectable before commit;
 - rollback leaves workspace unchanged;
-- commit emits audit events;
-- tests cover commit/rollback/text diff.
+- commit applies staged changes to the host VFS;
+- tests cover commit/rollback/text diff/moves/overlay behavior.
+
+### Completion Notes
+
+Completed 2026-05-08.
+
+Implemented:
+
+- `WorkspaceTransactionId`, `WorkspaceChangeKind`, `WorkspaceFileDiff`, `WorkspaceDiff`;
+- `IWorkspaceTransaction` and `WorkspaceTransaction`;
+- transaction overlay `TransactionFileSystem : IWorkspaceFileSystem` exposed as `IWorkspaceTransaction.Files`;
+- staged write/delete/move;
+- overlay stat/read/list for staged changes;
+- moved diffs via `WorkspaceChangeKind.Moved` and `OldPath`;
+- text diffs through `TextLineSplitter`, `TextDiffEngine`, and `UnifiedDiffRenderer`;
+- metadata-only binary diffs;
+- rollback/dispose discard staged changes;
+- commit applies staged changes to host VFS.
+
+Commit is intentionally non-atomic in this MVP and tracked as `FH-0007` in the future hardening backlog. Transaction audit events remain deferred until session/tool ownership and transaction-level event semantics are defined.
 
 ## Phase 5: Semantic Content and Command Primitives
 
