@@ -88,7 +88,7 @@ public interface IWorkspaceFileSystem
 /// Every method re-validates containment at the boundary, so even manually
 /// constructed WorkspacePath values with traversal segments are rejected.
 /// </summary>
-public sealed class HostWorkspaceFileSystem : IWorkspaceFileSystem
+public class HostWorkspaceFileSystem : IWorkspaceFileSystem
 {
     public string RootPath { get; }
 
@@ -196,7 +196,7 @@ public sealed class HostWorkspaceFileSystem : IWorkspaceFileSystem
         }
     }
 
-    public async ValueTask<ReadOnlyMemory<byte>> ReadFileAsync(WorkspacePath path, CancellationToken ct = default)
+    public virtual async ValueTask<ReadOnlyMemory<byte>> ReadFileAsync(WorkspacePath path, CancellationToken ct = default)
     {
         var abs = ToAbsolute(path); // may throw containment violation
         try
@@ -213,7 +213,7 @@ public sealed class HostWorkspaceFileSystem : IWorkspaceFileSystem
         }
     }
 
-    public async ValueTask WriteFileAsync(WorkspacePath path, ReadOnlyMemory<byte> content, CancellationToken ct = default)
+    public virtual async ValueTask WriteFileAsync(WorkspacePath path, ReadOnlyMemory<byte> content, CancellationToken ct = default)
     {
         var abs = ToAbsolute(path);
         var dir = Path.GetDirectoryName(abs);
@@ -223,7 +223,7 @@ public sealed class HostWorkspaceFileSystem : IWorkspaceFileSystem
         await File.WriteAllBytesAsync(abs, content.ToArray(), ct);
     }
 
-    public ValueTask DeleteAsync(WorkspacePath path, CancellationToken ct = default)
+    public virtual ValueTask DeleteAsync(WorkspacePath path, CancellationToken ct = default)
     {
         var abs = ToAbsolute(path);
         if (File.Exists(abs))
@@ -239,7 +239,7 @@ public sealed class HostWorkspaceFileSystem : IWorkspaceFileSystem
         return ValueTask.CompletedTask;
     }
 
-    public async ValueTask MoveAsync(WorkspacePath from, WorkspacePath to, CancellationToken ct = default)
+    public virtual async ValueTask MoveAsync(WorkspacePath from, WorkspacePath to, CancellationToken ct = default)
     {
         var absFrom = ToAbsolute(from);
         var absTo = ToAbsolute(to);

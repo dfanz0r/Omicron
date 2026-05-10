@@ -21,6 +21,26 @@ public interface IEventSink
     /// Returns the stamped events with sequence numbers assigned by the sink.
     /// </summary>
     IReadOnlyList<OmicronEvent> EmitBatch(IReadOnlyList<OmicronEvent> events);
+
+    /// <summary>
+    /// Emit a single event asynchronously. The default implementation calls the sync <see cref="Emit"/>.
+    /// Override in implementations that can avoid sync-over-async (e.g., <see cref="PersistentEventSink"/>).
+    /// </summary>
+    ValueTask<OmicronEvent> EmitAsync(OmicronEvent evt, CancellationToken ct = default)
+    {
+        var stamped = Emit(evt);
+        return new ValueTask<OmicronEvent>(stamped);
+    }
+
+    /// <summary>
+    /// Emit a batch of events asynchronously. The default implementation calls the sync <see cref="EmitBatch"/>.
+    /// Override in implementations that can avoid sync-over-async.
+    /// </summary>
+    ValueTask<IReadOnlyList<OmicronEvent>> EmitBatchAsync(IReadOnlyList<OmicronEvent> events, CancellationToken ct = default)
+    {
+        var stamped = EmitBatch(events);
+        return new ValueTask<IReadOnlyList<OmicronEvent>>(stamped);
+    }
 }
 
 /// <summary>
@@ -58,6 +78,18 @@ public sealed class InMemoryEventSink : IEventSink
             }
         }
         return stamped;
+    }
+
+    public ValueTask<OmicronEvent> EmitAsync(OmicronEvent evt, CancellationToken ct = default)
+    {
+        var stamped = Emit(evt);
+        return new ValueTask<OmicronEvent>(stamped);
+    }
+
+    public ValueTask<IReadOnlyList<OmicronEvent>> EmitBatchAsync(IReadOnlyList<OmicronEvent> events, CancellationToken ct = default)
+    {
+        var stamped = EmitBatch(events);
+        return new ValueTask<IReadOnlyList<OmicronEvent>>(stamped);
     }
 
     /// <summary>

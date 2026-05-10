@@ -74,9 +74,34 @@ public sealed class PersistentEventSink : IEventSink
 
     public IReadOnlyList<OmicronEvent> EmitBatch(IReadOnlyList<OmicronEvent> events)
     {
-        var stamped = _inner.EmitBatch(events);
+        return EmitBatchAsync(events).GetAwaiter().GetResult();
+    }
 
-        // Group by session and persist
+    public async ValueTask<OmicronEvent> EmitAsync(OmicronEvent evt, CancellationToken ct = default)
+    {
+        var stamped = await _inner.EmitAsync(evt, ct);
+
+        if (_sessionId is null || stamped.SessionId == _sessionId.Value)
+        {
+            try
+            {
+                await _store.AppendEventsAsync(stamped.SessionId, [stamped], ct);
+                Interlocked.Increment(ref _persistedCount);
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref _failureCount);
+                OnError?.Invoke(ex, stamped, "EmitAsync");
+            }
+        }
+
+        return stamped;
+    }
+
+    public async ValueTask<IReadOnlyList<OmicronEvent>> EmitBatchAsync(IReadOnlyList<OmicronEvent> events, CancellationToken ct = default)
+    {
+        var stamped = await _inner.EmitBatchAsync(events, ct);
+
         var bySession = stamped
             .Where(e => _sessionId is null || e.SessionId == _sessionId.Value)
             .GroupBy(e => e.SessionId);
@@ -86,13 +111,13 @@ public sealed class PersistentEventSink : IEventSink
             try
             {
                 var list = group.ToList();
-                _store.AppendEventsAsync(group.Key, list).GetAwaiter().GetResult();
+                await _store.AppendEventsAsync(group.Key, list, ct);
                 Interlocked.Add(ref _persistedCount, list.Count);
             }
             catch (Exception ex)
             {
                 Interlocked.Increment(ref _failureCount);
-                OnError?.Invoke(ex, group.First(), "EmitBatch");
+                OnError?.Invoke(ex, group.First(), "EmitBatchAsync");
             }
         }
 

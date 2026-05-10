@@ -1,3 +1,4 @@
+using Omicron.Core.Events;
 using Omicron.Core.Workspace;
 using Xunit;
 
@@ -423,5 +424,209 @@ public class WorkspaceTransactionTests : IDisposable
         var entries = await _tx.Files.ReadDirectoryAsync(root);
         Assert.Contains(entries, e => e.Name == "moved.txt");
         Assert.DoesNotContain(entries, e => e.Name == "move_me.txt");
+    }
+
+    // ============================================================
+    // Transaction lifecycle event tests (FH-0018)
+    // ============================================================
+
+    [Fact]
+    public void TransactionEvent_LazyStart_EmitsStartedOnce()
+    {
+        var sink = new InMemoryEventSink();
+        var tx = new WorkspaceTransaction(_host, sink);
+
+        tx.Files.WriteFileAsync(Resolve("a.txt"), "hello"u8.ToArray()).GetAwaiter().GetResult();
+
+        var events = sink.GetAllEvents();
+        Assert.Single(events.OfType<TransactionStartedEvent>());
+        Assert.Single(events.OfType<TransactionStagedEvent>());
+
+        tx.DisposeAsync().GetAwaiter().GetResult();
+    }
+
+    [Fact]
+    public void TransactionEvent_PerOperation_EmitsStagedEvents()
+    {
+        var sink = new InMemoryEventSink();
+        var tx = new WorkspaceTransaction(_host, sink);
+
+        tx.Files.WriteFileAsync(Resolve("a.txt"), "content a"u8.ToArray()).GetAwaiter().GetResult();
+        tx.Files.WriteFileAsync(Resolve("b.txt"), "content b"u8.ToArray()).GetAwaiter().GetResult();
+
+        var events = sink.GetAllEvents();
+        var staged = events.OfType<TransactionStagedEvent>().ToList();
+        Assert.Equal(2, staged.Count);
+        Assert.All(staged, s => Assert.Equal("write", s.Action));
+        Assert.Contains(staged, s => s.Path.EndsWith("a.txt"));
+        Assert.Contains(staged, s => s.Path.EndsWith("b.txt"));
+
+        tx.DisposeAsync().GetAwaiter().GetResult();
+    }
+
+    [Fact]
+    public async Task TransactionEvent_CommitSuccess_EmitsCommitted()
+    {
+        var sink = new InMemoryEventSink();
+        var tx = new WorkspaceTransaction(_host, sink);
+
+        tx.Files.WriteFileAsync(Resolve("c.txt"), "data"u8.ToArray()).GetAwaiter().GetResult();
+        await tx.CommitAsync();
+
+        var events = sink.GetAllEvents();
+        Assert.Contains(events, e => e is TransactionCommittedEvent);
+        Assert.DoesNotContain(events, e => e is TransactionRolledBackEvent);
+
+        await tx.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task TransactionEvent_Rollback_EmitsRolledBack()
+    {
+        var sink = new InMemoryEventSink();
+        var tx = new WorkspaceTransaction(_host, sink);
+
+        tx.Files.WriteFileAsync(Resolve("d.txt"), "data"u8.ToArray()).GetAwaiter().GetResult();
+        await tx.RollbackAsync();
+
+        var events = sink.GetAllEvents();
+        Assert.Contains(events, e => e is TransactionRolledBackEvent);
+        Assert.DoesNotContain(events, e => e is TransactionCommittedEvent);
+
+        await tx.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task TransactionEvent_DisposeWithoutCommit_EmitsRolledBack()
+    {
+        var sink = new InMemoryEventSink();
+        var tx = new WorkspaceTransaction(_host, sink);
+
+        tx.Files.WriteFileAsync(Resolve("e.txt"), "data"u8.ToArray()).GetAwaiter().GetResult();
+        await tx.DisposeAsync();
+
+        var events = sink.GetAllEvents();
+        Assert.Contains(events, e => e is TransactionRolledBackEvent);
+    }
+
+    // ============================================================
+    // Commit failure recovery tests (FH-0023)
+    // ============================================================
+
+    /// <summary>
+    /// Test double that extends HostWorkspaceFileSystem and throws IOException
+    /// after a configurable number of <b>successful</b> write/move calls.
+    /// Delete operations are never counted (they are used by rollback).
+    /// </summary>
+    private sealed class FailingHostFileSystem : HostWorkspaceFileSystem
+    {
+        private int _callCount;
+        private readonly int _failAfter;
+        private readonly object _lock = new();
+
+        public FailingHostFileSystem(string root, int failAfter) : base(root)
+        {
+            _failAfter = failAfter;
+        }
+
+        private int NextCount()
+        {
+            lock (_lock) { return ++_callCount; }
+        }
+
+        public override async ValueTask WriteFileAsync(WorkspacePath path, ReadOnlyMemory<byte> content, CancellationToken ct = default)
+        {
+            if (NextCount() > _failAfter)
+                throw new IOException($"Simulated write failure after {_failAfter} writes.");
+            await base.WriteFileAsync(path, content, ct);
+        }
+
+        public override ValueTask DeleteAsync(WorkspacePath path, CancellationToken ct = default)
+        {
+            // Delete is used by rollback — never count it toward failures
+            return base.DeleteAsync(path, ct);
+        }
+
+        public override ValueTask MoveAsync(WorkspacePath from, WorkspacePath to, CancellationToken ct = default)
+        {
+            // Move is used by rollback — only count it toward failures if we want
+            // For simplicity, don't fail on move during commit either
+            return base.MoveAsync(from, to, ct);
+        }
+    }
+
+    [Fact]
+    public async Task CommitFailure_MidCommit_RollsBackCompletedWrites()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"omicron-tx-fail-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var failingHost = new FailingHostFileSystem(root, failAfter: 1);
+            var sink = new InMemoryEventSink();
+            var tx = new WorkspaceTransaction(failingHost, sink);
+
+            // Stage 3 writes; the 2nd host write will throw (failAfter: 1)
+            tx.Files.WriteFileAsync(new WorkspacePath("f1.txt"), "file1"u8.ToArray()).GetAwaiter().GetResult();
+            tx.Files.WriteFileAsync(new WorkspacePath("f2.txt"), "file2"u8.ToArray()).GetAwaiter().GetResult();
+            tx.Files.WriteFileAsync(new WorkspacePath("f3.txt"), "file3"u8.ToArray()).GetAwaiter().GetResult();
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => tx.CommitAsync().AsTask());
+            Assert.Contains("rolled back", ex.Message);
+
+            // The 1st file should have been rolled back (deleted)
+            Assert.False(File.Exists(Path.Combine(root, "f1.txt")), "f1.txt should have been rolled back");
+
+            // The 2nd file never succeeded (threw on write)
+            Assert.False(File.Exists(Path.Combine(root, "f2.txt")), "f2.txt should never have been written");
+
+            // The 3rd file was never reached
+            Assert.False(File.Exists(Path.Combine(root, "f3.txt")), "f3.txt was never reached");
+
+            // TransactionRolledBackEvent should be emitted
+            var events = sink.GetAllEvents();
+            Assert.Contains(events, e => e is TransactionRolledBackEvent);
+            Assert.DoesNotContain(events, e => e is TransactionCommittedEvent);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task CommitFailure_Move_RollbackReversesMove()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"omicron-tx-move-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            // Write source file on host directly
+            var srcPath = Path.Combine(root, "source.txt");
+            File.WriteAllText(srcPath, "original");
+
+            var failingHost = new FailingHostFileSystem(root, failAfter: 0);
+            var sink = new InMemoryEventSink();
+            var tx = new WorkspaceTransaction(failingHost, sink);
+
+            // Stage a move + a write; the write will throw (failAfter: 0, first write fails)
+            tx.Files.MoveAsync(new WorkspacePath("source.txt"), new WorkspacePath("dest.txt")).GetAwaiter().GetResult();
+            tx.Files.WriteFileAsync(new WorkspacePath("other.txt"), "data"u8.ToArray()).GetAwaiter().GetResult();
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => tx.CommitAsync().AsTask());
+            Assert.Contains("rolled back", ex.Message);
+
+            // The move should be reversed: source should still exist, dest removed
+            Assert.True(File.Exists(srcPath), "source.txt should have been restored");
+            Assert.False(File.Exists(Path.Combine(root, "dest.txt")), "dest.txt should have been removed");
+            Assert.Equal("original", File.ReadAllText(srcPath));
+
+            var events = sink.GetAllEvents();
+            Assert.Contains(events, e => e is TransactionRolledBackEvent);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
     }
 }

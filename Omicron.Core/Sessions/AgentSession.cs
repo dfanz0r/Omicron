@@ -11,6 +11,7 @@ namespace Omicron.Core.Sessions;
 /// <summary>
 /// A stateful agent session that owns conversation history, coordinates
 /// tool calls, emits durable-shaped events, and manages provider state.
+/// Uses an immutable <see cref="SessionConfig"/> passed at construction.
 ///
 /// Event delivery model:
 ///   - PromptAsync / ContinueAsync yield session-scoped events:
@@ -23,16 +24,17 @@ namespace Omicron.Core.Sessions;
 ///     should read from the IEventSink directly.
 ///   - This makes the async stream a convenient live UI feed, while
 ///     the IEventSink is the authoritative audit/durability stream.
-/// </summary> 
+/// </summary>
 public sealed class AgentSession
 {
     private readonly List<Message> _messages = [];
     private readonly IToolRegistry _toolRegistry;
     private readonly IPermissionService _permissions;
     private readonly IProviderStateManager _providerState;
-    private SessionEventWriter _writer;
+    private readonly SessionEventWriter _writer;
     private readonly HashSet<string> _usedToolCallIds = new(StringComparer.Ordinal);
     private bool _sessionStarted;
+    private readonly SessionConfig _config;
 
     /// <summary>Session identity.</summary>
     public SessionId Id { get; }
@@ -40,57 +42,51 @@ public sealed class AgentSession
     /// <summary>Agent identity.</summary>
     public AgentId AgentId { get; }
 
-    /// <summary>The model in use.</summary>
-    public Model Model { get; set; }
+    /// <summary>The model in use (read-only — from SessionConfig).</summary>
+    public Model Model => _config.Model;
 
-    /// <summary>System prompt.</summary>
-    public string? SystemPrompt { get; set; }
+    /// <summary>System prompt (read-only — from SessionConfig).</summary>
+    public string? SystemPrompt => _config.SystemPrompt;
 
-    /// <summary>API key for the LLM provider.</summary>
-    public string? ApiKey { get; set; }
+    /// <summary>API key for the LLM provider (read-only — from SessionConfig).</summary>
+    public string? ApiKey => _config.ApiKey;
 
-    /// <summary>Max tokens for each LLM call.</summary>
-    public int? MaxTokens { get; set; }
+    /// <summary>Max tokens for each LLM call (read-only — from SessionConfig).</summary>
+    public int? MaxTokens => _config.MaxTokens;
 
-    /// <summary>Temperature for generation.</summary>
-    public double? Temperature { get; set; }
+    /// <summary>Temperature for generation (read-only — from SessionConfig).</summary>
+    public double? Temperature => _config.Temperature;
 
-    /// <summary>Reasoning effort.</summary>
-    public string? ReasoningEffort { get; set; }
+    /// <summary>Reasoning effort (read-only — from SessionConfig).</summary>
+    public string? ReasoningEffort => _config.ReasoningEffort;
 
-    /// <summary>Maximum tool-call loop iterations.</summary>
-    public int MaxIterations { get; set; } = 100;
+    /// <summary>Maximum tool-call loop iterations (read-only — from SessionConfig).</summary>
+    public int MaxIterations => _config.MaxIterations;
 
     /// <summary>Conversation transcript (read-only).</summary>
     public IReadOnlyList<Message> Messages => _messages.AsReadOnly();
 
     public AgentSession(
-        Model model,
+        SessionConfig config,
         IToolRegistry toolRegistry,
         IPermissionService permissions,
         IEventSink eventSink,
-        IProviderStateManager providerState,
-        string? systemPrompt = null,
-        string? apiKey = null)
-        : this(model, toolRegistry, permissions, eventSink, providerState, systemPrompt, apiKey, null)
+        IProviderStateManager providerState)
+        : this(config, toolRegistry, permissions, eventSink, providerState, null)
     {
     }
 
     internal AgentSession(
-        Model model,
+        SessionConfig config,
         IToolRegistry toolRegistry,
         IPermissionService permissions,
         IEventSink eventSink,
         IProviderStateManager providerState,
-        string? systemPrompt,
-        string? apiKey,
         SessionId? existingSessionId)
     {
         Id = existingSessionId ?? SessionId.New();
         AgentId = AgentId.New();
-        Model = model;
-        SystemPrompt = systemPrompt;
-        ApiKey = apiKey;
+        _config = config;
         _toolRegistry = toolRegistry;
         _permissions = permissions;
         _writer = new SessionEventWriter(eventSink, Id, AgentId);
@@ -103,20 +99,16 @@ public sealed class AgentSession
     /// </summary>
     public static AgentSession FromProjection(
         SessionProjection projection,
-        Model model,
+        SessionConfig config,
         SessionId? existingSessionId,
         IToolRegistry toolRegistry,
         IPermissionService permissions,
         IEventSink eventSink,
         IProviderStateManager providerState,
-        string? systemPrompt = null,
-        string? apiKey = null,
         bool restoreProviderState = true)
     {
-        // Use internal constructor that accepts session ID
         var session = new AgentSession(
-            model, toolRegistry, permissions, eventSink, providerState,
-            systemPrompt, apiKey, existingSessionId);
+            config, toolRegistry, permissions, eventSink, providerState, existingSessionId);
 
         session._messages.AddRange(projection.Messages);
         session._sessionStarted = true;
@@ -469,8 +461,6 @@ public sealed class AgentSession
 
     private OmicronEvent Emit(OmicronEvent evt)
     {
-        // The event sink (possibly wrapped in PersistentEventSink) handles stamping and persistence.
         return _writer.Emit(evt);
     }
 }
-

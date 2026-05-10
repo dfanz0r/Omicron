@@ -10,6 +10,15 @@ namespace Omicron.Core.Tests;
 
 public class AgentSessionTests
 {
+    private static AgentSession CreateSession(Model model, IEventSink sink, IToolRegistry? tools = null, IPermissionService? perms = null, string? systemPrompt = null, IProviderStateManager? providerState = null)
+    {
+        var ts = tools ?? new ToolRegistry();
+        var ps = perms ?? new AllowAllPermissionService();
+        var psm = providerState ?? new ProviderStateManager(new InMemoryProviderConversationStateStore(), sink);
+        var config = SessionConfig.Create(model, systemPrompt);
+        return new AgentSession(config, ts, ps, sink, psm);
+    }
+
     [Fact]
     public async Task AgentSession_PromptAsync_EmitsEventsToEventLog()
     {
@@ -37,9 +46,7 @@ public class AgentSessionTests
             }
         };
 
-        var session = new AgentSession(
-            model, toolRegistry, permissionService, eventSink, providerState,
-            "You are a test.");
+        var session = CreateSession(model, eventSink, toolRegistry, permissionService, "You are a test.");
 
         var events = new List<OmicronEvent>();
         await foreach (var evt in session.PromptAsync("Hello"))
@@ -103,8 +110,7 @@ public class AgentSessionTests
             Provider = fakeProvider
         };
 
-        var session = new AgentSession(
-            model, toolRegistry, permissionService, eventSink, providerState);
+        var session = CreateSession(model, eventSink, toolRegistry, permissionService, providerState: providerState);
 
         var events = new List<OmicronEvent>();
         await foreach (var evt in session.PromptAsync("Use a tool"))
@@ -168,8 +174,7 @@ public class AgentSessionTests
             Provider = fakeProvider
         };
 
-        var session = new AgentSession(
-            model, toolRegistry, permissionService, eventSink, providerState);
+        var session = CreateSession(model, eventSink, toolRegistry, permissionService, providerState: providerState);
 
         await foreach (var _ in session.PromptAsync("Use tools twice")) { }
 
@@ -203,8 +208,7 @@ public class AgentSessionTests
             Provider = new FakeProvider()
         };
 
-        var session = new AgentSession(
-            model, toolRegistry, permissionService, eventSink, providerState);
+        var session = CreateSession(model, eventSink, toolRegistry, permissionService, providerState: providerState);
 
         var key = ProviderStateKey.Create(session.Id, session.AgentId, "fake", "test-model", ApiType.OpenAiChat);
         providerState.Set(new ProviderTurnState(key, "resp_123", "conv_456", null, null));
@@ -232,7 +236,7 @@ public class AgentSessionTests
             Provider = new FakeProvider()
         };
 
-        var session = new AgentSession(model, toolRegistry, permissionService, eventSink, providerState);
+        var session = CreateSession(model, eventSink, toolRegistry, permissionService);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
         {
@@ -255,7 +259,7 @@ public class AgentSessionTests
             Provider = new FakeProvider()
         };
 
-        var session = new AgentSession(model, toolRegistry, permissionService, eventSink, providerState);
+        var session = CreateSession(model, eventSink, toolRegistry, permissionService);
         var fakeProvider = (FakeProvider)model.Provider!;
 
         fakeProvider.Responses.Add(() => Task.FromResult(new LlmResult
@@ -288,7 +292,7 @@ public class AgentSessionTests
             Provider = new FakeProvider()
         };
 
-        var session = new AgentSession(model, toolRegistry, permissionService, eventSink, providerState);
+        var session = CreateSession(model, eventSink, toolRegistry, permissionService);
         var fakeProvider = (FakeProvider)model.Provider!;
 
         fakeProvider.Responses.Add(() => Task.FromResult(new LlmResult
@@ -322,6 +326,3 @@ public class AgentSessionTests
         Assert.Equal(firstSessionStartCount, allLog.OfType<SessionStartedEvent>().Count());
     }
 }
-
-
-

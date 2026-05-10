@@ -108,11 +108,11 @@ while (true)
 
             resumedSession = host.CreateSession(
                 selectedModel,
-                cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.");
-            resumedSession.MaxTokens = cfg.DefaultMaxTokens;
-            resumedSession.Temperature = cfg.DefaultTemperature;
-            resumedSession.ApiKey = currentApiKey;
-            resumedSession.MaxIterations = cfg.MaxIterations;
+                cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.",
+                currentApiKey,
+                cfg.DefaultMaxTokens,
+                cfg.DefaultTemperature,
+                cfg.MaxIterations);
             resumedModel = selectedModel;
         }
 
@@ -134,11 +134,7 @@ while (true)
                 cfg.LastModel = currentModelKey;
                 configManager.Save();
             }
-            // Apply runtime config
-            resumedSession.ApiKey = currentApiKey;
-            resumedSession.MaxTokens = cfg.DefaultMaxTokens;
-            resumedSession.Temperature = cfg.DefaultTemperature;
-            resumedSession.MaxIterations = cfg.MaxIterations;
+            // Runtime config is already applied at construction via SessionConfig
             continue;
         }
 

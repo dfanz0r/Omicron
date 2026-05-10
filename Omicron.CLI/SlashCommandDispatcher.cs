@@ -549,13 +549,30 @@ internal sealed class SlashCommandDispatcher
             return ResumeFromRecord(context, record);
         }
 
-        // Try as prefix match
-        var match = sessions.FirstOrDefault(s => s.SessionId.ToString().StartsWith(args, StringComparison.OrdinalIgnoreCase));
-        if (match is not null)
-            return ResumeFromRecord(context, match);
+        // Try as prefix match — check for ambiguity
+        var matches = sessions
+            .Where(s => s.SessionId.ToString().StartsWith(args, StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
-        Console.WriteLine($"  No session matching '{args}'.");
-        return new ChatCommandResult(ChatCommandAction.Continue);
+        if (matches.Count == 0)
+        {
+            Console.WriteLine($"  No session matching '{args}'.");
+            return new ChatCommandResult(ChatCommandAction.Continue);
+        }
+
+        if (matches.Count > 1)
+        {
+            Console.WriteLine($"  Multiple sessions match '{args}':");
+            var sessionsList = sessions.ToList();
+            foreach (var m in matches)
+            {
+                var sIdx = sessionsList.IndexOf(m) + 1;
+                Console.WriteLine($"    [{sIdx}] {m.SessionId.ToString()[..8]}  {m.ModelId}  ({m.ProviderName})");
+            }
+            return new ChatCommandResult(ChatCommandAction.Continue);
+        }
+
+        return ResumeFromRecord(context, matches[0]);
     }
 
     private static ChatCommandResult ResumeFromRecord(SlashCommandContext context, SessionRecord record)
@@ -606,7 +623,31 @@ internal sealed class SlashCommandDispatcher
         if (int.TryParse(sessionArg, out var idx) && idx >= 1 && idx <= sessions.Count)
             sourceRecord = sessions[idx - 1];
         else
-            sourceRecord = sessions.FirstOrDefault(s => s.SessionId.ToString().StartsWith(sessionArg, StringComparison.OrdinalIgnoreCase));
+        {
+            var prefixMatches = sessions
+                .Where(s => s.SessionId.ToString().StartsWith(sessionArg, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (prefixMatches.Count == 0)
+            {
+                Console.WriteLine($"  No session matching '{sessionArg}'.");
+                return new ChatCommandResult(ChatCommandAction.Continue);
+            }
+
+            if (prefixMatches.Count > 1)
+            {
+                Console.WriteLine($"  Multiple sessions match '{sessionArg}':");
+                var sessionsList = sessions.ToList();
+                foreach (var m in prefixMatches)
+                {
+                    var sIdx = sessionsList.IndexOf(m) + 1;
+                    Console.WriteLine($"    [{sIdx}] {m.SessionId.ToString()[..8]}  {m.ModelId}  ({m.ProviderName})");
+                }
+                return new ChatCommandResult(ChatCommandAction.Continue);
+            }
+
+            sourceRecord = prefixMatches[0];
+        }
 
         if (sourceRecord is null)
         {

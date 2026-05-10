@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -269,6 +270,7 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
     private readonly JsonSerializerOptions _jsonOptions;
     private readonly List<SessionRecord> _sessions = new();
     private readonly object _lock = new();
+    private readonly ConcurrentDictionary<SessionId, SemaphoreSlim> _sessionLocks = new();
     private bool _disposed;
 
     /// <summary>
@@ -394,45 +396,57 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
         }
     }
 
-    public ValueTask AppendEventsAsync(SessionId sessionId, IReadOnlyList<OmicronEvent> events, CancellationToken ct = default)
+    private SemaphoreSlim GetSessionLock(SessionId sessionId)
     {
-        if (events.Count == 0) return ValueTask.CompletedTask;
+        return _sessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+    }
 
-        // Verify session exists
-        lock (_lock)
-        {
-            if (!_sessions.Any(s => s.SessionId == sessionId))
-                throw new InvalidOperationException($"Session {sessionId} not found in store.");
-        }
+    public async ValueTask AppendEventsAsync(SessionId sessionId, IReadOnlyList<OmicronEvent> events, CancellationToken ct = default)
+    {
+        if (events.Count == 0) return;
 
-        // Write events to the JSONL file first (before metadata update) for atomicity
-        var eventPath = EventPath(sessionId);
+        var semaphore = GetSessionLock(sessionId);
+        await semaphore.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            using var stream = new FileStream(eventPath, FileMode.Append, FileAccess.Write, FileShare.Read, 4096);
-            using var writer = new StreamWriter(stream);
-
-            foreach (var evt in events)
+            // Verify session exists
+            lock (_lock)
             {
-                var json = SerializeEvent(evt);
-                writer.WriteLine(json);
+                if (!_sessions.Any(s => s.SessionId == sessionId))
+                    throw new InvalidOperationException($"Session {sessionId} not found in store.");
             }
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException($"Failed to write events to {eventPath}: {ex.Message}", ex);
-        }
 
-        // Then update LastActivityAt and save index
-        lock (_lock)
-        {
-            var index = _sessions.FindIndex(s => s.SessionId == sessionId);
-            if (index >= 0)
-                _sessions[index] = _sessions[index] with { LastActivityAt = DateTimeOffset.UtcNow };
-        }
-        SaveIndex();
+            // Write events to the JSONL file first (before metadata update) for atomicity
+            var eventPath = EventPath(sessionId);
+            try
+            {
+                using var stream = new FileStream(eventPath, FileMode.Append, FileAccess.Write, FileShare.Read, 4096);
+                await using var writer = new StreamWriter(stream);
 
-        return ValueTask.CompletedTask;
+                foreach (var evt in events)
+                {
+                    var json = SerializeEvent(evt);
+                    await writer.WriteLineAsync(json);
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to write events to {eventPath}: {ex.Message}", ex);
+            }
+
+            // Then update LastActivityAt and save index
+            lock (_lock)
+            {
+                var index = _sessions.FindIndex(s => s.SessionId == sessionId);
+                if (index >= 0)
+                    _sessions[index] = _sessions[index] with { LastActivityAt = DateTimeOffset.UtcNow };
+            }
+            SaveIndex();
+        }
+        finally
+        {
+            semaphore.Release();
+        }
     }
 
     public async IAsyncEnumerable<OmicronEvent> ReadEventsAsync(SessionId sessionId, EventSequenceRange range, [EnumeratorCancellation] CancellationToken ct = default)
@@ -522,26 +536,13 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
                 return null;
 
             var typeName = typeEl.GetString();
+            if (typeName is null) return null;
 
-            return typeName switch
-            {
-                nameof(SessionStartedEvent) => JsonSerializer.Deserialize<SessionStartedEvent>(line, _eventJsonOptions),
-                nameof(SessionResetEvent) => JsonSerializer.Deserialize<SessionResetEvent>(line, _eventJsonOptions),
-                nameof(SessionErrorEvent) => JsonSerializer.Deserialize<SessionErrorEvent>(line, _eventJsonOptions),
-                nameof(TurnStartedEvent) => JsonSerializer.Deserialize<TurnStartedEvent>(line, _eventJsonOptions),
-                nameof(UserMessageEvent) => JsonSerializer.Deserialize<UserMessageEvent>(line, _eventJsonOptions),
-                nameof(AssistantTextDeltaEvent) => JsonSerializer.Deserialize<AssistantTextDeltaEvent>(line, _eventJsonOptions),
-                nameof(AssistantResponseCompleteEvent) => JsonSerializer.Deserialize<AssistantResponseCompleteEvent>(line, _eventJsonOptions),
-                nameof(ToolInvocationStartedEvent) => JsonSerializer.Deserialize<ToolInvocationStartedEvent>(line, _eventJsonOptions),
-                nameof(ToolInvocationCompletedEvent) => JsonSerializer.Deserialize<ToolInvocationCompletedEvent>(line, _eventJsonOptions),
-                nameof(PermissionRequestedEvent) => JsonSerializer.Deserialize<PermissionRequestedEvent>(line, _eventJsonOptions),
-                nameof(ExecutionStartedEvent) => JsonSerializer.Deserialize<ExecutionStartedEvent>(line, _eventJsonOptions),
-                nameof(ExecutionCompletedEvent) => JsonSerializer.Deserialize<ExecutionCompletedEvent>(line, _eventJsonOptions),
-                nameof(ProviderStateUpdatedEvent) => JsonSerializer.Deserialize<ProviderStateUpdatedEvent>(line, _eventJsonOptions),
-                nameof(SessionEndedEvent) => JsonSerializer.Deserialize<SessionEndedEvent>(line, _eventJsonOptions),
-                nameof(ProviderStateClearedEvent) => JsonSerializer.Deserialize<ProviderStateClearedEvent>(line, _eventJsonOptions),
-                _ => null
-            };
+            var type = OmicronEventRegistry.GetType(typeName);
+            if (type is not null)
+                return (OmicronEvent?)JsonSerializer.Deserialize(line, type, _eventJsonOptions);
+
+            return null;
         }
         catch
         {

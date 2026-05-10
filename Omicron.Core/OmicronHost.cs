@@ -87,7 +87,7 @@ public sealed class OmicronHost
         Permissions = new AllowAllPermissionService();
         FileSystem = new HostWorkspaceFileSystem(workspaceRoot);
         Workspace = new VfsWorkspaceAdapter(FileSystem);
-        WorkspaceTransactions = new WorkspaceTransactionManager((HostWorkspaceFileSystem)FileSystem);
+        WorkspaceTransactions = new WorkspaceTransactionManager((HostWorkspaceFileSystem)FileSystem, Events);
         Execution = new LocalExecutionBroker(Events);
         ProviderState = new InMemoryProviderConversationStateStore();
         ProviderStateManager = new ProviderStateManager(ProviderState, Events);
@@ -120,16 +120,18 @@ public sealed class OmicronHost
     public AgentSession CreateSession(
         Models.Model model,
         string? systemPrompt = null,
-        string? apiKey = null)
+        string? apiKey = null,
+        int? maxTokens = null,
+        double? temperature = null,
+        int maxIterations = 100)
     {
+        var config = SessionConfig.Create(model, systemPrompt, apiKey, maxTokens, temperature, maxIterations: maxIterations);
         var session = new AgentSession(
-            model,
+            config,
             Tools,
             Permissions,
             Events,
-            ProviderStateManager,
-            systemPrompt,
-            apiKey);
+            ProviderStateManager);
 
         // Create session record in store so events can be persisted
         var request = new SessionCreateRequest(
@@ -167,9 +169,9 @@ public sealed class OmicronHost
         bool sameProvider = string.Equals(record.ProviderName, model.ProviderName, StringComparison.OrdinalIgnoreCase);
         bool restoreProvider = sameProvider && record.ModelId == model.Id && record.ApiType == model.ApiType;
 
+        var config = SessionConfig.Create(model, record.SystemPrompt, apiKey);
         return AgentSession.FromProjection(
-            projection, model, sessionId, Tools, Permissions, Events, ProviderStateManager,
-            record.SystemPrompt, apiKey, restoreProvider);
+            projection, config, sessionId, Tools, Permissions, Events, ProviderStateManager, restoreProvider);
     }
 
     /// <summary>
@@ -191,9 +193,9 @@ public sealed class OmicronHost
         var projection = projector.Project(events);
 
         // Fork creates a new session (new ID, no provider state)
+        var config = SessionConfig.Create(model, systemPrompt, apiKey);
         var session = AgentSession.FromProjection(
-            projection, model, null, Tools, Permissions, Events, ProviderStateManager,
-            systemPrompt, apiKey, restoreProviderState: false);
+            projection, config, null, Tools, Permissions, Events, ProviderStateManager, restoreProviderState: false);
 
         // Create session record
         var sourceRecord = await SessionStore.GetSessionAsync(sourceId, ct);

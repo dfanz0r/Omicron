@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Omicron.Core.Providers;
 using Omicron.Core.Sessions;
+using Omicron.Core.Workspace;
 
 namespace Omicron.Core.Events;
 
@@ -125,3 +126,25 @@ public sealed record ProviderStateClearedEvent(
     EventEnvelope Envelope,
     ProviderStateKey Key,
     string? Reason = null) : OmicronEvent(Envelope);
+
+// ============================================================
+// Transaction lifecycle events
+// ============================================================
+
+public sealed record TransactionStartedEvent(
+    EventEnvelope Envelope,
+    WorkspaceTransactionId TransactionId) : OmicronEvent(Envelope);
+
+public sealed record TransactionStagedEvent(
+    EventEnvelope Envelope,
+    WorkspaceTransactionId TransactionId,
+    string Path,
+    string Action) : OmicronEvent(Envelope);
+
+public sealed record TransactionCommittedEvent(
+    EventEnvelope Envelope,
+    WorkspaceTransactionId TransactionId) : OmicronEvent(Envelope);
+
+public sealed record TransactionRolledBackEvent(
+    EventEnvelope Envelope,
+    WorkspaceTransactionId TransactionId) : OmicronEvent(Envelope);

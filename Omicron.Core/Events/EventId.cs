@@ -15,6 +15,7 @@ public readonly record struct EventId(Guid Value)
 public readonly record struct SessionId(Guid Value)
 {
     public static SessionId New() => new(Guid.NewGuid());
+    public static readonly SessionId Empty = default;
     public override string ToString() => Value.ToString("N");
 }
 

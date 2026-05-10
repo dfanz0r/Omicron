@@ -1,5 +1,6 @@
 using System.Text;
 using Omicron.Core.Diff;
+using Omicron.Core.Events;
 
 namespace Omicron.Core.Workspace;
 
@@ -21,22 +22,27 @@ public interface IWorkspaceTransaction : IAsyncDisposable
 /// <summary>
 /// Default workspace transaction implementation.
 /// Provides overlay VFS via Files, computes diffs, and commits or rolls back.
-/// Commit is non-atomic (see hardening backlog).
+/// Emits lifecycle events when an <see cref="IEventSink"/> is provided.
+/// Commit uses operation journaling: on failure, attempts to reverse completed operations.
 /// </summary>
 public sealed class WorkspaceTransaction : IWorkspaceTransaction
 {
     private readonly HostWorkspaceFileSystem _host;
     private readonly TransactionFileSystem _overlay;
+    private readonly IEventSink? _eventSink;
     private bool _committed;
     private bool _disposed;
+    private bool _anyStaged;
+    private readonly List<CommittedOperation> _journal = [];
 
     public WorkspaceTransactionId Id { get; }
     public IWorkspaceFileSystem Host => _host;
     public IWorkspaceFileSystem Files => _overlay;
 
-    public WorkspaceTransaction(HostWorkspaceFileSystem host)
+    public WorkspaceTransaction(HostWorkspaceFileSystem host, IEventSink? eventSink = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
+        _eventSink = eventSink;
         Id = WorkspaceTransactionId.New();
         _overlay = new TransactionFileSystem(this, _host);
     }
@@ -65,6 +71,7 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
                 throw new InvalidOperationException($"Cannot write to a move destination: {key}");
         }
         _staged[key] = new StagedEntry(StagedAction.Write, content);
+        EmitStagedEvent(key, "write");
     }
 
     internal void StageDelete(WorkspacePath path)
@@ -87,6 +94,7 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
         }
 
         _staged[key] = new StagedEntry(StagedAction.Delete, default);
+        EmitStagedEvent(key, "delete");
     }
 
     internal void StageMove(WorkspacePath from, WorkspacePath to)
@@ -111,6 +119,7 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
 
         _staged[fromKey] = new StagedEntry(StagedAction.MoveFrom, default, toKey);
         _staged[toKey] = new StagedEntry(StagedAction.MoveTo, default, fromKey);
+        EmitStagedEvent(fromKey, "move");
     }
 
     internal bool TryGetStaged(WorkspacePath path, out StagedEntry entry)
@@ -219,22 +228,68 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
                 {
                     case StagedAction.Write:
                         await _host.WriteFileAsync(wsPath, entry.Content, ct);
+                        _journal.Add(new CommittedOperation(CommittedAction.Write, pathStr));
                         break;
                     case StagedAction.Delete:
                         await _host.DeleteAsync(wsPath, ct);
+                        _journal.Add(new CommittedOperation(CommittedAction.Delete, pathStr));
                         break;
                     case StagedAction.MoveTo:
                         var fromPath = entry.MoveFromPath!;
                         await _host.MoveAsync(new WorkspacePath(fromPath), wsPath, ct);
+                        _journal.Add(new CommittedOperation(CommittedAction.Move, pathStr, fromPath));
                         break;
                 }
             }
             _staged.Clear();
+
+            if (_eventSink is not null)
+            {
+                var envelope = new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, SessionId.Empty);
+                _eventSink.Emit(new TransactionCommittedEvent(envelope, Id));
+            }
         }
         catch
         {
+            // Attempt to reverse completed operations in reverse order
+            Exception? rollbackEx = null;
+            for (int i = _journal.Count - 1; i >= 0; i--)
+            {
+                try
+                {
+                    var op = _journal[i];
+                    switch (op.Action)
+                    {
+                        case CommittedAction.Write:
+                            await _host.DeleteAsync(new WorkspacePath(op.Path), ct);
+                            break;
+                        case CommittedAction.Delete:
+                            // Cannot undelete without backup; best-effort
+                            break;
+                        case CommittedAction.Move:
+                            // Move back
+                            await _host.MoveAsync(new WorkspacePath(op.Path), new WorkspacePath(op.FromPath!), ct);
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    rollbackEx = ex;
+                }
+            }
+
             _committed = false;
-            throw;
+
+            if (_eventSink is not null)
+            {
+                var envelope = new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, SessionId.Empty);
+                _eventSink.Emit(new TransactionRolledBackEvent(envelope, Id));
+            }
+
+            throw new InvalidOperationException(
+                "Transaction commit failed and was rolled back." +
+                (rollbackEx is not null ? $" Rollback error: {rollbackEx.Message}" : ""),
+                rollbackEx);
         }
     }
 
@@ -242,6 +297,13 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
     {
         if (_disposed) return ValueTask.CompletedTask;
         _staged.Clear();
+
+        if (_eventSink is not null && _anyStaged)
+        {
+            var envelope = new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, SessionId.Empty);
+            _eventSink.Emit(new TransactionRolledBackEvent(envelope, Id));
+        }
+
         return ValueTask.CompletedTask;
     }
 
@@ -249,6 +311,13 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
     {
         if (_disposed) return;
         _disposed = true;
+
+        if (!_committed && _anyStaged && _eventSink is not null)
+        {
+            var envelope = new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, SessionId.Empty);
+            _eventSink.Emit(new TransactionRolledBackEvent(envelope, Id));
+        }
+
         _staged.Clear();
     }
 
@@ -315,15 +384,47 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
     };
 
     // ============================================================
+    // Event helpers
+    // ============================================================
+
+    private void EmitTransactionEvent<T>(T evt) where T : OmicronEvent
+    {
+        if (_eventSink is not null)
+        {
+            _eventSink.Emit(evt);
+        }
+    }
+
+    private void EmitStagedEvent(string path, string action)
+    {
+        if (!_anyStaged)
+        {
+            _anyStaged = true;
+            var startEnvelope = new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, SessionId.Empty);
+            EmitTransactionEvent(new TransactionStartedEvent(startEnvelope, Id));
+        }
+
+        var envelope = new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, SessionId.Empty);
+        EmitTransactionEvent(new TransactionStagedEvent(envelope, Id, path, action));
+    }
+
+    // ============================================================
     // Types
     // ============================================================
 
     internal enum StagedAction { Write, Delete, MoveFrom, MoveTo }
 
+    internal enum CommittedAction { Write, Delete, Move }
+
     internal sealed record StagedEntry(
         StagedAction Action,
         ReadOnlyMemory<byte> Content,
         string? MoveFromPath = null);
+
+    internal sealed record CommittedOperation(
+        CommittedAction Action,
+        string Path,
+        string? FromPath = null);
 
     private void ThrowIfDisposed()
     {

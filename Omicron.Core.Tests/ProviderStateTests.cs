@@ -10,6 +10,14 @@ namespace Omicron.Core.Tests;
 
 public class ProviderStateTests
 {
+    private static AgentSession CreateSession(Model model, IEventSink sink, IProviderStateManager? psm = null)
+    {
+        var ts = new ToolRegistry();
+        var ps = new AllowAllPermissionService();
+        var p = psm ?? new ProviderStateManager(new InMemoryProviderConversationStateStore(), sink);
+        var config = SessionConfig.Create(model);
+        return new AgentSession(config, ts, ps, sink, p);
+    }
     [Fact]
     public void ProviderStateKey_Create_NormalizesProviderNameCase()
     {
@@ -315,8 +323,7 @@ public class ProviderStateTests
             }
         };
 
-        var session = new AgentSession(
-            model, toolRegistry, permissionService, eventSink, providerStateManager);
+        var session = CreateSession(model, eventSink, providerStateManager);
 
         var events = new List<OmicronEvent>();
         await foreach (var evt in session.PromptAsync("Hello"))
@@ -362,8 +369,7 @@ public class ProviderStateTests
             }
         };
 
-        var session = new AgentSession(
-            model, toolRegistry, permissionService, eventSink, providerStateManager);
+        var session = CreateSession(model, eventSink, providerStateManager);
 
         await foreach (var _ in session.PromptAsync("Hi")) { }
 
@@ -404,8 +410,7 @@ public class ProviderStateTests
             }
         };
 
-        var session = new AgentSession(
-            model, toolRegistry, permissionService, eventSink, providerStateManager);
+        var session = CreateSession(model, eventSink, providerStateManager);
 
         await foreach (var _ in session.PromptAsync("Hi")) { }
 
@@ -446,8 +451,7 @@ public class ProviderStateTests
             }
         };
 
-        var session = new AgentSession(
-            model, toolRegistry, permissionService, eventSink, providerStateManager);
+        var session = CreateSession(model, eventSink, providerStateManager);
 
         await foreach (var _ in session.PromptAsync("Hi")) { }
 
@@ -489,8 +493,7 @@ public class ProviderStateTests
             }
         };
 
-        var session = new AgentSession(
-            model, toolRegistry, permissionService, eventSink, providerStateManager);
+        var session = CreateSession(model, eventSink, providerStateManager);
 
         await foreach (var _ in session.PromptAsync("Hi")) { }
 
