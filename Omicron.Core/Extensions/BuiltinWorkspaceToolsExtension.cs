@@ -553,6 +553,60 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                 }
             }
         ));
+
+        // ============================================================
+        // write_file — create or overwrite a file
+        // ============================================================
+
+        context.RegisterTool(new ToolDefinition(
+            Name: "write_file",
+            Description:
+                "Create a new file or overwrite an existing file with the given content. " +
+                "Parent directories are created automatically. " +
+                "Use this to create new files; use edit_file_hashline to modify existing files safely. " +
+                "Paths are relative to the workspace root.",
+            Parameters: ToolSchema.Object(
+                new Dictionary<string, JsonElement>
+                {
+                    ["path"] = ToolSchema.StringProperty(
+                        "Path to the file to create or overwrite (relative to workspace root)."),
+                    ["content"] = ToolSchema.StringProperty(
+                        "The text content to write to the file.")
+                },
+                required: new[] { "path", "content" }
+            ),
+            InvokeAsync: async ctx =>
+            {
+                var args = ctx.Arguments;
+                var path = args.TryGetValue("path", out var p) ? p?.ToString() ?? "" : "";
+                var content = args.TryGetValue("content", out var c) ? c?.ToString() ?? "" : "";
+
+                try
+                {
+                    var wsPath = _vfs.Resolve(path);
+                    if (wsPath is null)
+                        return new ToolResult($"Error: path escapes workspace root: '{path}'", IsError: true);
+
+                    var bytes = Encoding.UTF8.GetBytes(content);
+
+                    // VFS creates parent directories automatically
+                    await _vfs.WriteFileAsync(wsPath.Value, bytes.AsMemory(), ctx.CancellationToken);
+
+                    var lines = content.Replace("\r\n", "\n").Split('\n').Length;
+                    return new ToolResult(
+                        $"Wrote {path} ({FormatSize(bytes.Length)}, {lines} lines).",
+                        IsError: false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    return new ToolResult($"Error writing '{path}': {ex.Message}", IsError: true);
+                }
+            }
+        ));
     }
 
     private static int? TryGetInt(IReadOnlyDictionary<string, object?> args, string key)
