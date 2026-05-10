@@ -106,7 +106,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         foreach (var entry in shown)
                         {
                             if (entry.IsDirectory)
-                                sb.AppendLine($"  [DIR]  {entry.Name}/");
+                                sb.AppendLine($"  [DIR]  {entry.Name}");
                             else if (entry.LineCount.HasValue)
                                 sb.AppendLine($"  [FILE] {entry.Name}  {FormatSize(entry.Size)}  ({entry.LineCount} lines)");
                             else
