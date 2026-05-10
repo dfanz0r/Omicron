@@ -107,7 +107,7 @@ public sealed class OmicronHost : IDisposable
     public void LoadBuiltinExtensions()
     {
         Extensions.Register(new BuiltinToolsExtension());
-        Extensions.Register(new BuiltinWorkspaceToolsExtension(Workspace));
+        Extensions.Register(new BuiltinWorkspaceToolsExtension(Workspace, FileSystem, WorkspaceTransactions));
         Extensions.Register(new BuiltinExecutionToolsExtension(Execution, Workspace));
     }
 

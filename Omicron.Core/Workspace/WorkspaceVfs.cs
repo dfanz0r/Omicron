@@ -1,3 +1,5 @@
+using Omicron.Core.IO;
+
 namespace Omicron.Core.Workspace;
 
 // ============================================================
@@ -180,11 +182,18 @@ public class HostWorkspaceFileSystem : IWorkspaceFileSystem
                 {
                     var fi = new FileInfo(entry);
                     int? lineCount = null;
-                    if (!IsBinaryExtension(fi.Extension))
+
+                    // Use content-based detection (more reliable than extension alone).
+                    // Only count lines for text files; binary files show "(binary)" in listings.
+                    var isBinaryByExtension = IsBinaryExtension(fi.Extension);
+                    var isText = !isBinaryByExtension && TextEncodingDetector.IsTextFile(entry);
+
+                    if (isText)
                     {
                         try { lineCount = File.ReadLines(entry).Count(); }
                         catch { }
                     }
+
                     entries.Add(new DirectoryEntry(name, false, fi.Length, lineCount));
                 }
             }
