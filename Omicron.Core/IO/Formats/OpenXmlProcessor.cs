@@ -68,79 +68,71 @@ public sealed class OpenXmlProcessor : IContentProcessor
     private static string? TryExtractText(ReadOnlySpan<byte> bytes)
     {
         // Try DocumentFormat.OpenXml first (handles DOCX, XLSX, PPTX)
+        using var ms = new MemoryStream(bytes.ToArray());
         try
         {
-            using var ms = new MemoryStream(bytes.ToArray());
-            // Try DOCX
-            try
+            using var doc = DocumentFormat.OpenXml.Packaging.WordprocessingDocument.Open(ms, false);
+            var body = doc.MainDocumentPart?.Document?.Body;
+            if (body is not null)
             {
-                using var doc = DocumentFormat.OpenXml.Packaging.WordprocessingDocument.Open(ms, false);
-                var body = doc.MainDocumentPart?.Document?.Body;
-                if (body is not null)
-                {
-                    var text = string.Concat(body.Descendants<DocumentFormat.OpenXml.Wordprocessing.Text>().Select(t => t.Text));
-                    if (!string.IsNullOrWhiteSpace(text)) return text;
-                }
-            }
-            catch
-            {
-                ms.Position = 0;
-                // Try XLSX
-                try
-                {
-                    using var xls = DocumentFormat.OpenXml.Packaging.SpreadsheetDocument.Open(ms, false);
-                    var sb = new System.Text.StringBuilder();
-                    foreach (var sheet in xls.WorkbookPart.WorksheetParts)
-                    {
-                        var sheetData = sheet.Worksheet.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.SheetData>();
-                        if (sheetData is null) continue;
-                        foreach (var row in sheetData.Elements<DocumentFormat.OpenXml.Spreadsheet.Row>())
-                        {
-                            foreach (var cell in row.Elements<DocumentFormat.OpenXml.Spreadsheet.Cell>())
-                            {
-                                var cellText = cell.CellValue?.Text ?? cell.InnerText ?? "";
-                                sb.Append(cellText).Append('\t');
-                            }
-                            sb.AppendLine();
-                        }
-                    }
-                    var xlsText = sb.ToString().Trim();
-                    if (xlsText.Length > 0) return xlsText;
-                }
-                catch
-                {
-                    ms.Position = 0;
-                    // Try PPTX
-                    try
-                    {
-                        using var ppt = DocumentFormat.OpenXml.Packaging.PresentationDocument.Open(ms, false);
-                        var sb = new System.Text.StringBuilder();
-                        foreach (var slide in ppt.PresentationPart.SlideParts)
-                        {
-                            foreach (var slideShape in slide.Slide.Descendants<DocumentFormat.OpenXml.Presentation.Shape>())
-                            {
-                                var text = slideShape.TextBody?.Descendants<DocumentFormat.OpenXml.Drawing.Text>()?.FirstOrDefault()?.Text ?? "";
-                                if (!string.IsNullOrWhiteSpace(text))
-                                    sb.AppendLine(text);
-                            }
-                        }
-                        var pptText = sb.ToString().Trim();
-                        if (pptText.Length > 0) return pptText;
-                    }
-                    catch { }
-                }
+                var text = string.Concat(body.Descendants<DocumentFormat.OpenXml.Wordprocessing.Text>().Select(t => t.Text));
+                if (!string.IsNullOrWhiteSpace(text)) return text;
             }
         }
         catch
         {
-            // DocumentFormat.OpenXml failed — fall back to manual ZIP traversal
+            ms.Position = 0;
+            // Try XLSX
+            try
+            {
+                using var xls = DocumentFormat.OpenXml.Packaging.SpreadsheetDocument.Open(ms, false);
+                var sb = new System.Text.StringBuilder();
+                foreach (var sheet in xls.WorkbookPart?.WorksheetParts ?? [])
+                {
+                    var sheetData = sheet.Worksheet?.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.SheetData>();
+                    if (sheetData is null) continue;
+                    foreach (var row in sheetData.Elements<DocumentFormat.OpenXml.Spreadsheet.Row>())
+                    {
+                        foreach (var cell in row.Elements<DocumentFormat.OpenXml.Spreadsheet.Cell>())
+                        {
+                            var cellText = cell.CellValue?.Text ?? cell.InnerText ?? "";
+                            sb.Append(cellText).Append('\t');
+                        }
+                        sb.AppendLine();
+                    }
+                }
+                var xlsText = sb.ToString().Trim();
+                if (xlsText.Length > 0) return xlsText;
+            }
+            catch
+            {
+                ms.Position = 0;
+                // Try PPTX
+                try
+                {
+                    using var ppt = DocumentFormat.OpenXml.Packaging.PresentationDocument.Open(ms, false);
+                    var sb = new System.Text.StringBuilder();
+                    foreach (var slide in ppt.PresentationPart?.SlideParts ?? [])
+                    {
+                        foreach (var slideShape in slide.Slide?.Descendants<DocumentFormat.OpenXml.Presentation.Shape>() ?? [])
+                        {
+                            var text = slideShape.TextBody?.Descendants<DocumentFormat.OpenXml.Drawing.Text>()?.FirstOrDefault()?.Text ?? "";
+                            if (!string.IsNullOrWhiteSpace(text))
+                                sb.AppendLine(text);
+                        }
+                    }
+                    var pptText = sb.ToString().Trim();
+                    if (pptText.Length > 0) return pptText;
+                }
+                catch { }
+            }
         }
 
         // Fallback: manual ZIP entry scanning
         try
         {
-            using var ms = new MemoryStream(bytes.ToArray());
-            using var archive = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Read);
+            using var fallbackMs = new MemoryStream(bytes.ToArray());
+            using var archive = new System.IO.Compression.ZipArchive(fallbackMs, System.IO.Compression.ZipArchiveMode.Read);
 
             // Try DOCX: word/document.xml
             var docEntry = archive.GetEntry("word/document.xml");

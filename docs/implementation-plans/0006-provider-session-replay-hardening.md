@@ -1,12 +1,23 @@
 # Implementation Plan 0006: Provider and Session Replay Hardening
 
 Status: Proposed  
-Depends on: Plan 3 persistence/projection, Plan 3.5 session UX  
+Depends on: Plans 3, 3.5, 4.1 (modality validation gate)  
 Primary RFCs: RFC 0001, RFC 0006
 
 ## Purpose
 
 Strengthen replay, resume, and provider-state semantics after session UX exists, especially across provider/model boundaries.
+
+## Current State (Post-Plan-4.1)
+
+Already in place:
+
+- `SessionProjector` projects events into `SessionProjection` for replay.
+- `ResumeSessionAsync` / `ForkSessionAsync` create sessions from persisted events.
+- `ModalityUsedEvent` (Plan 4.1) is emitted during reads and persisted in the session log.
+- `CheckModalityCompatibility` gates cross-model fork/resume by validating the target model supports all modalities used in the session.
+- `SessionForkRequest` / `SessionResumeRequest` carry model, API key, and system prompt overrides.
+- Provider state is restored on same-model resume, cleared on cross-model fork.
 
 ## Goals
 
@@ -18,14 +29,17 @@ Strengthen replay, resume, and provider-state semantics after session UX exists,
 
 ### 1. Projection completeness audit
 
-Review `SessionProjector` against all concrete `OmicronEvent` types.
+Review `SessionProjector` against all concrete `OmicronEvent` types, including new types added since Plan 3:
+
+- `ModalityUsedEvent` (Plan 4.1) — should be intentionally ignored by projection (it's metadata, not conversational content)
+- Transaction lifecycle events (`TransactionStartedEvent`, `TransactionStagedEvent`, `TransactionCommittedEvent`, `TransactionRolledBackEvent`) — should be ignored
 
 Add tests to ensure new event types are either projected or intentionally ignored.
 
 Related hardening:
 
 ```text
-FH-0003: JSONL event deserialization switch requires manual maintenance
+FH-0003: JSONL event deserialization switch requires manual maintenance (resolved via OmicronEventRegistry)
 ```
 
 ### 2. AgentSession hydration hardening
@@ -43,6 +57,7 @@ Codify rules:
 
 - same session + same provider/model/API shape may restore safe provider state;
 - cross-model/provider fork must clear provider-managed continuation;
+- **Modality validation gate** (Plan 4.1 Phase 6): cross-model fork/resume now validates target model supports all modalities used in the source session before transfer. If incompatible, the operation fails before any state mutation;
 - OpenRouter Responses remains stateless full-context by default;
 - transcript replay is preferred over provider state continuation for transfer.
 
@@ -53,7 +68,8 @@ If forks are implemented, add metadata/events for:
 - source session id;
 - fork time;
 - target provider/model;
-- whether provider state was preserved or cleared.
+- whether provider state was preserved or cleared;
+- **Modality tracking**: `ModalityUsedEvent` (Plan 4.1) already tracks which modalities were used in the session and which files triggered them — this serves as per-file lineage for cross-model compatibility auditing.
 
 ### 5. Replay/provider tests
 

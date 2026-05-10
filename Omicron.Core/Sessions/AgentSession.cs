@@ -427,11 +427,11 @@ public sealed class AgentSession
                     }
 
                     _messages.Add(Message.ToolResultMessage(
-                        toolCall.Id, toolCall.Name, resultText, isError));
+                        toolCall.Id, toolCall.Name, resultText ?? "", isError));
 
                     yield return Emit(new ToolInvocationCompletedEvent(
                         _writer.Envelope(),
-                        toolCallId, toolCall.Name, resultText, isError));
+                        toolCallId, toolCall.Name, resultText ?? "", isError));
                 }
 
                 continue;

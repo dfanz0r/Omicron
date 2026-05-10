@@ -1,7 +1,7 @@
 # Implementation Plan 0005: Semantic Content and Command Primitives
 
 Status: Proposed  
-Depends on: Plan 3 foundations  
+Depends on: Plans 3, 4, 4.1 (existing structured content types)  
 Primary RFCs: RFC 0002, RFC 0013
 
 ## Purpose
@@ -12,11 +12,21 @@ Start extracting frontend-neutral content and command primitives so CLI, future 
 
 - Represent tool/assistant/session/workspace output as structured content.
 - Keep rendering separate from content semantics.
+- Layer on top of existing structured types (`WorkspaceReadContent`, `ContentProcessorResult`, `WorkspaceDiff`) rather than replacing them.
 - Prepare for TUI/GUI/web without rewriting tool results later.
+
+## Current State (Post-Plan-4.1)
+
+Already structured content sources:
+
+- `WorkspaceReadContent` / `WorkspaceFileContent` / `WorkspaceDirectoryContent` / `WorkspaceBinaryFileContent` — workspace read results with line counts, binary detection, directory entries.
+- `ContentProcessorResult` — carries `ActualModality`, `MimeType`, `Warning`, `IsTruncated`, `NextOffset` from the format-adaptive read pipeline.
+- `WorkspaceDiff` / `UnifiedDiffRenderer` — diff generation from workspace transactions and edit harness.
+- `ToolResult` — currently plain `(string Text, bool IsError)` — the primary target for structured upgrade.
 
 ## Content Model
 
-Add core records:
+Add core records (layer on top of existing types):
 
 ```csharp
 public abstract record ContentBlock;
@@ -47,10 +57,11 @@ Slash commands can remain CLI-local initially but should eventually map to seman
 
 ## Integration Points
 
-- Tool results can optionally carry content blocks in addition to text.
-- Workspace reads can produce `FilePreviewContentBlock` or `CodeContentBlock` later from `WorkspaceReadContent`.
-- Diffs can produce `DiffContentBlock` from transaction/edit harness results.
-- CLI renderer converts content blocks to text.
+- Tool results can carry content blocks in addition to `ToolResult.Text`.
+- `ContentProcessorResult` (from Plan 4.1) can be wrapped as `CodeContentBlock`, `FilePreviewContentBlock`, or `HexDumpContentBlock`.
+- `WorkspaceReadContent` (from Plan 3) already provides `WorkspaceFileContent` / `WorkspaceDirectoryContent` / `WorkspaceBinaryFileContent` — map to `FilePreviewContentBlock` and `CodeContentBlock`.
+- `WorkspaceDiff` / `UnifiedDiffRenderer` (from Plan 3.1/4) already provide structured diffs — map to `DiffContentBlock`.
+- CLI renderer converts content blocks to text; future TUI/GUI renders them natively.
 
 ## Acceptance Criteria
 
