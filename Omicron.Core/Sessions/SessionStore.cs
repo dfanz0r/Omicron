@@ -262,6 +262,9 @@ public sealed class InMemorySessionStore : ISessionStore
 /// </summary>
 public sealed class JsonlSessionStore : ISessionStore, IDisposable
 {
+    /// <summary>Directory where session data is stored.</summary>
+    public string StoreDirectory => _storeDir;
+
     private readonly string _storeDir;
     private readonly JsonSerializerOptions _jsonOptions;
     private readonly List<SessionRecord> _sessions = new();

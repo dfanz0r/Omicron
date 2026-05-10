@@ -33,8 +33,11 @@ public sealed class OmicronHost
     /// <summary>Permission service — controls access to operations.</summary>
     public IPermissionService Permissions { get; }
 
-    /// <summary>Workspace — file system access abstraction.</summary>
+    /// <summary>Workspace — file system access abstraction (rich read/directory).</summary>
     public IWorkspace Workspace { get; }
+
+    /// <summary>Workspace VFS — low-level file operations with path containment.</summary>
+    public IWorkspaceFileSystem FileSystem { get; }
 
     /// <summary>Execution broker — shell command execution.</summary>
     public IExecutionBroker Execution { get; }
@@ -79,7 +82,8 @@ public sealed class OmicronHost
         Tools = new ToolRegistry();
         Commands = new CommandRegistry();
         Permissions = new AllowAllPermissionService();
-        Workspace = new HostWorkspace(workspaceRoot);
+        FileSystem = new HostWorkspaceFileSystem(workspaceRoot);
+        Workspace = new VfsWorkspaceAdapter(FileSystem);
         Execution = new LocalExecutionBroker(Events);
         ProviderState = new InMemoryProviderConversationStateStore();
         ProviderStateManager = new ProviderStateManager(ProviderState, Events);

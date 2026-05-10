@@ -1,3 +1,4 @@
+using System.Threading;
 using Omicron.Core.Sessions;
 
 namespace Omicron.Core.Events;
@@ -14,7 +15,7 @@ namespace Omicron.Core.Events;
 public sealed class PersistentEventSink : IEventSink
 {
     private readonly IEventSink _inner;
-    private readonly ISessionStore _store;
+    private ISessionStore _store;
     private readonly SessionId? _sessionId;
 
     /// <summary>
@@ -24,14 +25,16 @@ public sealed class PersistentEventSink : IEventSink
     public Action<Exception, OmicronEvent, string>? OnError { get; set; }
 
     /// <summary>
-    /// Total number of events successfully persisted.
+    /// Total number of events successfully persisted (atomically updated).
     /// </summary>
-    public long PersistedCount { get; private set; }
+    public long PersistedCount => Volatile.Read(ref _persistedCount);
+    private long _persistedCount;
 
     /// <summary>
-    /// Total number of persistence failures.
+    /// Total number of persistence failures (atomically updated).
     /// </summary>
-    public long FailureCount { get; private set; }
+    public long FailureCount => Volatile.Read(ref _failureCount);
+    private long _failureCount;
 
     /// <summary>
     /// Create a PersistentEventSink.
@@ -57,11 +60,11 @@ public sealed class PersistentEventSink : IEventSink
             try
             {
                 _store.AppendEventsAsync(stamped.SessionId, [stamped]).GetAwaiter().GetResult();
-                PersistedCount++;
+                Interlocked.Increment(ref _persistedCount);
             }
             catch (Exception ex)
             {
-                FailureCount++;
+                Interlocked.Increment(ref _failureCount);
                 OnError?.Invoke(ex, stamped, "Emit");
             }
         }
@@ -84,11 +87,11 @@ public sealed class PersistentEventSink : IEventSink
             {
                 var list = group.ToList();
                 _store.AppendEventsAsync(group.Key, list).GetAwaiter().GetResult();
-                PersistedCount += list.Count;
+                Interlocked.Add(ref _persistedCount, list.Count);
             }
             catch (Exception ex)
             {
-                FailureCount++;
+                Interlocked.Increment(ref _failureCount);
                 OnError?.Invoke(ex, group.First(), "EmitBatch");
             }
         }

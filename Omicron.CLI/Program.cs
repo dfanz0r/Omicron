@@ -16,16 +16,23 @@ Console.WriteLine("║   Providers: OpenAI · Anthropic · OpenCode · OR ║");
 Console.WriteLine("╚══════════════════════════════════════════════════╝");
 Console.WriteLine();
 
-// --- Host ---
-var host = new OmicronHost(Environment.CurrentDirectory);
-host.LoadBuiltinExtensions();
-
 // --- Config ---
 var configManager = new ConfigManager();
 configManager.Load();
 
 var cfg = configManager.Config;
 Console.WriteLine($"Config: {configManager.GetConfigPath()}");
+
+// --- Host ---
+// Keep the live EventLog in memory, but persist the authoritative session/event
+// stream to disk by default so conversations can be inspected/replayed later.
+var sessionStoreDir = Path.Combine(
+    Path.GetDirectoryName(configManager.GetConfigPath())!,
+    "sessions");
+var sessionStore = new JsonlSessionStore(sessionStoreDir);
+var host = new OmicronHost(Environment.CurrentDirectory, sessionStore);
+host.LoadBuiltinExtensions();
+Console.WriteLine($"Session store: {sessionStore.StoreDirectory}");
 
 // --- Provider setup ---
 Console.WriteLine("Registered providers:");

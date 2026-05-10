@@ -1,6 +1,6 @@
 # Implementation Plan 0003: Core Persistence, Workspace, and RFC Foundations
 
-Status: In progress — Phase 1 (Durable Event Log and Session Catalog) complete. Phase 2 (Session Replay Projection) next.  
+Status: Phase 1 (Durable Event Log and Session Catalog) complete. Phase 2 (Session Replay Projection) complete. Phase 3 (Host-Backed Workspace VFS v1) in progress.  
 Primary RFCs: RFC 0001, RFC 0002, RFC 0006, RFC 0012  
 Secondary RFCs unblocked: RFC 0007, RFC 0010, RFC 0014
 
@@ -34,10 +34,9 @@ Implemented foundations:
 
 Important gaps against RFCs:
 
-- no persistent event log/session catalog/replay;
-- no session snapshots/checkpoints;
-- no VFS transactions, diffs, manifests, or rollback;
+- no VFS transactions, diffs, manifests, or rollback (Phase 3 target);
 - no edit harness beyond direct file tools;
+- no session snapshots/checkpoints;
 - no semantic `ContentBlock` / `UiNode` model;
 - no plugin manifest/capability model;
 - no command result/event model shared by CLI/TUI/GUI/plugins;
@@ -228,7 +227,7 @@ Update tools:
 - all file reads go through VFS abstraction;
 - traversal attacks remain blocked;
 - tests cover stat/read/list/path containment;
-- event or audit hooks exist for file operations.
+- event or audit hooks for file operations are deferred to Phase 4 (transactions/diffs) to avoid audit model churn before transaction semantics are stable.
 
 ## Phase 4: Workspace Transactions and Diff v1
 

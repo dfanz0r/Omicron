@@ -56,7 +56,7 @@ public sealed class ProviderStateManager : IProviderStateManager
         var normalizedState = state with { Key = normalizedKey };
         _store.Set(normalizedState);
         _eventSink?.Emit(new ProviderStateUpdatedEvent(
-                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, normalizedKey.SessionId),
+                EventEnvelope.ForSession(normalizedKey.SessionId),
                 new ProviderStateSnapshot(normalizedKey, normalizedState.PreviousResponseId, normalizedState.ConversationId, normalizedState.SessionAffinityKey, normalizedState.ProviderMetadata, normalizedState.StoragePolicy),
                 reason));
         return normalizedState;
@@ -69,7 +69,7 @@ public sealed class ProviderStateManager : IProviderStateManager
         {
             var normalizedKey = key.Normalize();
             _eventSink?.Emit(new ProviderStateClearedEvent(
-                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, normalizedKey.SessionId), normalizedKey, reason));
+                EventEnvelope.ForSession(normalizedKey.SessionId), normalizedKey, reason));
         }
     }
 
@@ -79,7 +79,7 @@ public sealed class ProviderStateManager : IProviderStateManager
         foreach (var key in removedKeys)
         {
             _eventSink?.Emit(new ProviderStateClearedEvent(
-                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), key, reason));
+                EventEnvelope.ForSession(sessionId), key, reason));
         }
     }
 

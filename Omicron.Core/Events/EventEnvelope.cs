@@ -12,7 +12,12 @@ public sealed record EventEnvelope(
     EventId Id,
     long Sequence,
     DateTimeOffset Timestamp,
-    SessionId SessionId);
+    SessionId SessionId)
+{
+    /// <summary>Create a standard envelope for a session (sequence=0, now timestamp).</summary>
+    public static EventEnvelope ForSession(SessionId sessionId) =>
+        new(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId);
+}
 
 // ============================================================
 // Event-specific payload records (reduce long constructors)

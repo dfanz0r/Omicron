@@ -274,5 +274,6 @@ public class PersistenceIntegrationTests
         Assert.True(persistentSink.PersistedCount > 0);
         Assert.Equal(0, persistentSink.FailureCount);
     }
+
 }
 

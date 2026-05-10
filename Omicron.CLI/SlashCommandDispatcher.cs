@@ -153,6 +153,7 @@ internal sealed class SlashCommandDispatcher
             case "reset":
                 return ResetSession(context);
 
+
             case "exit":
                 return new ChatCommandResult(ChatCommandAction.ExitApp, "Goodbye!");
 

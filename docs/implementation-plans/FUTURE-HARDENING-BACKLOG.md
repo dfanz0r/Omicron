@@ -38,14 +38,19 @@ Potential follow-up:
 
 ### FH-0002: `PersistentEventSink` diagnostic counters are not atomic
 
-Status: Open  
+Status: Completed 2026-05-08  
 Area: `Omicron.Core/Events/PersistentEventSink.cs`  
 Priority: Low.
 
-Current state:
+Completion note:
 
-- `PersistedCount` and `FailureCount` are diagnostic counters.
-- Counter increments are not atomic.
+- `PersistedCount` and `FailureCount` now use `Volatile.Read`-backed getters.
+- Updates use `Interlocked.Increment` / `Interlocked.Add`.
+
+Original state:
+
+- `PersistedCount` and `FailureCount` were diagnostic counters.
+- Counter increments were not atomic.
 
 Risk:
 
@@ -83,14 +88,19 @@ Potential follow-up:
 
 ### FH-0004: Non-session services manually construct `EventEnvelope`
 
-Status: Open  
+Status: Completed 2026-05-08  
 Area: `Omicron.Core/Events/EventEnvelope.cs`, non-session event producers such as `ProviderStateManager`  
 Priority: Low.
 
-Current state:
+Completion note:
 
-- `AgentSession` uses `SessionEventWriter.Envelope()` for standard session event metadata.
-- `ProviderStateManager` does not have a `SessionEventWriter`, so it constructs envelopes directly:
+- Added `EventEnvelope.ForSession(SessionId)`.
+- Updated `ProviderStateManager` to use the helper for provider-state events.
+
+Original state:
+
+- `AgentSession` used `SessionEventWriter.Envelope()` for standard session event metadata.
+- `ProviderStateManager` did not have a `SessionEventWriter`, so it constructed envelopes directly:
   `new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId)`.
 
 Risk:
@@ -103,6 +113,31 @@ Potential follow-up:
 - Add a static helper such as `EventEnvelope.Create(SessionId sessionId)` or `EventEnvelope.ForSession(SessionId sessionId)`.
 - Update non-session producers to use the helper.
 - Keep `SessionEventWriter.Envelope()` for session-scoped runtime code.
+
+### FH-0005: Move VFS host integration test to a better test file
+
+Status: Completed 2026-05-08  
+Area: `Omicron.Core.Tests/WorkspaceVfsTests.cs`, workspace/VFS tests  
+Priority: Low.
+
+Completion note:
+
+- Moved `OmicronHost_WorkspaceIsVfsBacked_AndReadsFile` to `WorkspaceVfsTests.cs`.
+- Removed it from `PersistenceIntegrationTests.cs`.
+
+Original state:
+
+- `OmicronHost_WorkspaceIsVfsBacked_AndReadsFile` verified that `OmicronHost.Workspace` is a `VfsWorkspaceAdapter` and preserves formatted reads through the VFS-backed path.
+- The test lived in `PersistenceIntegrationTests.cs` even though it was a workspace/host integration test, not a persistence test.
+
+Risk:
+
+- Test organization becomes harder to navigate as subsystem coverage grows.
+
+Potential follow-up:
+
+- Move `OmicronHost_WorkspaceIsVfsBacked_AndReadsFile` to `WorkspaceVfsTests.cs`, `OmicronHostIntegrationTests.cs`, or another workspace/host-focused test file.
+- Keep the assertion coverage unchanged.
 
 ## Review Cadence
 
