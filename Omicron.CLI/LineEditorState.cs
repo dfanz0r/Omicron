@@ -34,6 +34,9 @@ public sealed class LineEditorState
     public int Cursor { get; set; }
     public bool InPaste { get; set; }
     public bool EscapePressed { get; set; }
+
+    /// <summary>Set by the engine when multiple completions should be displayed (e.g. tab pressed with no unique prefix).</summary>
+    public IReadOnlyList<string>? PendingCompletions { get; set; }
 }
 
 /// <summary>
@@ -147,6 +150,7 @@ public class LineEditorEngine
         if (key.KeyChar >= ' ' || key.KeyChar == '\t')
         {
             Insert(key.KeyChar, state);
+            state.PendingCompletions = null;
             return LineEditorAction.None;
         }
 
@@ -176,6 +180,7 @@ public class LineEditorEngine
 
         if (completions.Count == 1)
         {
+            state.PendingCompletions = null;
             ReplaceBuffer(state, completions[0]);
             return;
         }
@@ -183,8 +188,13 @@ public class LineEditorEngine
         var commonPrefix = LongestCommonPrefix(completions);
         if (commonPrefix.Length > current.Length)
         {
+            state.PendingCompletions = null;
             ReplaceBuffer(state, commonPrefix);
+            return;
         }
+
+        // Multiple completions, no common prefix extension — stash for display
+        state.PendingCompletions = completions;
     }
 
     private void ReplaceBuffer(LineEditorState state, string value)

@@ -138,7 +138,10 @@ while (true)
         var loopResult = await ChatLoop(resumedSession, innerSlashContext, slashDispatcher);
 
         if (loopResult.Reason == ChatLoopExitReason.ExitApp)
-        { break; }
+        {
+            Console.WriteLine("Goodbye!");
+            break;
+        }
 
         if (loopResult.NewSession is not null && loopResult.NewModel is not null)
         {
@@ -166,7 +169,6 @@ while (true)
     break;
 }
 
-Console.WriteLine("Goodbye!");
 return;
 
 // ---------------------------------------------------------------
@@ -339,6 +341,34 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
 {
     var editor = new LineEditor(input => dispatcher.GetCompletions(input, slashCtx));
 
+    // Display conversation history for resumed sessions
+    if (session.Messages.Count > 0)
+    {
+        Console.WriteLine($"\n  Session has {session.Messages.Count} previous messages.\n");
+        foreach (var msg in session.Messages)
+        {
+            switch (msg.Role)
+            {
+                case MessageRole.User:
+                    Console.WriteLine($"\x1b[33mYou:\x1b[0m {msg.Text}");
+                    break;
+                case MessageRole.Assistant when msg.ToolCalls is { Count: > 0 }:
+                    Console.WriteLine($"\x1b[36mAssistant:\x1b[0m {msg.Text}");
+                    foreach (var tc in msg.ToolCalls)
+                        Console.WriteLine($"  \x1b[90m[tool: {tc.Name}]\x1b[0m");
+                    break;
+                case MessageRole.Assistant:
+                    Console.WriteLine($"\x1b[36mAssistant:\x1b[0m {msg.Text}");
+                    break;
+                case MessageRole.ToolResult:
+                    var preview = msg.Text?.Length > 80 ? msg.Text[..80] + "…" : msg.Text;
+                    Console.WriteLine($"  \x1b[90m[result: {msg.ToolName}] {preview}\x1b[0m");
+                    break;
+            }
+        }
+        Console.WriteLine();
+    }
+
     while (true)
     {
         var input = editor.ReadLine("You: ");
@@ -360,8 +390,6 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
                     return new ChatLoopResult(ChatLoopExitReason.ExitSession);
 
                 case ChatCommandAction.ExitApp:
-                    if (result.Message is not null)
-                        Console.WriteLine(result.Message);
                     return new ChatLoopResult(ChatLoopExitReason.ExitApp);
 
                 case ChatCommandAction.ResetSession:
