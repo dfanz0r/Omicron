@@ -388,13 +388,35 @@ public sealed class AgentSession
                         {
                             try
                             {
+                                // Build model metadata from session config for tool context
+                                var modelModalities = new HashSet<string> { "text" };
+                                if (_config.Model.SupportsImages) modelModalities.Add("image");
+                                var toolModelMeta = new ModelMetadata(
+                                    _config.Model.Id, _config.Model.ProviderName,
+                                    SupportsVision: _config.Model.SupportsImages ? true : null,
+                                    Modalities: modelModalities);
+
                                 var invokeResult = await toolDef.InvokeAsync(
                                     new ToolInvocationContext(
                                         toolCallId,
                                         toolCall.Arguments ?? new Dictionary<string, object?>(),
-                                        Id, AgentId, ct));
+                                        Id, AgentId, ct, toolModelMeta));
                                 resultText = invokeResult.Text;
                                 isError = invokeResult.IsError;
+
+                                // Multimodal bridge: if read_path returned base64 content,
+                                // inject a user message with actual image/audio/video/PDF content
+                                // so provider shapes can serialize it as image_url/input_image.
+                                if (!isError && toolCall.Name == "read_path" && resultText is not null)
+                                {
+                                    var bridgeImages = TryExtractBase64Content(resultText);
+                                    if (bridgeImages.Count > 0)
+                                    {
+                                        var bridgeMsg = Message.UserMessage(
+                                            $"read_path returned base64 content for the tool result below", bridgeImages);
+                                        _messages.Add(bridgeMsg);
+                                    }
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -462,5 +484,45 @@ public sealed class AgentSession
     private OmicronEvent Emit(OmicronEvent evt)
     {
         return _writer.Emit(evt);
+    }
+
+    /// <summary>
+    /// Extract base64-encoded content from a read_path tool result.
+    /// Looks for lines starting with "Data: " and extracts the base64 payload
+    /// along with the MIME type from the header line.
+    /// Returns an empty list if no base64 content is found.
+    /// </summary>
+
+
+    private static IReadOnlyList<ImageContent> TryExtractBase64Content(string resultText)
+    {
+        var lines = resultText.Replace("\r\n", "\n").Split('\n');
+        string? mimeType = null;
+        string? base64Data = null;
+
+        foreach (var line in lines)
+        {
+            if (mimeType is null && line.Contains("[FILE]") && !line.Contains("Data:"))
+            {
+                var mimeStart = line.LastIndexOf('(');
+                var mimeEnd = line.LastIndexOf(')');
+                if (mimeStart >= 0 && mimeEnd > mimeStart)
+                {
+                    var inner = line.Substring(mimeStart + 1, mimeEnd - mimeStart - 1);
+                    var comma = inner.LastIndexOf(',');
+                    var candidate = comma >= 0 ? inner.Substring(comma + 1).Trim() : inner.Trim();
+                    if (candidate.Contains('/'))
+                        mimeType = candidate;
+                }
+            }
+
+            if (line.StartsWith("Data: "))
+                base64Data = line.Substring(6).Trim();
+        }
+
+        if (base64Data is not null && mimeType is not null)
+            return new[] { new ImageContent(base64Data, mimeType) };
+
+        return Array.Empty<ImageContent>();
     }
 }

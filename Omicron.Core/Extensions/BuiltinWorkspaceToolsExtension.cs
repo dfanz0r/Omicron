@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Omicron.Core.Diff;
+using Omicron.Core.Events;
 using Omicron.Core.IO;
 using Omicron.Core.Tools;
 using Omicron.Core.Workspace;
@@ -18,6 +19,9 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
     private readonly IWorkspace _workspace;
     private readonly IWorkspaceFileSystem _vfs;
     private readonly IWorkspaceTransactionManager _txManager;
+    private readonly ContentProcessorRegistry _processors;
+    private readonly Base64Processor _base64Processor;
+    private readonly IEventSink? _eventSink;
 
     public string Id => "omicron.workspace-tools";
     public string DisplayName => "Workspace Tools";
@@ -26,11 +30,16 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
     public BuiltinWorkspaceToolsExtension(
         IWorkspace workspace,
         IWorkspaceFileSystem vfs,
-        IWorkspaceTransactionManager txManager)
+        IWorkspaceTransactionManager txManager,
+        ContentProcessorRegistry? processors = null,
+        IEventSink? eventSink = null)
     {
         _workspace = workspace;
         _vfs = vfs;
         _txManager = txManager;
+        _processors = processors ?? new ContentProcessorRegistry();
+        _base64Processor = new Base64Processor();
+        _eventSink = eventSink;
     }
 
     public void Register(IExtensionContext context)
@@ -39,25 +48,26 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
             Name: "read_path",
             Description:
                 "Read a file or list a directory. " +
-                "For files: returns content with line numbers, size, and line count. " +
-                "Supports line offset/limit and byte-based chunk indexing for large files. " +
-                "For directories: lists entries with per-file line count and size, " +
-                "per-folder direct-child counts, and a summary. " +
-                "Output is truncated at 50 KB / 2000 lines per call; use chunk or offset to continue.",
+                "For files: returns content (text, hex dump, or base64) based on " +
+                "file type and model capabilities. " +
+                "Supports format override: 'auto' (default), 'text', 'hex', or 'base64'. " +
+                "For directories: lists entries with per-file line count and size. " +
+                "Output is truncated at 50 KB / 2000 lines per call.",
             Parameters: ToolSchema.Object(
                 new Dictionary<string, JsonElement>
                 {
                     ["path"] = ToolSchema.StringProperty(
                         "Path to read. If a file: reads content. If a directory: lists contents."),
+                    ["format"] = ToolSchema.EnumProperty(
+                        "Output format: 'auto' (default, auto-detect), 'text' (force UTF-8), " +
+                        "'hex' (hex dump), or 'base64' (raw base64 encoding).",
+                        new[] { "auto", "text", "hex", "base64" }),
                     ["offset"] = ToolSchema.IntegerProperty(
-                        "1-based line number to start reading from. Ignored for directories."),
+                        "Byte offset (hex/base64 mode) or 1-based line number (text mode). " +
+                        "For hex, accepts decimal or 0x-prefixed hex values."),
                     ["limit"] = ToolSchema.IntegerProperty(
-                        "Maximum lines to return. Defaults to fit within truncation limit. Ignored for directories."),
-                    ["chunk"] = ToolSchema.IntegerProperty(
-                        "0-based chunk index for byte-based access. " +
-                        "Each chunk is ~50 KB. " +
-                        "When set, offset is relative to the start of this chunk. " +
-                        "Useful for resuming after truncated output. Ignored for directories.")
+                        "Byte limit (hex/base64) or max lines (text). " +
+                        "For hex, accepts decimal or 0x-prefixed hex.")
                 },
                 required: new[] { "path" }
             ),
@@ -65,16 +75,153 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
             {
                 var args = ctx.Arguments;
                 var path = args.TryGetValue("path", out var p) ? p?.ToString() ?? "" : "";
+                var format = args.TryGetValue("format", out var f) ? f?.ToString() ?? "auto" : "auto";
                 var offset = TryGetInt(args, "offset");
                 var limit = TryGetInt(args, "limit");
-                var chunk = TryGetInt(args, "chunk");
 
-                var result = await _workspace.ReadPathAsync(
-                    path,
-                    new ReadOptions { Offset = offset, Limit = limit, Chunk = chunk },
-                    ctx.CancellationToken);
+                try
+                {
+                    // --- Resolve path ---
+                    var wsPath = _vfs.Resolve(path);
+                    if (wsPath is null)
+                        return new ToolResult($"Error: path escapes workspace root: '{path}'", IsError: true);
 
-                return new ToolResult(result.Content, IsError: result.Content.StartsWith("Error"));
+                    var stat = await _vfs.StatAsync(wsPath.Value, ctx.CancellationToken);
+                    if (stat is null)
+                        return new ToolResult($"Error: path not found: {path}", IsError: true);
+
+                    // --- Directory listing (restored with binary indicator and sizes) ---
+                    if (stat.IsDirectory)
+                    {
+                        var allEntries = await _vfs.ReadDirectoryAsync(wsPath.Value, ctx.CancellationToken);
+                        var sorted = allEntries
+                            .OrderBy(e => e.IsDirectory ? 0 : 1)
+                            .ThenBy(e => e.Name, StringComparer.Ordinal)
+                            .ToList();
+                        var shown = sorted.Take(200).ToList();
+
+                        var sb = new StringBuilder();
+                        sb.AppendLine($"[DIR] {path}/  ({sorted.Count(e => !e.IsDirectory)} files, {sorted.Count(e => e.IsDirectory)} dirs)");
+                        sb.AppendLine();
+                        foreach (var entry in shown)
+                        {
+                            if (entry.IsDirectory)
+                                sb.AppendLine($"  [DIR]  {entry.Name}/");
+                            else if (entry.LineCount.HasValue)
+                                sb.AppendLine($"  [FILE] {entry.Name}  {FormatSize(entry.Size)}  ({entry.LineCount} lines)");
+                            else
+                                sb.AppendLine($"  [FILE] {entry.Name}  {FormatSize(entry.Size)}  (binary)");
+                        }
+                        if (sorted.Count > 200)
+                            sb.AppendLine($"... ({sorted.Count} total entries)");
+                        sb.AppendLine();
+                        sb.AppendLine($"{sorted.Count(e => !e.IsDirectory)} files, {sorted.Count(e => e.IsDirectory)} dirs");
+
+                        return new ToolResult(sb.ToString().TrimEnd());
+                    }
+
+                    // --- Read file bytes ---
+                    var bytes = await _vfs.ReadFileAsync(wsPath.Value, ctx.CancellationToken);
+                    if (bytes.IsEmpty && stat.Size > 0)
+                        return new ToolResult($"Error: could not read file: {path}", IsError: true);
+
+                    // --- Handle format override ---
+                    IContentProcessor processor;
+                    string effectiveFormat = format.ToLowerInvariant();
+
+                    // File too large for memory — downgrade to hex
+                    if (stat.Size > 50 * 1024 * 1024 && effectiveFormat == "auto")
+                        effectiveFormat = "hex";
+
+                    // Cap base64 encoding to 5 MB
+                    if (effectiveFormat == "base64" && stat.Size > 5 * 1024 * 1024)
+                        effectiveFormat = "hex";
+
+                    if (effectiveFormat == "hex")
+                    {
+                        processor = new HexDumpProcessor();
+                    }
+                    else if (effectiveFormat == "base64")
+                    {
+                        var b64Ctx = BuildContext(ctx, path, wsPath.Value, bytes, stat.Size, "base64", offset, limit);
+                        var b64Result = await _base64Processor.ProcessAsync(b64Ctx, ctx.CancellationToken);
+
+                        // Emit ModalityUsedEvent for base64 outputs that require model capabilities
+                        if (b64Result.ActualModality is OutputModality.ImageBase64 or OutputModality.PdfBase64
+                            or OutputModality.AudioBase64 or OutputModality.VideoBase64)
+                        {
+                            var b64Modality = b64Result.ActualModality switch
+                            {
+                                OutputModality.ImageBase64 => "image",
+                                OutputModality.PdfBase64 => "pdf",
+                                OutputModality.AudioBase64 => "audio",
+                                OutputModality.VideoBase64 => "video",
+                                _ => "unknown"
+                            };
+
+                            if (_eventSink is not null)
+                            {
+                                await _eventSink.EmitAsync(new ModalityUsedEvent(
+                                    EventEnvelope.ForSession(ctx.SessionId),
+                                    b64Modality, path, b64Result.ActualModality));
+                            }
+                        }
+
+                        return new ToolResult(b64Result.Text, IsError: false);
+                    }
+                    else if (effectiveFormat == "text")
+                    {
+                        processor = new TextProcessor();
+                    }
+                    else
+                    {
+                        // "auto": classify and resolve
+                        var fileType = FileTypeClassifier.Classify(path, bytes.Span);
+
+                        if (fileType == DetectedFileType.Text)
+                        {
+                            // Run IsText() safety check for files classified as Text
+                            if (!TextEncodingDetector.IsText(bytes.Span))
+                                fileType = DetectedFileType.UnknownBinary;
+                        }
+
+                        processor = _processors.Resolve(fileType) ?? new HexDumpProcessor();
+                    }
+
+                    var context = BuildContext(ctx, path, wsPath.Value, bytes, stat.Size, effectiveFormat, offset, limit);
+                    var result = await processor.ProcessAsync(context, ctx.CancellationToken);
+
+                    // --- Emit ModalityUsedEvent if needed ---
+                    if (result.ActualModality is OutputModality.ImageBase64 or OutputModality.PdfBase64
+                        or OutputModality.AudioBase64 or OutputModality.VideoBase64)
+                    {
+                        var modality = result.ActualModality switch
+                        {
+                            OutputModality.ImageBase64 => "image",
+                            OutputModality.PdfBase64 => "pdf",
+                            OutputModality.AudioBase64 => "audio",
+                            OutputModality.VideoBase64 => "video",
+                            _ => "unknown"
+                        };
+
+                        if (_eventSink is not null)
+                        {
+                            await _eventSink.EmitAsync(new ModalityUsedEvent(
+                                EventEnvelope.ForSession(ctx.SessionId),
+                                modality, path, result.ActualModality));
+                        }
+                    }
+
+                    return new ToolResult(result.Text, IsError: false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    return new ToolResult($"Error reading '{path}': {ex.Message}", IsError: true);
+                }
             }
         ));
 
@@ -416,8 +563,56 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
             return ji;
         if (val is long l) return (int)l;
         if (val is double d) return (int)d;
-        if (int.TryParse(val.ToString(), out var parsed)) return parsed;
+
+        var str = val.ToString();
+        if (string.IsNullOrEmpty(str)) return null;
+
+        // Support 0x-prefixed hex values
+        if (str.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            if (int.TryParse(str[2..], System.Globalization.NumberStyles.HexNumber, null, out var hexVal))
+                return hexVal;
+            return null;
+        }
+
+        if (int.TryParse(str, out var parsed)) return parsed;
         return null;
+    }
+
+    /// <summary>
+    /// Build a ContentProcessorContext from tool invocation context and file info.
+    /// </summary>
+    /// <summary>Format file size for human-readable display.</summary>
+    private static string FormatSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F0} KB";
+        return $"{bytes / (1024.0 * 1024.0):F1} MB";
+    }
+
+    private ContentProcessorContext BuildContext(
+        ToolInvocationContext ctx,
+        string relativePath,
+        WorkspacePath wsPath,
+        ReadOnlyMemory<byte> bytes,
+        long fileSize,
+        string format,
+        int? offset,
+        int? limit)
+    {
+        var absPath = Path.Combine(_vfs.RootPath, wsPath.Value);
+        return new ContentProcessorContext(
+            AbsolutePath: absPath,
+            RelativePath: relativePath,
+            Bytes: bytes,
+            FileSize: fileSize,
+            SessionId: ctx.SessionId,
+            ModelMetadata: ctx.ModelMetadata,
+            Format: format,
+            Offset: offset,
+            Limit: limit,
+            EventSink: _eventSink,
+            CancellationToken: ctx.CancellationToken);
     }
 
     /// <summary>

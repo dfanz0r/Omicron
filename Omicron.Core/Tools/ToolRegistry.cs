@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Omicron.Core.Events;
+using Omicron.Core.Models;
 using Omicron.Core.Sessions;
 
 namespace Omicron.Core.Tools;
@@ -22,7 +23,8 @@ public sealed record ToolInvocationContext(
     IReadOnlyDictionary<string, object?> Arguments,
     SessionId SessionId,
     AgentId AgentId,
-    CancellationToken CancellationToken);
+    CancellationToken CancellationToken,
+    ModelMetadata? ModelMetadata = null);
 
 /// <summary>
 /// Result returned by a tool after execution.

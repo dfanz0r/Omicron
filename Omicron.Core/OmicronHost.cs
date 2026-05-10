@@ -2,6 +2,7 @@ using Omicron.Core.Commands;
 using Omicron.Core.Events;
 using Omicron.Core.Execution;
 using Omicron.Core.Extensions;
+using Omicron.Core.IO;
 using Omicron.Core.Models;
 using Omicron.Core.Permissions;
 using Omicron.Core.Providers;
@@ -41,6 +42,9 @@ public sealed class OmicronHost : IDisposable
 
     /// <summary>Workspace VFS — low-level file operations with path containment.</summary>
     public IWorkspaceFileSystem FileSystem { get; }
+
+    /// <summary>Content processor registry for model-aware binary file reading.</summary>
+    public ContentProcessorRegistry Processors { get; }
 
     /// <summary>Workspace transaction manager — creates transactions over the host file system.</summary>
     public IWorkspaceTransactionManager WorkspaceTransactions { get; }
@@ -98,6 +102,43 @@ public sealed class OmicronHost : IDisposable
         Providers = new ProviderFactory();
         ModelCatalog = new ModelCatalogService(Providers);
         Extensions = new ExtensionRegistry(Tools, Commands);
+
+        // Initialize content processor registry (processors with missing dependencies are skipped)
+        Processors = CreateContentProcessorRegistry();
+    }
+
+    /// <summary>
+    /// Create the default content processor registry with all built-in processors.
+    /// Processors whose NuGet packages are not available are silently skipped.
+    /// </summary>
+    private static ContentProcessorRegistry CreateContentProcessorRegistry()
+    {
+        var reg = new ContentProcessorRegistry();
+        reg.Register(new TextProcessor());
+        reg.Register(new HexDumpProcessor());
+        RegisterProcessor(reg, new ImageProcessor());
+        RegisterProcessor(reg, new PdfProcessor());
+        RegisterProcessor(reg, new AudioProcessor());
+        RegisterProcessor(reg, new VideoProcessor());
+        RegisterProcessor(reg, new OpenXmlProcessor());
+        RegisterProcessor(reg, new LegacyOfficeProcessor());
+        RegisterProcessor(reg, new CsvProcessor());
+        RegisterProcessor(reg, new EmailProcessor());
+        RegisterProcessor(reg, new ArchiveProcessor());
+        RegisterProcessor(reg, new NotebookProcessor());
+        RegisterProcessor(reg, new EbookProcessor());
+        RegisterProcessor(reg, new SvgProcessor());
+        return reg;
+    }
+
+    /// <summary>
+    /// Register a processor. All built-in processors are pure C# with no
+    /// external dependencies at construction time, so no try/catch needed.
+    /// Future dynamic plugins should use a dedicated factory abstraction.
+    /// </summary>
+    private static void RegisterProcessor(ContentProcessorRegistry reg, IContentProcessor processor)
+    {
+        reg.Register(processor);
     }
 
     /// <summary>
@@ -107,7 +148,7 @@ public sealed class OmicronHost : IDisposable
     public void LoadBuiltinExtensions()
     {
         Extensions.Register(new BuiltinToolsExtension());
-        Extensions.Register(new BuiltinWorkspaceToolsExtension(Workspace, FileSystem, WorkspaceTransactions));
+        Extensions.Register(new BuiltinWorkspaceToolsExtension(Workspace, FileSystem, WorkspaceTransactions, Processors, Events));
         Extensions.Register(new BuiltinExecutionToolsExtension(Execution, Workspace));
     }
 
@@ -205,6 +246,16 @@ public sealed class OmicronHost : IDisposable
         await foreach (var e in SessionStore.ReadEventsAsync(request.SessionId, EventSequenceRange.All, ct))
             events.Add(e);
 
+        // Validate modality compatibility when switching models
+        var targetMeta = ModelCatalog.GetMetadata(request.Model)
+                        ?? BuildFallbackMetadata(request.Model);
+        var errors = CheckModalityCompatibility(events, targetMeta);
+        if (errors.Count > 0)
+        {
+            var msg = FormatModalityErrors(request.Model.Id, errors);
+            throw new InvalidOperationException(msg);
+        }
+
         var projector = new SessionProjector();
         var projection = projector.Project(events);
 
@@ -240,6 +291,16 @@ public sealed class OmicronHost : IDisposable
         await foreach (var e in SessionStore.ReadEventsAsync(request.SourceSessionId, EventSequenceRange.All, ct))
             events.Add(e);
 
+        // Validate modality compatibility when forking to a different model
+        var forkTargetMeta = ModelCatalog.GetMetadata(request.Model)
+                            ?? BuildFallbackMetadata(request.Model);
+        var forkErrors = CheckModalityCompatibility(events, forkTargetMeta);
+        if (forkErrors.Count > 0)
+        {
+            var forkMsg = FormatModalityErrors(request.Model.Id, forkErrors);
+            throw new InvalidOperationException(forkMsg);
+        }
+
         var projector = new SessionProjector();
         var projection = projector.Project(events);
 
@@ -273,6 +334,77 @@ public sealed class OmicronHost : IDisposable
         string? apiKey = null,
         CancellationToken ct = default)
         => ForkSessionAsync(new SessionForkRequest(sourceId, model, systemPrompt, apiKey), ct);
+
+
+    /// <summary>
+    /// Result of a modality compatibility check.
+    /// </summary>
+    public sealed record ModalityValidationError(
+        string Modality,
+        IReadOnlyList<string> AffectedFiles);
+
+    /// <summary>
+    /// Check that all modalities used in a session are supported by the target model.
+    /// Returns an empty list when compatible.
+    /// </summary>
+    internal static IReadOnlyList<ModalityValidationError> CheckModalityCompatibility(
+        List<OmicronEvent> events,
+        ModelMetadata targetModel)
+    {
+        var modalityEvents = events.OfType<ModalityUsedEvent>().ToList();
+        if (modalityEvents.Count == 0)
+            return Array.Empty<ModalityValidationError>();
+
+        var byModality = modalityEvents.GroupBy(e => e.Modality);
+        var errors = new List<ModalityValidationError>();
+
+        foreach (var group in byModality)
+        {
+            // Use SupportsImages for "image" to also check SupportsVision boolean
+            bool supported = group.Key switch
+            {
+                "image" => targetModel.SupportsImages(),
+                _ => targetModel.SupportsModality(group.Key)
+            };
+
+            if (!supported)
+            {
+                errors.Add(new ModalityValidationError(
+                    group.Key,
+                    group.Select(e => e.RelativePath).Distinct().ToList()));
+            }
+        }
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Format modality compatibility errors into a human-readable diagnostic.
+    /// </summary>
+    private static ModelMetadata BuildFallbackMetadata(Model model)
+    {
+        var modalities = new HashSet<string> { "text" };
+        if (model.SupportsImages) modalities.Add("image");
+        return new ModelMetadata(model.Id, model.ProviderName,
+            SupportsVision: model.SupportsImages ? true : null,
+            Modalities: modalities);
+    }
+
+
+    private static string FormatModalityErrors(string modelId, IReadOnlyList<ModalityValidationError> errors)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Cannot switch session to model {modelId}.");
+        sb.AppendLine("The source session used modalities not supported by the target model:");
+        foreach (var error in errors)
+        {
+            sb.AppendLine($"  - {error.Modality} ({error.AffectedFiles.Count} file(s): {string.Join(", ", error.AffectedFiles)})");
+        }
+        sb.AppendLine();
+        sb.AppendLine("Choose a model that supports these modalities, or continue with the current model.");
+        return sb.ToString();
+    }
+
 
     private static List<OmicronEvent> BuildForkReplayEvents(AgentSession session, Model model, SessionProjection projection)
     {

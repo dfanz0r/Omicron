@@ -32,6 +32,7 @@ public static class OmicronEventRegistry
         Register<TransactionStagedEvent>();
         Register<TransactionCommittedEvent>();
         Register<TransactionRolledBackEvent>();
+        Register<ModalityUsedEvent>();
     }
 
     private static void Register<T>() where T : OmicronEvent

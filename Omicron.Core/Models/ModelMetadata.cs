@@ -18,4 +18,5 @@ public sealed record ModelMetadata(
     decimal? InputPricePerMillionTokens = null,
     decimal? OutputPricePerMillionTokens = null,
     DateTimeOffset? LastUpdatedAt = null,
-    string? Source = null);
+    string? Source = null,
+    IReadOnlySet<string>? Modalities = null);

@@ -30,6 +30,7 @@ public class EventRegistryTests
             typeof(TransactionStagedEvent),
             typeof(TransactionCommittedEvent),
             typeof(TransactionRolledBackEvent),
+            typeof(ModalityUsedEvent),
         };
 
         var registered = OmicronEventRegistry.AllTypes;

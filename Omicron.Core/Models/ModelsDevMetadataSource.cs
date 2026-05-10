@@ -90,18 +90,26 @@ public sealed class ModelsDevMetadataSource : IModelMetadataSource
             bool? supportsStructuredOutput = entry.TryGetProperty("structured_output", out var so)
                 ? so.GetBoolean() : null;
 
+            // Modalities: parse modalities.input array
+            IReadOnlySet<string>? modalities = null;
+            if (entry.TryGetProperty("modalities", out var modObj) && modObj.ValueKind == JsonValueKind.Object
+                && modObj.TryGetProperty("input", out var inp) && inp.ValueKind == JsonValueKind.Array)
+            {
+                var set = new HashSet<string>();
+                foreach (var m in inp.EnumerateArray())
+                {
+                    var val = m.GetString();
+                    if (val is not null) set.Add(val);
+                }
+                if (set.Count > 0) modalities = set;
+            }
+
             // Vision: attachment capability or image input modality
             bool? supportsVision = null;
             if (entry.TryGetProperty("attachment", out var att) && att.GetBoolean())
                 supportsVision = true;
-            else if (entry.TryGetProperty("modalities", out var mod) && mod.ValueKind == JsonValueKind.Object
-                     && mod.TryGetProperty("input", out var inp) && inp.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var m in inp.EnumerateArray())
-                {
-                    if (m.GetString() == "image") { supportsVision = true; break; }
-                }
-            }
+            else if (modalities?.Contains("image") == true)
+                supportsVision = true;
 
             decimal? inputPrice = null;
             decimal? outputPrice = null;
@@ -145,7 +153,8 @@ public sealed class ModelsDevMetadataSource : IModelMetadataSource
                 InputPricePerMillionTokens: inputPrice,
                 OutputPricePerMillionTokens: outputPrice,
                 LastUpdatedAt: lastUpdated,
-                Source: "models.dev");
+                Source: "models.dev",
+                Modalities: modalities);
         }
         catch
         {
