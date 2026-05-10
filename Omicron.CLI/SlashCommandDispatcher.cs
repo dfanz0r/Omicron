@@ -17,13 +17,24 @@ internal enum ChatCommandAction
     ExitApp,
     ResetSession,
     ClearProviderState,
-    SwitchModel
+    SwitchModel,
+    SwitchSession
 }
 
 internal sealed record ChatCommandResult(
     ChatCommandAction Action = ChatCommandAction.Continue,
     string? Message = null,
-    string? ModelKey = null);
+    string? ModelKey = null,
+    AgentSession? NewSession = null,
+    Model? NewModel = null,
+    string? NewModelKey = null);
+
+internal sealed record ChatLoopResult(
+    ChatLoopExitReason Reason,
+    string? ModelKey = null,
+    AgentSession? NewSession = null,
+    Model? NewModel = null,
+    string? NewModelKey = null);
 
 internal sealed record SlashCommandContext(
     OmicronHost Host,
@@ -38,10 +49,6 @@ internal enum ChatLoopExitReason
     ExitSession,
     ExitApp
 }
-
-internal sealed record ChatLoopResult(
-    ChatLoopExitReason Reason,
-    string? ModelKey = null);
 
 // ============================================================
 // Slash command dispatcher
@@ -59,6 +66,10 @@ internal sealed class SlashCommandDispatcher
         "/events",
         "/provider-state",
         "/clear-state",
+        "/persist",
+        "/sessions",
+        "/resume",
+        "/fork",
         "/reset",
         "/exit",
         "/quit"
@@ -147,8 +158,20 @@ internal sealed class SlashCommandDispatcher
             case "provider-state":
                 return ShowProviderState(context);
 
+            case "persist":
+                return ShowPersistence(context);
+
             case "clear-state":
                 return ClearProviderState(context);
+
+            case "sessions":
+                return ListSessions(context, args);
+
+            case "resume":
+                return ResumeSession(context, args);
+
+            case "fork":
+                return ForkSession(context, args);
 
             case "reset":
                 return ResetSession(context);
@@ -179,6 +202,10 @@ internal sealed class SlashCommandDispatcher
         Console.WriteLine("    /events [n]         Show recent session events (default 20)");
         Console.WriteLine("    /provider-state     Show provider state for current session/model");
         Console.WriteLine("    /clear-state        Clear provider state for current session/model only");
+        Console.WriteLine("    /persist            Show session storage type and event counts");
+        Console.WriteLine("    /sessions [n]       List persisted sessions");
+        Console.WriteLine("    /resume <id|n>      Resume a persisted session");
+        Console.WriteLine("    /fork <id|n>        Fork a session [--model <model-key|n>]");
         Console.WriteLine("    /reset              Reset the conversation and all provider state");
         Console.WriteLine("    /exit               Exit the application");
         Console.WriteLine("    /quit               Exit the application");
@@ -400,6 +427,36 @@ internal sealed class SlashCommandDispatcher
         _ => ""
     };
 
+    private static ChatCommandResult ShowPersistence(SlashCommandContext context)
+    {
+        var host = context.Host;
+        var store = host.SessionStore;
+        var storeType = store.GetType().Name;
+
+        Console.WriteLine();
+        Console.WriteLine("  Session Storage:");
+        Console.WriteLine($"    Store type:  {storeType}");
+
+        if (store is JsonlSessionStore jsonl)
+            Console.WriteLine($"    Directory:   {jsonl.StoreDirectory}");
+
+        var sessions = store.ListSessionsAsync(new SessionListQuery(int.MaxValue)).GetAwaiter().GetResult();
+        Console.WriteLine($"    Sessions:    {sessions.Count}");
+
+        try
+        {
+            var eventCount = store.GetEventCountAsync(context.Session.Id).GetAwaiter().GetResult();
+            Console.WriteLine($"    Events (current session): {eventCount}");
+        }
+        catch
+        {
+            Console.WriteLine($"    Events (current session): (unavailable)");
+        }
+
+        Console.WriteLine();
+        return new ChatCommandResult(ChatCommandAction.Continue);
+    }
+
     private static ChatCommandResult ShowProviderState(SlashCommandContext context)
     {
         var session = context.Session;
@@ -441,6 +498,174 @@ internal sealed class SlashCommandDispatcher
         context.Host.ProviderStateManager.Clear(key, reason: "slash_command_clear_state");
         Console.WriteLine("  Provider state cleared for current session/model.");
         return new ChatCommandResult(ChatCommandAction.Continue);
+    }
+
+    private static ChatCommandResult ListSessions(SlashCommandContext context, string args)
+    {
+        // Parse count, default 20
+        int.TryParse(args, out var count);
+        if (count <= 0) count = 20;
+
+        var sessions = context.Host.SessionStore
+            .ListSessionsAsync(new SessionListQuery(Limit: count))
+            .GetAwaiter().GetResult();
+
+        Console.WriteLine();
+        if (sessions.Count == 0)
+        {
+            Console.WriteLine("  No saved sessions.");
+        }
+        else
+        {
+            Console.WriteLine($"  Saved sessions ({sessions.Count}):");
+            for (int i = 0; i < sessions.Count; i++)
+            {
+                var s = sessions[i];
+                var shortId = s.SessionId.ToString()[..8];
+                var status = s.Status == SessionStatus.Active ? "  " : " [archived]";
+                Console.WriteLine($"  [{i + 1}] {shortId}  {s.ModelId,-20} {s.ProviderName,-12} {s.CreatedAt:yyyy-MM-dd HH:mm}{status}");
+            }
+        }
+        Console.WriteLine();
+        return new ChatCommandResult(ChatCommandAction.Continue);
+    }
+
+    private static ChatCommandResult ResumeSession(SlashCommandContext context, string args)
+    {
+        if (string.IsNullOrWhiteSpace(args))
+        {
+            Console.WriteLine("  Usage: /resume <session-id-prefix|index>");
+            return new ChatCommandResult(ChatCommandAction.Continue);
+        }
+
+        var sessions = context.Host.SessionStore
+            .ListSessionsAsync(new SessionListQuery(int.MaxValue))
+            .GetAwaiter().GetResult();
+
+        // Try as index first
+        if (int.TryParse(args, out var idx) && idx >= 1 && idx <= sessions.Count)
+        {
+            var record = sessions[idx - 1];
+            return ResumeFromRecord(context, record);
+        }
+
+        // Try as prefix match
+        var match = sessions.FirstOrDefault(s => s.SessionId.ToString().StartsWith(args, StringComparison.OrdinalIgnoreCase));
+        if (match is not null)
+            return ResumeFromRecord(context, match);
+
+        Console.WriteLine($"  No session matching '{args}'.");
+        return new ChatCommandResult(ChatCommandAction.Continue);
+    }
+
+    private static ChatCommandResult ResumeFromRecord(SlashCommandContext context, SessionRecord record)
+    {
+        // Look up the model in the catalog (same model)
+        var model = context.Catalog.Models.Values
+            .FirstOrDefault(m => m.Id == record.ModelId && m.ProviderName == record.ProviderName);
+        if (model is null)
+        {
+            Console.WriteLine($"  Model '{record.ModelId}' not found in catalog.");
+            return new ChatCommandResult(ChatCommandAction.Continue);
+        }
+
+        var apiKey = context.Config.ApiKeys.TryGetValue(model.ProviderName, out var key) ? key : null;
+        var resumed = context.Host.ResumeSessionAsync(record.SessionId, model, apiKey)
+            .GetAwaiter().GetResult();
+
+        if (resumed is null)
+        {
+            Console.WriteLine($"  Failed to resume session {record.SessionId}.");
+            return new ChatCommandResult(ChatCommandAction.Continue);
+        }
+
+        var modelKey = context.Catalog.Models.FirstOrDefault(kv => kv.Value.Id == model.Id && kv.Value.ProviderName == model.ProviderName).Key;
+        Console.WriteLine($"  Resumed session {record.SessionId.ToString()[..8]} with {resumed.Messages.Count} messages.");
+        return new ChatCommandResult(ChatCommandAction.SwitchSession, NewSession: resumed, NewModel: model,
+            NewModelKey: modelKey ?? context.ModelKey);
+    }
+
+    private static ChatCommandResult ForkSession(SlashCommandContext context, string args)
+    {
+        if (string.IsNullOrWhiteSpace(args))
+        {
+            Console.WriteLine("  Usage: /fork <session-id-prefix|index> [--model <model-key|n>]");
+            return new ChatCommandResult(ChatCommandAction.Continue);
+        }
+
+        // Parse optional --model argument
+        var parts = args.Split(" --model ", 2, StringSplitOptions.RemoveEmptyEntries);
+        var sessionArg = parts[0].Trim();
+        var modelArg = parts.Length > 1 ? parts[1].Trim() : null;
+
+        var sessions = context.Host.SessionStore
+            .ListSessionsAsync(new SessionListQuery(int.MaxValue))
+            .GetAwaiter().GetResult();
+
+        SessionRecord? sourceRecord = null;
+        if (int.TryParse(sessionArg, out var idx) && idx >= 1 && idx <= sessions.Count)
+            sourceRecord = sessions[idx - 1];
+        else
+            sourceRecord = sessions.FirstOrDefault(s => s.SessionId.ToString().StartsWith(sessionArg, StringComparison.OrdinalIgnoreCase));
+
+        if (sourceRecord is null)
+        {
+            Console.WriteLine($"  No source session matching '{sessionArg}'.");
+            return new ChatCommandResult(ChatCommandAction.Continue);
+        }
+
+        // Determine target model
+        Model? targetModel = null;
+        if (modelArg is not null)
+        {
+            // Use specified model — try as catalog key first, then as visible list index
+            if (context.Catalog.Models.TryGetValue(modelArg, out var m))
+            {
+                targetModel = m;
+            }
+            else if (int.TryParse(modelArg, out var modelIdx) && modelIdx >= 1)
+            {
+                var visible = GetVisibleModels(context).ToList();
+                if (modelIdx <= visible.Count)
+                    targetModel = visible[modelIdx - 1].Model;
+                else
+                {
+                    Console.WriteLine($"  Model index {modelIdx} out of range ({visible.Count} models).");
+                    return new ChatCommandResult(ChatCommandAction.Continue);
+                }
+            }
+            else
+            {
+                Console.WriteLine($"  Model '{modelArg}' not found.");
+                return new ChatCommandResult(ChatCommandAction.Continue);
+            }
+        }
+        else
+        {
+            // Same model as original
+            targetModel = context.Catalog.Models.Values
+                .FirstOrDefault(m => m.Id == sourceRecord.ModelId && m.ProviderName == sourceRecord.ProviderName);
+            if (targetModel is null)
+            {
+                Console.WriteLine($"  Original model '{sourceRecord.ModelId}' not found.");
+                return new ChatCommandResult(ChatCommandAction.Continue);
+            }
+        }
+
+        var apiKey = context.Config.ApiKeys.TryGetValue(targetModel.ProviderName, out var key) ? key : null;
+        var forked = context.Host.ForkSessionAsync(sourceRecord.SessionId, targetModel, apiKey: apiKey)
+            .GetAwaiter().GetResult();
+
+        if (forked is null)
+        {
+            Console.WriteLine($"  Failed to fork session.");
+            return new ChatCommandResult(ChatCommandAction.Continue);
+        }
+
+        var targetKey = context.Catalog.Models.FirstOrDefault(kv => kv.Value.Id == targetModel.Id && kv.Value.ProviderName == targetModel.ProviderName).Key;
+        Console.WriteLine($"  Forked session {forked.Id.ToString()[..8]} from {sourceRecord.SessionId.ToString()[..8]} with {forked.Messages.Count} messages.");
+        return new ChatCommandResult(ChatCommandAction.SwitchSession, NewSession: forked, NewModel: targetModel,
+            NewModelKey: targetKey ?? context.ModelKey);
     }
 
     private static ChatCommandResult ResetSession(SlashCommandContext context)

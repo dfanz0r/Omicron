@@ -218,6 +218,7 @@ public abstract class ShapeBasedProvider : IChatProvider
         {
             ApiType.AnthropicMessages => $"{baseUrl.TrimEnd('/')}/messages",
             ApiType.OpenAiResponses => $"{baseUrl.TrimEnd('/')}/responses",
+            ApiType.GoogleGenAi => throw new NotSupportedException("GoogleGenAi is not yet implemented."),
             _ => $"{baseUrl.TrimEnd('/')}/chat/completions"
         };
 

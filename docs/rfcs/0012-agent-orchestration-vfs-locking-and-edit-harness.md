@@ -74,6 +74,21 @@ Sub-agents may be used for:
 - parallel hypothesis exploration;
 - long-running background analysis.
 
+### Local Search Engine Candidate
+
+For code search/scouting tools, Omicron should evaluate `dmtrKovalenko/fff` as a possible local file search/indexing backend.
+
+Potential use cases:
+
+- fuzzy file/path search for agent scouting;
+- grep/plain/regex/fuzzy content search;
+- repeated workspace queries against an indexed/watched cache;
+- local search tools exposed to primary agents and sub-agents.
+
+Important architectural constraint: search results must flow through Omicron's workspace/search abstraction and respect workspace containment, future transaction overlays, ignore rules, and permissions. Tool schemas should not depend directly on fff-specific API shapes.
+
+This candidate ties into RFC 0011's Rust/C# interop research because fff provides both a Rust core and C ABI option.
+
 ## Multiple Parallel Active Agents
 
 Omicron should support more than one active agent loop at a time. This requires a coordinator/scheduler.

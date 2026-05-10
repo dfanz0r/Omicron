@@ -554,6 +554,39 @@ Possible later:
 - diff/search/indexing hot paths;
 - Unicode segmentation/cell-width engine if .NET performance/libraries are insufficient.
 
+### Search/Indexing Candidate: fff
+
+`dmtrKovalenko/fff` should be considered as a future local workspace search/indexing candidate.
+
+Relevant properties:
+
+- Rust core (`fff-search`) for file indexing/search;
+- C ABI library (`fff-c`) suitable for P/Invoke or generated bindings;
+- supports fuzzy path search and grep-style content search;
+- maintains indexed/watched workspace state for repeated queries;
+- appears aimed at editor/AI-agent local search workflows.
+
+Potential Omicron integration paths:
+
+```text
+Short term/research:
+  external process or MCP-style adapter for experimentation
+
+Native integration:
+  fff C ABI -> C# P/Invoke/csbindgen wrapper
+
+Longer-term Rust interop:
+  direct Rust crate integration through Omicron native library boundary
+```
+
+Adoption requirements before use:
+
+- license review;
+- benchmark against simple .NET/ripgrep-style approaches on Omicron-sized repositories;
+- confirm cross-platform native packaging story;
+- define how indexes respect workspace containment, ignore rules, and future VFS overlays/transactions;
+- ensure search results are exposed through Omicron workspace/search abstractions rather than binding tool code directly to fff.
+
 Default assumption remains: do not move a subsystem to Rust unless it materially improves security, performance, reuse, or maintainability.
 
 ## Evaluation Matrix

@@ -72,8 +72,21 @@ public sealed class AgentSession
         IProviderStateManager providerState,
         string? systemPrompt = null,
         string? apiKey = null)
+        : this(model, toolRegistry, permissions, eventSink, providerState, systemPrompt, apiKey, null)
     {
-        Id = SessionId.New();
+    }
+
+    internal AgentSession(
+        Model model,
+        IToolRegistry toolRegistry,
+        IPermissionService permissions,
+        IEventSink eventSink,
+        IProviderStateManager providerState,
+        string? systemPrompt,
+        string? apiKey,
+        SessionId? existingSessionId)
+    {
+        Id = existingSessionId ?? SessionId.New();
         AgentId = AgentId.New();
         Model = model;
         SystemPrompt = systemPrompt;
@@ -82,6 +95,48 @@ public sealed class AgentSession
         _permissions = permissions;
         _writer = new SessionEventWriter(eventSink, Id, AgentId);
         _providerState = providerState;
+    }
+
+    /// <summary>
+    /// Create a session from a projection — hydrates transcript and optionally restores
+    /// provider state (re-keyed to the new session's AgentId).
+    /// </summary>
+    public static AgentSession FromProjection(
+        SessionProjection projection,
+        Model model,
+        SessionId? existingSessionId,
+        IToolRegistry toolRegistry,
+        IPermissionService permissions,
+        IEventSink eventSink,
+        IProviderStateManager providerState,
+        string? systemPrompt = null,
+        string? apiKey = null,
+        bool restoreProviderState = true)
+    {
+        // Use internal constructor that accepts session ID
+        var session = new AgentSession(
+            model, toolRegistry, permissions, eventSink, providerState,
+            systemPrompt, apiKey, existingSessionId);
+
+        session._messages.AddRange(projection.Messages);
+        session._sessionStarted = true;
+
+        if (restoreProviderState && projection.ProviderStates.Count > 0)
+        {
+            foreach (var (key, state) in projection.ProviderStates)
+            {
+                // Re-key to the hydrated session's AgentId so RunLoopAsync can find it
+                var rekeyed = state with
+                {
+                    Key = new ProviderStateKey(
+                        session.Id, session.AgentId,
+                        key.ProviderName, key.ModelId, key.ApiType)
+                };
+                providerState.Set(rekeyed, reason: "session_hydration");
+            }
+        }
+
+        return session;
     }
 
     /// <summary>

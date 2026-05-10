@@ -223,6 +223,7 @@ Implemented in Plan 3 Phase 4:
 - `WorkspaceTransactionId`, `WorkspaceChangeKind`, `WorkspaceFileDiff`, and `WorkspaceDiff`.
 - `IWorkspaceTransaction` / `WorkspaceTransaction` — stages writes, deletes, and moves.
 - `TransactionFileSystem : IWorkspaceFileSystem` — overlay VFS exposed as `IWorkspaceTransaction.Files`; stat/read/list reflect staged state.
+- `IWorkspaceTransactionManager` / `WorkspaceTransactionManager` — host-exposed transaction factory available as `OmicronHost.WorkspaceTransactions`.
 - `GetDiffAsync()` — returns text diffs through the native diff engine and metadata-only binary diffs.
 - `CommitAsync()` — applies staged changes to the host VFS.
 - `RollbackAsync()` / `DisposeAsync()` — discard staged changes.
@@ -275,7 +276,7 @@ Tests are split into focused files by subsystem:
 - `JsonlSessionStoreTests.cs` — JSONL file-backed store reopen/round-trip/count/duplicate/integration.
 - `PersistenceIntegrationTests.cs` — OmicronHost + ISessionStore end-to-end, provider-state/execution event persistence, error callback, persist counts.
 
-`dotnet test Omicron.slnx --nologo` passes with **338 tests**, 0 warnings, 0 errors.
+`dotnet test Omicron.slnx --nologo` passes with **339 tests**, 0 warnings, 0 errors.
 
 ## Current Handoff Points
 

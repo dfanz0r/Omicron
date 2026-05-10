@@ -35,13 +35,13 @@ public sealed class InMemoryEventSink : IEventSink
 
     public OmicronEvent Emit(OmicronEvent evt)
     {
-        var seq = Interlocked.Increment(ref _globalSequence);
-        var stamped = evt with { Envelope = evt.Envelope with { Sequence = seq } };
         lock (_lock)
         {
+            var seq = ++_globalSequence;
+            var stamped = evt with { Envelope = evt.Envelope with { Sequence = seq } };
             _events.Add(stamped);
+            return stamped;
         }
-        return stamped;
     }
 
     public IReadOnlyList<OmicronEvent> EmitBatch(IReadOnlyList<OmicronEvent> events)
@@ -51,7 +51,7 @@ public sealed class InMemoryEventSink : IEventSink
         {
             foreach (var evt in events)
             {
-                var seq = Interlocked.Increment(ref _globalSequence);
+                var seq = ++_globalSequence;
                 var s = evt with { Envelope = evt.Envelope with { Sequence = seq } };
                 _events.Add(s);
                 stamped.Add(s);

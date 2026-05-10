@@ -197,6 +197,334 @@ Potential follow-up:
 - Journal host mutations and attempt rollback on failure.
 - Emit transaction audit events only after fully successful commits.
 
+### FH-0008: Transaction manager currently assumes host-backed workspace filesystem
+
+Status: Open  
+Area: `Omicron.Core/OmicronHost.cs`, `Omicron.Core/Workspace/WorkspaceTransactionManager.cs`  
+Priority: Low until alternative workspace backends are introduced.
+
+Current state:
+
+- `OmicronHost` constructs `FileSystem` as `HostWorkspaceFileSystem` and then casts it back to wire `WorkspaceTransactionManager`:
+  `WorkspaceTransactions = new WorkspaceTransactionManager((HostWorkspaceFileSystem)FileSystem);`
+- This is safe today because the host controls construction.
+
+Risk:
+
+- If `FileSystem` later becomes injectable as only `IWorkspaceFileSystem`, the cast will fail or force host-backed assumptions into transaction management.
+- Future remote/snapshot/overlay workspaces may need transaction managers that do not depend on `HostWorkspaceFileSystem`.
+
+Potential follow-up:
+
+- Make `WorkspaceTransactionManager` depend on an interface capable of host mutation/transaction backing.
+- Add backend-specific transaction manager implementations.
+- Validate host wiring without concrete casts when alternative VFS backends exist.
+
+### FH-0009: Transaction manager integration test lives in persistence test file
+
+Status: Open  
+Area: `Omicron.Core.Tests/PersistenceIntegrationTests.cs`  
+Priority: Low.
+
+Current state:
+
+- `OmicronHost_TransactionManager_CreatesWorkingTransaction` verifies host transaction-manager wiring.
+- The test currently lives in `PersistenceIntegrationTests.cs`, although it is a host/workspace integration test rather than persistence-specific.
+
+Risk:
+
+- Test organization becomes harder to navigate as host/workspace coverage grows.
+
+Potential follow-up:
+
+- Move the test to `WorkspaceVfsTests.cs`, `WorkspaceTransactionTests.cs`, or a dedicated `OmicronHostIntegrationTests.cs` file.
+- Keep coverage unchanged.
+
+## Session Resume / Fork Hardening
+
+Source reviews:
+
+- `docs/code-reviews/0062-session-resume-fork-ux-review.md`
+
+### FH-0010: Session prefix matching should detect ambiguity
+
+Status: Open  
+Area: `Omicron.CLI/SlashCommandDispatcher.cs`  
+Priority: Low for MVP; medium as saved session count grows.
+
+Current state:
+
+- `/resume <prefix>` and `/fork <prefix>` use the first `SessionId` prefix match.
+- If multiple sessions share a prefix, the CLI silently selects whichever appears first in the listed session order.
+
+Risk:
+
+- User may resume/fork the wrong session when using short prefixes.
+
+Potential follow-up:
+
+- Detect multiple prefix matches and print all candidates.
+- Require a longer prefix or index when ambiguous.
+
+### FH-0011: Session slash commands synchronously block on async store calls
+
+Status: Open  
+Area: `Omicron.CLI/SlashCommandDispatcher.cs`  
+Priority: Low for local JSONL MVP; medium before remote stores/TUI.
+
+Current state:
+
+- CLI slash command handlers call async session-store/host methods with `.GetAwaiter().GetResult()`.
+- The dispatcher is currently synchronous, so this is simple and works for local stores.
+
+Risk:
+
+- Slow/remote stores could block the UI.
+- Future async frontends will need async command dispatch anyway.
+
+Potential follow-up:
+
+- Make slash command dispatch async.
+- Thread cancellation through command handlers.
+- Keep synchronous wrapper only for simple CLI if needed.
+
+### FH-0012: Fork lineage metadata/events are not represented
+
+Status: Open  
+Area: `Omicron.Core/OmicronHost.cs`, session events/store metadata  
+Priority: Low for MVP materialized fork; medium before branch/history UI.
+
+Current state:
+
+- Forking can create a new session, but there is no explicit lineage metadata or event recording source session id/fork point.
+
+Risk:
+
+- Future session history UI cannot show branch relationships.
+- Debugging fork provenance requires external knowledge.
+
+Potential follow-up:
+
+- Add source session id/fork point metadata to `SessionRecord`, or add a dedicated `SessionForkedEvent`.
+- Project/display fork lineage in future session UI.
+
+## Plan 3 Comprehensive Review Hardening
+
+Source reviews:
+
+- `docs/code-reviews/0065-plan-3-comprehensive-pre-plan-4-review.md`
+- `docs/code-reviews/0067-plan-3-second-fix-verification.md`
+
+### FH-0013: Refactor `AgentSession.RunLoopAsync` into smaller private methods
+
+Status: Open
+Area: `Omicron.Core/Sessions/AgentSession.cs`
+Priority: Low.
+
+Current state:
+- `RunLoopAsync` is ~250 lines handling streaming, provider state, tool calls, permission checks, and error handling in one method.
+
+Risk:
+- Hard to follow and test in isolation.
+
+Potential follow-up:
+- Extract private methods: `BuildChatOptions()`, `StreamResponseAsync()`, `HandleToolCallsAsync()`, `BuildAssistantMessage()`.
+
+### FH-0014: Cache `ToolSchema` outputs or document imperative builder
+
+Status: Open
+Area: `Omicron.Core/Tools/Tool.cs`
+Priority: Low.
+
+Current state:
+- `ToolSchema.Object()` uses `Utf8JsonWriter` to build JSON from scratch every time. Tool schemas are typically static per tool definition.
+
+Risk:
+- Unnecessary allocations for frequently referenced tool schemas.
+
+Potential follow-up:
+- Cache `JsonElement` results per tool definition, or document that the imperative builder is MVP-only.
+
+### FH-0015: Add `EmitAsync`/`EmitBatchAsync` to `IEventSink` to eliminate sync-over-async
+
+Status: Open
+Area: `Omicron.Core/Events/IEventSink.cs`, `PersistentEventSink.cs`
+Priority: Medium before async UI or background workers.
+
+Current state:
+- `IEventSink` is sync-only. `PersistentEventSink` calls `_store.AppendEventsAsync(...).GetAwaiter().GetResult()`.
+
+Risk:
+- Can deadlock in contexts with a synchronization context (UI thread, ASP.NET).
+
+Potential follow-up:
+- Add `EmitAsync`/`EmitBatchAsync` overloads to `IEventSink`. Keep sync variants for convenience but document the hazard.
+
+### FH-0016: Adopt `ConversationTurn` canonical model in `AgentSession` (long-term)
+
+Status: Open
+Area: `Omicron.Core/Models/Conversation.cs`, `Omicron.Core/Sessions/AgentSession.cs`
+Priority: Low for MVP; medium before richer content models.
+
+Current state:
+- `ConversationTurn`, `ConversationContent`, and `ConversationConverter` exist but `AgentSession` and all providers use `Message` directly. The canonical model is only used in tests.
+
+Risk:
+- The canonical format was designed for cross-provider portability but is not exercised at runtime. Divergence will grow.
+
+Potential follow-up:
+- Migrate `AgentSession` internal transcript from `Message` to `ConversationTurn`, or reduce the canonical surface area until it is actually adopted.
+
+### FH-0017: Make `AgentSession` config immutable after construction
+
+Status: Open
+Area: `Omicron.Core/Sessions/AgentSession.cs`
+Priority: Medium.
+
+Current state:
+- `Model`, `SystemPrompt`, `ApiKey`, `MaxTokens`, `Temperature`, `ReasoningEffort`, `MaxIterations` are all settable after construction.
+
+Risk:
+- Config drift between `SessionRecord` and runtime object. Snapshots for edit history may capture inconsistent state.
+
+Potential follow-up:
+- Make config properties `init`-only or move into a `SessionConfig` record passed at construction.
+
+### FH-0018: Add transaction lifecycle events (`TransactionStartedEvent`, etc.)
+
+Status: Open
+Area: `Omicron.Core/Workspace/WorkspaceTransaction.cs`, `Omicron.Core/Events/OmicronEvent.cs`
+Priority: High for Plan 4.
+
+Current state:
+- `WorkspaceTransaction` does not emit events for start, stage, commit, or rollback.
+
+Risk:
+- Edit harness cannot observe transaction state for UI feedback, undo, or audit logs.
+
+Potential follow-up:
+- Add `TransactionStartedEvent`, `TransactionStagedEvent`, `TransactionCommittedEvent`, `TransactionRolledBackEvent` to the event model, and emit them from `WorkspaceTransaction`.
+
+### FH-0019: Make `WorkspaceTransaction.CommitAsync` atomic or add rollback tracking
+
+Status: Open
+Area: `Omicron.Core/Workspace/WorkspaceTransaction.cs`
+Priority: High for Plan 4.
+
+Current state:
+- `CommitAsync` applies staged changes one by one. If a later operation throws, earlier operations remain applied and `_committed` is reset to `false`.
+
+Risk:
+- Partial commit leaves the host workspace in a mixed state with no recovery path.
+
+Potential follow-up:
+- Two-phase commit via temp files + rename, or track succeeded operations and auto-rollback on failure. Document MVP best-effort semantics if simpler.
+
+### FH-0020: Decouple `Model.Provider` from catalog metadata
+
+Status: Open
+Area: `Omicron.Core/Models/Model.cs`, `Omicron.Core/Models/ModelCatalogService.cs`
+Priority: Low.
+
+Current state:
+- `Model` carries a mutable `Provider` property. Both `ProviderFactory` and `ModelCatalogService` mutate it, creating dual ownership.
+
+Risk:
+- Catalog metadata and runtime provider resolution are conflated.
+
+Potential follow-up:
+- Resolve providers at call time via `IProviderRegistry.GetProvider(model.ProviderName)` rather than caching on `Model`.
+
+### FH-0021: Add `LineEditor` tests
+
+Status: Open
+Area: `Omicron.CLI/LineEditor.cs`
+Priority: Medium.
+
+Current state:
+- `LineEditor` has zero test coverage despite handling complex logic (paste detection, tab completion, multiline input, escape handling).
+
+Risk:
+- UX bugs directly affect the primary input path. No regression protection.
+
+Potential follow-up:
+- Add `LineEditorTests` using a mocked console input stream or by extracting logic into a testable state machine.
+
+### FH-0022: Add `JsonlSessionStore` concurrent access stress test
+
+Status: Open
+Area: `Omicron.Core.Tests/JsonlSessionStoreTests.cs`
+Priority: Medium.
+
+Current state:
+- The store uses `lock` internally, but no test validates concurrent `AppendEventsAsync` from multiple threads.
+
+Risk:
+- Concurrent session writes could have latent ordering or corruption bugs.
+
+Potential follow-up:
+- Add a concurrent stress test appending events from multiple threads and verifying sequence integrity.
+
+### FH-0023: Add `WorkspaceTransaction` commit failure recovery test
+
+Status: Open
+Area: `Omicron.Core.Tests/WorkspaceTransactionTests.cs`
+Priority: Medium.
+
+Current state:
+- `CommitAsync` has a try/catch that sets `_committed = false` on failure, but no test verifies this behavior or the partial-commit scenario.
+
+Risk:
+- Commit failure semantics are untested.
+
+Potential follow-up:
+- Add a test using a mock `HostWorkspaceFileSystem` that throws mid-commit.
+
+### FH-0024: Add `ConfigManager` save/load round-trip test
+
+Status: Open
+Area: `Omicron.Core.Tests/`
+Priority: Low.
+
+Current state:
+- Config persistence via Tomlyn is untested.
+
+Risk:
+- A regression in Tomlyn serialization would break user configs.
+
+Potential follow-up:
+- Add `ConfigManagerTests` in a temp directory covering save/load round-trip.
+
+### FH-0025: Add `OpenCodeProvider` routing tests
+
+Status: Open
+Area: `Omicron.Core.Tests/`
+Priority: Low.
+
+Current state:
+- `ResolveApiType`, `ResolveBaseUrl`, and `ResponsesModelIds` are not directly tested.
+
+Risk:
+- Routing regressions for Anthropic vs OpenAI vs Responses models would go undetected.
+
+Potential follow-up:
+- Add `OpenCodeProviderTests` covering model ID → ApiType resolution.
+
+### FH-0026: Add `ProviderStateManager.ClearSession` event emission test
+
+Status: Open
+Area: `Omicron.Core.Tests/ProviderStateTests.cs`
+Priority: Low.
+
+Current state:
+- `ClearSession` is tested on the raw store but not on `ProviderStateManager` (which emits events).
+
+Risk:
+- Event emission count/reason for bulk clears is untested.
+
+Potential follow-up:
+- Add a test verifying that `ProviderStateManager.ClearSession` emits the correct number of `ProviderStateClearedEvent`s.
+
 ## Review Cadence
 
 Revisit this backlog:
@@ -204,4 +532,5 @@ Revisit this backlog:
 - before implementing remoting or multi-frontend event streaming;
 - before adding sub-agents/concurrent sessions;
 - before replacing JSONL MVP persistence with a production backend;
-- whenever a new `OmicronEvent` subtype is added.
+- whenever a new `OmicronEvent` subtype is added;
+- before entering each new implementation plan (Plan 4, Plan 5, etc.).

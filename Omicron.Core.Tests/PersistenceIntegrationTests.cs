@@ -3,6 +3,7 @@ using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Providers;
 using Omicron.Core.Sessions;
+using Omicron.Core.Workspace;
 using Xunit;
 
 namespace Omicron.Core.Tests;
@@ -275,5 +276,36 @@ public class PersistenceIntegrationTests
         Assert.Equal(0, persistentSink.FailureCount);
     }
 
+    [Fact]
+    public async Task OmicronHost_TransactionManager_CreatesWorkingTransaction()
+    {
+        var host = new OmicronHost(Environment.CurrentDirectory);
+        var tx = host.WorkspaceTransactions.BeginTransaction();
+
+        Assert.NotNull(tx);
+        Assert.IsAssignableFrom<IWorkspaceTransaction>(tx);
+
+        // Write through overlay
+        var path = new WorkspacePath("_tx_test.txt");
+        await tx.Files.WriteFileAsync(path, "tx content"u8.ToArray());
+
+        // Verify visible in overlay
+        var content = await tx.Files.ReadFileAsync(path);
+        Assert.Equal("tx content"u8.ToArray(), content.ToArray());
+
+        // Verify not in host yet
+        var hostStat = await host.FileSystem.StatAsync(path);
+        Assert.Null(hostStat);
+
+        // Commit
+        await tx.CommitAsync();
+
+        // Verify in host after commit
+        hostStat = await host.FileSystem.StatAsync(path);
+        Assert.NotNull(hostStat);
+
+        // Cleanup
+        await host.FileSystem.DeleteAsync(path);
+    }
 }
 

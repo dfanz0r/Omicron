@@ -44,6 +44,8 @@ search indexes
 GUI/TUI view state caches
 ```
 
+Search indexes are derived cache data, not authoritative workspace state. If Omicron adopts a local search/indexing backend such as `dmtrKovalenko/fff`, its index/cache should be treated as rebuildable and invalidated by workspace root, ignore rules, VFS backend identity, and future transaction/snapshot context.
+
 Do not persist terminal frame buffers.
 
 ## Session History

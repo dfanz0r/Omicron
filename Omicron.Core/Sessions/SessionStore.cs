@@ -499,14 +499,16 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
     // ============================================================
 
     /// <summary>Serialize an OmicronEvent to JSON with a $type discriminator.</summary>
-    private static string SerializeEvent(OmicronEvent evt)
+    private string SerializeEvent(OmicronEvent evt)
     {
-        var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
-        var json = JsonSerializer.Serialize((object)evt, evt.GetType(), opts);
+        var json = JsonSerializer.Serialize((object)evt, evt.GetType(), _jsonOptions);
         var node = JsonNode.Parse(json)!;
         node["$type"] = evt.GetType().Name;
-        return node.ToJsonString(opts);
+        return node.ToJsonString(_jsonOptions);
     }
+
+    private static readonly JsonSerializerOptions _eventJsonOptions = new()
+        { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
     /// <summary>Deserialize a JSON line to an OmicronEvent using the $type discriminator.</summary>
     private static OmicronEvent? DeserializeEvent(string line)
@@ -520,25 +522,24 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
                 return null;
 
             var typeName = typeEl.GetString();
-            var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
             return typeName switch
             {
-                nameof(SessionStartedEvent) => JsonSerializer.Deserialize<SessionStartedEvent>(line, opts),
-                nameof(SessionResetEvent) => JsonSerializer.Deserialize<SessionResetEvent>(line, opts),
-                nameof(SessionErrorEvent) => JsonSerializer.Deserialize<SessionErrorEvent>(line, opts),
-                nameof(TurnStartedEvent) => JsonSerializer.Deserialize<TurnStartedEvent>(line, opts),
-                nameof(UserMessageEvent) => JsonSerializer.Deserialize<UserMessageEvent>(line, opts),
-                nameof(AssistantTextDeltaEvent) => JsonSerializer.Deserialize<AssistantTextDeltaEvent>(line, opts),
-                nameof(AssistantResponseCompleteEvent) => JsonSerializer.Deserialize<AssistantResponseCompleteEvent>(line, opts),
-                nameof(ToolInvocationStartedEvent) => JsonSerializer.Deserialize<ToolInvocationStartedEvent>(line, opts),
-                nameof(ToolInvocationCompletedEvent) => JsonSerializer.Deserialize<ToolInvocationCompletedEvent>(line, opts),
-                nameof(PermissionRequestedEvent) => JsonSerializer.Deserialize<PermissionRequestedEvent>(line, opts),
-                nameof(ExecutionStartedEvent) => JsonSerializer.Deserialize<ExecutionStartedEvent>(line, opts),
-                nameof(ExecutionCompletedEvent) => JsonSerializer.Deserialize<ExecutionCompletedEvent>(line, opts),
-                nameof(ProviderStateUpdatedEvent) => JsonSerializer.Deserialize<ProviderStateUpdatedEvent>(line, opts),
-                nameof(SessionEndedEvent) => JsonSerializer.Deserialize<SessionEndedEvent>(line, opts),
-                nameof(ProviderStateClearedEvent) => JsonSerializer.Deserialize<ProviderStateClearedEvent>(line, opts),
+                nameof(SessionStartedEvent) => JsonSerializer.Deserialize<SessionStartedEvent>(line, _eventJsonOptions),
+                nameof(SessionResetEvent) => JsonSerializer.Deserialize<SessionResetEvent>(line, _eventJsonOptions),
+                nameof(SessionErrorEvent) => JsonSerializer.Deserialize<SessionErrorEvent>(line, _eventJsonOptions),
+                nameof(TurnStartedEvent) => JsonSerializer.Deserialize<TurnStartedEvent>(line, _eventJsonOptions),
+                nameof(UserMessageEvent) => JsonSerializer.Deserialize<UserMessageEvent>(line, _eventJsonOptions),
+                nameof(AssistantTextDeltaEvent) => JsonSerializer.Deserialize<AssistantTextDeltaEvent>(line, _eventJsonOptions),
+                nameof(AssistantResponseCompleteEvent) => JsonSerializer.Deserialize<AssistantResponseCompleteEvent>(line, _eventJsonOptions),
+                nameof(ToolInvocationStartedEvent) => JsonSerializer.Deserialize<ToolInvocationStartedEvent>(line, _eventJsonOptions),
+                nameof(ToolInvocationCompletedEvent) => JsonSerializer.Deserialize<ToolInvocationCompletedEvent>(line, _eventJsonOptions),
+                nameof(PermissionRequestedEvent) => JsonSerializer.Deserialize<PermissionRequestedEvent>(line, _eventJsonOptions),
+                nameof(ExecutionStartedEvent) => JsonSerializer.Deserialize<ExecutionStartedEvent>(line, _eventJsonOptions),
+                nameof(ExecutionCompletedEvent) => JsonSerializer.Deserialize<ExecutionCompletedEvent>(line, _eventJsonOptions),
+                nameof(ProviderStateUpdatedEvent) => JsonSerializer.Deserialize<ProviderStateUpdatedEvent>(line, _eventJsonOptions),
+                nameof(SessionEndedEvent) => JsonSerializer.Deserialize<SessionEndedEvent>(line, _eventJsonOptions),
+                nameof(ProviderStateClearedEvent) => JsonSerializer.Deserialize<ProviderStateClearedEvent>(line, _eventJsonOptions),
                 _ => null
             };
         }

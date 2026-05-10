@@ -66,55 +66,90 @@ if (currentModelKey is null)
 
 while (true)
 {
-    if (!catalog.Models.TryGetValue(currentModelKey, out var selectedModel))
-    {
-        currentModelKey = SelectStartupModelKey(catalog, cfg);
-        if (currentModelKey is null) break;
-        selectedModel = catalog.Models[currentModelKey];
-    }
+    // Track whether we have a resumed/forked session to skip model selection
+    AgentSession? resumedSession = null;
+    Model? resumedModel = null;
+    string? currentApiKey = null;
 
-    cfg.LastModel = currentModelKey;
-    configManager.Save();
-
-    var apiKey = ResolveApiKey(selectedModel);
-    if (apiKey is null)
+    while (true)
     {
-        apiKey = PromptForApiKey(selectedModel.ProviderName);
-        if (string.IsNullOrEmpty(apiKey))
+        if (resumedSession is null)
         {
-            Console.WriteLine("API key required for this provider.");
-            currentModelKey = SelectStartupModelKey(catalog, cfg, excludeKey: currentModelKey);
-            if (currentModelKey is null) break;
+            if (!catalog.Models.TryGetValue(currentModelKey, out var selectedModel))
+            {
+                currentModelKey = SelectStartupModelKey(catalog, cfg);
+                if (currentModelKey is null) break;
+                selectedModel = catalog.Models[currentModelKey];
+            }
+
+            cfg.LastModel = currentModelKey;
+            configManager.Save();
+
+            currentApiKey = ResolveApiKey(selectedModel);
+            if (currentApiKey is null)
+            {
+                currentApiKey = PromptForApiKey(selectedModel.ProviderName);
+                if (string.IsNullOrEmpty(currentApiKey))
+                {
+                    Console.WriteLine("API key required for this provider.");
+                    currentModelKey = SelectStartupModelKey(catalog, cfg, excludeKey: currentModelKey);
+                    if (currentModelKey is null) break;
+                    continue;
+                }
+                configManager.SetApiKey(selectedModel.ProviderName, currentApiKey);
+                Console.WriteLine("  (saved to config)");
+            }
+
+            Console.WriteLine($"\nUsing: {selectedModel.Name}");
+            Console.WriteLine($"  Provider: {selectedModel.ProviderName}");
+            Console.WriteLine($"  API Type: {selectedModel.ApiType}");
+            Console.WriteLine($"  Base URL: {selectedModel.BaseUrl}");
+            Console.WriteLine("Type your message, /help for commands, /models to list, /model <n> to switch.\n");
+
+            resumedSession = host.CreateSession(
+                selectedModel,
+                cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.");
+            resumedSession.MaxTokens = cfg.DefaultMaxTokens;
+            resumedSession.Temperature = cfg.DefaultTemperature;
+            resumedSession.ApiKey = currentApiKey;
+            resumedSession.MaxIterations = cfg.MaxIterations;
+            resumedModel = selectedModel;
+        }
+
+        var innerSlashContext = new SlashCommandContext(
+            host, resumedSession, resumedModel!, currentModelKey, cfg, catalog);
+
+        var loopResult = await ChatLoop(resumedSession, innerSlashContext, slashDispatcher);
+
+        if (loopResult.Reason == ChatLoopExitReason.ExitApp)
+        { break; }
+
+        if (loopResult.NewSession is not null && loopResult.NewModel is not null)
+        {
+            resumedSession = loopResult.NewSession;
+            resumedModel = loopResult.NewModel;
+            if (loopResult.NewModelKey is not null)
+            {
+                currentModelKey = loopResult.NewModelKey;
+                cfg.LastModel = currentModelKey;
+                configManager.Save();
+            }
+            // Apply runtime config
+            resumedSession.ApiKey = currentApiKey;
+            resumedSession.MaxTokens = cfg.DefaultMaxTokens;
+            resumedSession.Temperature = cfg.DefaultTemperature;
+            resumedSession.MaxIterations = cfg.MaxIterations;
             continue;
         }
-        configManager.SetApiKey(selectedModel.ProviderName, apiKey);
-        Console.WriteLine("  (saved to config)");
-    }
 
-    Console.WriteLine($"\nUsing: {selectedModel.Name}");
-    Console.WriteLine($"  Provider: {selectedModel.ProviderName}");
-    Console.WriteLine($"  API Type: {selectedModel.ApiType}");
-    Console.WriteLine($"  Base URL: {selectedModel.BaseUrl}");
-    Console.WriteLine("Type your message, /help for commands, /models to list, /model <n> to switch.\n");
-
-    var session = host.CreateSession(
-        selectedModel,
-        cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.");
-    session.MaxTokens = cfg.DefaultMaxTokens;
-    session.Temperature = cfg.DefaultTemperature;
-    session.ApiKey = apiKey;
-    session.MaxIterations = cfg.MaxIterations;
-
-    var slashContext = new SlashCommandContext(
-        host, session, selectedModel, currentModelKey, cfg, catalog);
-
-    var loopResult = await ChatLoop(session, slashContext, slashDispatcher);
-    if (loopResult.Reason == ChatLoopExitReason.ExitApp)
+        if (loopResult.ModelKey is not null)
+        {
+            currentModelKey = loopResult.ModelKey;
+            resumedSession = null;
+            resumedModel = null;
+            continue;
+        }
         break;
-    if (loopResult.ModelKey is not null)
-    {
-        currentModelKey = loopResult.ModelKey;
-        continue;
     }
     break;
 }
@@ -329,6 +364,14 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
                         if (result.Message is not null)
                             Console.WriteLine(result.Message);
                         return new ChatLoopResult(ChatLoopExitReason.ExitSession, result.ModelKey);
+                    }
+                    continue;
+
+                case ChatCommandAction.SwitchSession:
+                    if (result.NewSession is not null && result.NewModel is not null)
+                    {
+                        return new ChatLoopResult(ChatLoopExitReason.ExitSession,
+                            NewSession: result.NewSession, NewModel: result.NewModel);
                     }
                     continue;
             }

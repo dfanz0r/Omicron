@@ -114,7 +114,11 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
     }
 
     internal bool TryGetStaged(WorkspacePath path, out StagedEntry entry)
-        => _staged.TryGetValue(NormalizePath(path.Value), out entry);
+    {
+        var found = _staged.TryGetValue(NormalizePath(path.Value), out var value);
+        entry = value!;
+        return found;
+    }
 
     internal bool IsStaged(WorkspacePath path) => _staged.ContainsKey(NormalizePath(path.Value));
 
