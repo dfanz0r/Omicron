@@ -63,11 +63,23 @@ internal sealed class TraceMyersDiffStrategy : ITextDiffStrategy
             int prevX = V[prevK + offset];
             int prevY = prevX - prevK;
 
-            while (x > prevX && y > prevY) { x--; y--; }
+            while (x > prevX && y > prevY)
+            {
+                x--;
+                y--;
+            }
             if (D == 0) break;
 
-            if (x == prevX) { y--; edits.Add((x, y, true)); }
-            else { x--; edits.Add((x, y, false)); }
+            if (x == prevX)
+            {
+                y--;
+                edits.Add((x, y, true));
+            }
+            else
+            {
+                x--;
+                edits.Add((x, y, false));
+            }
         }
 
         edits.Reverse();

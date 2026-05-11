@@ -98,8 +98,19 @@ internal static class TextDiffEngine
                 bool inSpace = false;
                 foreach (char c in key)
                 {
-                    if (char.IsWhiteSpace(c)) { if (!inSpace) { sb.Append(' '); inSpace = true; } }
-                    else { sb.Append(c); inSpace = false; }
+                    if (char.IsWhiteSpace(c))
+                    {
+                        if (!inSpace)
+                        {
+                            sb.Append(' ');
+                            inSpace = true;
+                        }
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                        inSpace = false;
+                    }
                 }
                 key = sb.ToString().Trim();
             }

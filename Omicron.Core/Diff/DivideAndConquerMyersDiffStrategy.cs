@@ -20,18 +20,32 @@ internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
     {
         // Trim common prefix
         while (oldLo < oldHi && newLo < newHi && oldArr[oldLo] == newArr[newLo])
-        { oldLo++; newLo++; }
+        {
+            oldLo++;
+            newLo++;
+        }
 
         // Trim common suffix
         while (oldLo < oldHi && newLo < newHi && oldArr[oldHi - 1] == newArr[newHi - 1])
-        { oldHi--; newHi--; }
+        {
+            oldHi--;
+            newHi--;
+        }
 
         int oldLen = oldHi - oldLo;
         int newLen = newHi - newLo;
 
         if (oldLen == 0 && newLen == 0) return;
-        if (oldLen == 0) { edits.Add(new TextDiffEdit(oldLo, 0, newLo, newLen)); return; }
-        if (newLen == 0) { edits.Add(new TextDiffEdit(oldLo, oldLen, newLo, 0)); return; }
+        if (oldLen == 0)
+        {
+            edits.Add(new TextDiffEdit(oldLo, 0, newLo, newLen));
+            return;
+        }
+        if (newLen == 0)
+        {
+            edits.Add(new TextDiffEdit(oldLo, oldLen, newLo, 0));
+            return;
+        }
 
         var (midOld, midNew) = FindMiddleSnake(oldArr, newArr, oldLo, oldHi, newLo, newHi);
 
@@ -69,7 +83,11 @@ internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
         int[] fwdV = new int[vSize];
         int[] revV = new int[vSize];
         // Initialize with -1 (unreachable)
-        for (int i = 0; i < vSize; i++) { fwdV[i] = -1; revV[i] = -1; }
+        for (int i = 0; i < vSize; i++)
+        {
+            fwdV[i] = -1;
+            revV[i] = -1;
+        }
 
         fwdV[1 + offset] = oldLo;  // D=0, k=1 in forward coordinates
         revV[1 + offset] = oldHi;  // D=0, k=1 in reverse coordinates

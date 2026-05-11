@@ -81,7 +81,11 @@ public class ConfigManager
         {
             var toml = File.ReadAllText(_configPath);
             var file = TomlSerializer.Deserialize<ConfigFile>(toml);
-            if (file is null) { Config = new AgentConfig(); return; }
+            if (file is null)
+            {
+                Config = new AgentConfig();
+                return;
+            }
 
             Config = new AgentConfig
             {

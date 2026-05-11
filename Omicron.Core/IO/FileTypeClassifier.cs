@@ -313,7 +313,11 @@ public static class FileTypeClassifier
         for (int i = 0; i < len - 4; i++)
         {
             var c = bytes[i];
-            if (c == (byte)'\n') { atLineStart = true; continue; }
+            if (c == (byte)'\n')
+            {
+                atLineStart = true;
+                continue;
+            }
             if (c == (byte)'\r') continue;
 
             if (atLineStart && i + 4 < len)

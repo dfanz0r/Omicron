@@ -911,7 +911,14 @@ public class OpenAiResponsesShape : IApiShape
                         callId = root.TryGetProperty("call_id", out var callIdEl) ? callIdEl.GetString() ?? callId : callId;
 
                     Dictionary<string, object?>? args = null;
-                    try { args = JsonSerializer.Deserialize<Dictionary<string, object?>>(argsJson); } catch { args = new(); }
+                    try
+                    {
+                        args = JsonSerializer.Deserialize<Dictionary<string, object?>>(argsJson);
+                    }
+                    catch
+                    {
+                        args = new();
+                    }
 
                     return new StreamEvent
                     {
@@ -1158,7 +1165,14 @@ public class AnthropicMessagesShape : IApiShape
                     if (toolCallAccumulators.TryGetValue(index, out var acc))
                     {
                         Dictionary<string, object?>? args = null;
-                        try { args = JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString()); } catch { args = new(); }
+                        try
+                        {
+                            args = JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString());
+                        }
+                        catch
+                        {
+                            args = new();
+                        }
                         toolCallAccumulators.Remove(index);
                         return new StreamEvent { Type = StreamEventType.ToolCallEnd, ToolCall = new ToolCallContent(acc.Id ?? "", acc.Name, args ?? new()) };
                     }
