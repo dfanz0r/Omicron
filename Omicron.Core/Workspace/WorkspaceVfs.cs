@@ -172,35 +172,47 @@ public class HostWorkspaceFileSystem : IWorkspaceFileSystem
             foreach (var entry in Directory.EnumerateFileSystemEntries(abs))
             {
                 ct.ThrowIfCancellationRequested();
-                var name = Path.GetFileName(entry);
-
-                if (Directory.Exists(entry))
+                try
                 {
-                    entries.Add(new DirectoryEntry(name + "/", true, 0));
-                }
-                else
-                {
-                    var fi = new FileInfo(entry);
-                    int? lineCount = null;
+                    var name = Path.GetFileName(entry);
 
-                    // Use content-based detection (more reliable than extension alone).
-                    // Only count lines for text files; binary files show "(binary)" in listings.
-                    var isBinaryByExtension = IsBinaryExtension(fi.Extension);
-                    var isText = !isBinaryByExtension && TextEncodingDetector.IsTextFile(entry);
-
-                    if (isText)
+                    if (Directory.Exists(entry))
                     {
-                        try { lineCount = File.ReadLines(entry).Count(); }
-                        catch { }
+                        entries.Add(new DirectoryEntry(name + "/", true, 0));
                     }
+                    else
+                    {
+                        var fi = new FileInfo(entry);
+                        int? lineCount = null;
 
-                    entries.Add(new DirectoryEntry(name, false, fi.Length, lineCount));
+                        // Use content-based detection (more reliable than extension alone).
+                        // Only count lines for text files; binary files show "(binary)" in listings.
+                        var isBinaryByExtension = IsBinaryExtension(fi.Extension);
+                        var isText = !isBinaryByExtension && TextEncodingDetector.IsTextFile(entry);
+
+                        if (isText)
+                        {
+                            try { lineCount = File.ReadLines(entry).Count(); }
+                            catch { }
+                        }
+
+                        entries.Add(new DirectoryEntry(name, false, fi.Length, lineCount));
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // Skip entries that can't be accessed (device files, permission errors, etc.)
                 }
             }
             return ValueTask.FromResult<IReadOnlyList<DirectoryEntry>>(entries);
         }
-        catch
+        catch (OperationCanceledException)
         {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[VFS] ReadDirectoryAsync failed for '{abs}': {ex.GetType().Name}: {ex.Message}");
             return ValueTask.FromResult<IReadOnlyList<DirectoryEntry>>(Array.Empty<DirectoryEntry>());
         }
     }

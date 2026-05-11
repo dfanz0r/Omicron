@@ -1,0 +1,99 @@
+using System.Buffers;
+using System.Runtime.CompilerServices;
+using System.Text;
+
+namespace Omicron.Core.Rendering;
+
+/// <summary>
+/// A virtual terminal backend for tests and headless environments.
+/// Captures output bytes and yields synthetic events. No real terminal needed.
+/// </summary>
+public sealed class VirtualTerminalBackend : ITerminalBackend
+{
+    private readonly List<byte> _capturedOutput = [];
+    private readonly ByteBufferWriter _writer;
+    private readonly List<TerminalEvent> _injectedEvents = [];
+    private int _eventIndex;
+
+    public TerminalSize Size { get; set; } = new(80, 24);
+
+    /// <summary>Captured output bytes from the renderer.</summary>
+    public IReadOnlyList<byte> CapturedOutput => _capturedOutput;
+
+    /// <summary>Synthetic events to yield from <see cref="ReadEvents"/>.</summary>
+    public List<TerminalEvent> InjectedEvents => _injectedEvents;
+
+    public IBufferWriter<byte> Output => _writer;
+
+    public VirtualTerminalBackend()
+    {
+        _writer = new ByteBufferWriter(_capturedOutput);
+    }
+
+    /// <summary>Inject a synthetic event that will be yielded by the next ReadEvents call.</summary>
+    public void InjectEvent(TerminalEvent evt) => _injectedEvents.Add(evt);
+
+    public async IAsyncEnumerable<TerminalEvent> ReadEvents([EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        while (_eventIndex < _injectedEvents.Count && !cancellationToken.IsCancellationRequested)
+        {
+            yield return _injectedEvents[_eventIndex++];
+            await Task.CompletedTask;
+        }
+    }
+
+    public void Flush()
+    {
+        _writer.Flush();
+    }
+
+    public void Dispose()
+    {
+        _capturedOutput.Clear();
+        _injectedEvents.Clear();
+    }
+
+    /// <summary>Clear captured output and reset injected events.</summary>
+    public void Reset()
+    {
+        _capturedOutput.Clear();
+        _injectedEvents.Clear();
+        _eventIndex = 0;
+    }
+
+    private sealed class ByteBufferWriter : IBufferWriter<byte>
+    {
+        private readonly List<byte> _target;
+        private byte[] _buffer = new byte[4096];
+        private int _written;
+
+        public ByteBufferWriter(List<byte> target) => _target = target;
+
+        public void Advance(int count) => _written += count;
+        public Memory<byte> GetMemory(int sizeHint = 0)
+        {
+            EnsureCapacity(sizeHint);
+            return _buffer.AsMemory(_written);
+        }
+        public Span<byte> GetSpan(int sizeHint = 0)
+        {
+            EnsureCapacity(sizeHint);
+            return _buffer.AsSpan(_written);
+        }
+
+        private void EnsureCapacity(int sizeHint)
+        {
+            if (_buffer.Length - _written < sizeHint)
+                Array.Resize(ref _buffer, Math.Max(_buffer.Length * 2, _written + sizeHint));
+        }
+
+        public void Flush()
+        {
+            if (_written > 0)
+            {
+                _target.AddRange(_buffer.AsSpan(0, _written).ToArray());
+                _written = 0;
+            }
+        }
+    }
+}

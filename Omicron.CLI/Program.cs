@@ -3,10 +3,19 @@ using Omicron.Core;
 using Omicron.Core.Config;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
+using Omicron.Core.Rendering;
 using Omicron.Core.Sessions;
 using Omicron.CLI;
+using Omicron.CLI.Tui;
 
 Console.OutputEncoding = Encoding.UTF8;
+
+// ── TUI mode ──
+if (args is { Length: > 0 } && args.Contains("--tui"))
+{
+    await TuiMode.RunAsync();
+    return;
+}
 
 Console.WriteLine();
 Console.WriteLine("╔══════════════════════════════════════════════════╗");
@@ -549,5 +558,65 @@ public static class DisplayHelpers
 
     public static string Truncate(this string value, int maxLength)
         => value.Length <= maxLength ? value : value[..(maxLength - 1)] + "\u2026";
+}
+
+/// <summary>TUI mode entry point.</summary>
+public static class TuiMode
+{
+    public static async Task RunAsync(AgentSession? session = null)
+    {
+        Console.WriteLine("Starting Omicron TUI mode...");
+
+        using var backend = new SystemTerminalBackend();
+        backend.Initialize();
+        using var shell = new TuiShell(backend);
+
+        if (session is not null)
+        {
+            using var app = new AppLayout(shell, session);
+            await app.RunAsync();
+        }
+        else
+        {
+            // Fallback: run shell with simple text if no session is available
+            var transcriptLines = new List<string>
+            {
+                "Welcome to Omicron TUI",
+                "Type a message to start a conversation.",
+                "",
+                "Available commands:",
+                "  Ctrl+D  Exit TUI",
+                "  Escape  Cancel current operation",
+            };
+
+            await shell.RunAsync(
+                onEvent: async (evt) =>
+                {
+                    if (evt is KeyEvent ke)
+                    {
+                        if (ke.Key == Key.Character && ke.Text?.Value == 4) // Ctrl+D
+                            return false;
+                    }
+                    return false;
+                },
+                onRender: async (frame) =>
+                {
+                    frame.Clear();
+
+                    var textStyle = TextStyle.Default;
+                    for (int i = 0; i < transcriptLines.Count && i < frame.Height - 2; i++)
+                    {
+                        if (!string.IsNullOrEmpty(transcriptLines[i]))
+                        {
+                            frame.SetText(i, 0, Encoding.UTF8.GetBytes(transcriptLines[i]), textStyle);
+                        }
+                    }
+
+                    SimpleStatusBar.Render(frame, "Omicron TUI", "ready", "Ctrl+D to exit");
+                });
+        }
+
+        Console.WriteLine("TUI mode exited.");
+    }
 }
 
