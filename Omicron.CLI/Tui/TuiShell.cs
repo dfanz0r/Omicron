@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using Omicron.Core.Rendering;
 using Omicron.Core.Text;
@@ -15,11 +16,14 @@ public sealed class TuiShell : IDisposable
     private readonly DifferentialRenderer _renderer;
     private TerminalFrame _currentFrame;
     private readonly Channel<bool> _renderSignal;
-    private readonly CancellationTokenSource _cts;
+
+    private CancellationTokenSource _cts;
     private bool _disposed;
 
     /// <summary>Target FPS for frame pacing. 0 = unlimited.</summary>
     public int TargetFps { get; set; } = 60;
+
+    private long _lastRenderTicks;
 
     /// <summary>The terminal backend used by this shell.</summary>
     public ITerminalBackend Backend => _backend;
@@ -44,13 +48,41 @@ public sealed class TuiShell : IDisposable
     /// </summary>
     /// <param name="onEvent">Called for each terminal event. If it returns true, a render is requested.</param>
     /// <param name="onRender">Called when a render is due. Draw into <see cref="CurrentFrame"/>.</param>
+
+
+    /// <summary>Reset internal state so RunAsync can be called again.</summary>
+    public void ResetState()
+    {
+        if (_cts.IsCancellationRequested)
+        {
+            _cts.Dispose();
+            _cts = new CancellationTokenSource();
+        }
+        // Drain any stale render signals
+        while (_renderSignal.Reader.TryRead(out _)) { }
+    }
+
     public async Task RunAsync(
         Func<TerminalEvent, Task<bool>> onEvent,
         Func<TerminalFrame, Task> onRender)
     {
-        // Enter alternate screen and hide cursor
+        ResetState();
+
+        // Enter alternate screen, hide cursor, enable mouse tracking, bracketed paste
         using var altScreen = TerminalScope.UseAlternateScreen(_backend);
         using var hideCursor = TerminalScope.HideCursor(_backend);
+        using var mouseScope = TerminalScope.UseMouse(_backend);
+        using var bracketedPaste = TerminalScope.UseBracketedPaste(_backend);
+
+        // Ensure frame/renderer have the correct terminal size before first render.
+        // On some platforms (e.g. Windows via dotnet run) the initial backend.Size
+        // may be (0,0) until Initialize() has run.
+        var actualSize = _backend.Size;
+        if (_currentFrame.Width != actualSize.Width || _currentFrame.Height != actualSize.Height)
+        {
+            _renderer.Resize(actualSize.Width, actualSize.Height);
+            _currentFrame.Resize(actualSize.Width, actualSize.Height);
+        }
 
         RequestRender(); // Trigger initial render
 
@@ -61,63 +93,65 @@ public sealed class TuiShell : IDisposable
 
         try
         {
+            ValueTask<bool> moveNextTask = default;
+            bool hasPendingMoveNext = false;
+            Task<bool>? eventTask = null;
+
             while (!_cts.Token.IsCancellationRequested)
             {
-                // Wait for either an event or a render signal
-                var eventTask = eventStream.MoveNextAsync().AsTask();
-                var renderTask = _renderSignal.Reader.WaitToReadAsync(_cts.Token).AsTask();
+                if (!hasPendingMoveNext)
+                {
+                    moveNextTask = eventStream.MoveNextAsync();
+                    eventTask = moveNextTask.AsTask();
+                    hasPendingMoveNext = true;
+                }
 
-                var completed = await Task.WhenAny(eventTask, renderTask);
+                var renderTask = _renderSignal.Reader.WaitToReadAsync(_cts.Token).AsTask();
+                var completed = await Task.WhenAny(eventTask!, renderTask);
 
                 if (completed == renderTask)
                 {
-                    // Render signal
                     if (renderTask.Result)
                     {
+                        // Frame pacing: respect TargetFps
+                        if (TargetFps > 0)
+                        {
+                            long now = Stopwatch.GetTimestamp();
+                            long minInterval = Stopwatch.Frequency / TargetFps;
+                            long elapsed = now - _lastRenderTicks;
+                            if (elapsed < minInterval)
+                            {
+                                int delayMs = (int)((minInterval - elapsed) * 1000 / Stopwatch.Frequency);
+                                if (delayMs > 0)
+                                    await Task.Delay(delayMs);
+                            }
+                        }
+
                         _renderSignal.Reader.TryRead(out _);
                         await onRender(_currentFrame);
                         _renderer.Render(_currentFrame, _backend.Output);
+                        _lastRenderTicks = Stopwatch.GetTimestamp();
                         _backend.Flush();
-
-                        // Frame pacing
-                        if (TargetFps > 0)
-                        {
-                            int frameMs = 1000 / TargetFps;
-                            if (frameMs > 0)
-                                await Task.Delay(frameMs, _cts.Token);
-                        }
                     }
                 }
                 else if (completed == eventTask)
                 {
-                    // Terminal event
+                    hasPendingMoveNext = false;
+
                     if (!eventTask.Result)
                         break; // Stream ended
 
                     var evt = eventStream.Current;
 
-                    // Handle resize
                     if (evt is ResizeEvent resize)
                     {
                         _renderer.Resize(resize.Width, resize.Height);
                         _currentFrame.Resize(resize.Width, resize.Height);
-                        RequestRender();
+                        RequestFullRedraw();
                         continue;
                     }
 
-                    // Handle Ctrl+D or Ctrl+C
-                    if (evt is KeyEvent ke)
-                    {
-                        if (ke.Key == Key.Character && ke.Text?.Value == 4) // Ctrl+D
-                            break;
-                        if (ke.Key == Key.Escape)
-                        {
-                            // Allow caller to handle Escape
-                        }
-                    }
-
-                    bool needsRender = await onEvent(evt);
-                    if (needsRender)
+                    if (await onEvent(evt))
                         RequestRender();
                 }
             }
@@ -143,6 +177,15 @@ public sealed class TuiShell : IDisposable
     public void RequestRender()
     {
         _renderSignal.Writer.TryWrite(true);
+    }
+
+
+
+    /// <summary>Force a full frame redraw on the next render (avoids diff flicker).</summary>
+    public void RequestFullRedraw()
+    {
+        _renderer.RequestFullRedraw();
+        RequestRender();
     }
 
     /// <summary>Request cancellation of the event/render loop.</summary>

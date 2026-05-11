@@ -98,6 +98,17 @@ public sealed class TerminalLifecycle : IDisposable
                 }
             }
         }
+
+        // Also restore platform console modes so standard Console.ReadKey works
+        // after a crash/kill that bypassed Dispose().
+        try
+        {
+            SystemTerminalBackend.EnsureSafeConsoleInputMode();
+        }
+        catch
+        {
+            // Best-effort
+        }
     }
 
     private void OnProcessExit(object? sender, EventArgs e)

@@ -421,8 +421,11 @@ public class TranscriptViewportTests
         var ctx = new RenderContext(frame, new Rect(0, 0, 80, 1), TextStyle.Default);
         widget.Render(ctx);
 
-        // Status bar uses inverted style
-        Assert.Equal(TextStyle.Inverted, frame[0, 0].Style);
+        // Status bar uses gradient background (dark amber at left edge)
+        var cell = frame[0, 0];
+        Assert.True(cell.Style.BgR > 0 || cell.Style.BgG > 0 || cell.Style.BgB > 0,
+            "Status bar should have non-black background (gradient)");
+        Assert.Equal(1, cell.Width);
     }
 
     // ============================================================

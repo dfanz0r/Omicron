@@ -503,8 +503,51 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
     {
         if (!_disposed)
         {
+            PruneEmptySessions();
             SaveIndex();
             _disposed = true;
+        }
+    }
+
+    private void PruneEmptySessions()
+    {
+        lock (_lock)
+        {
+            var emptySessionIds = _sessions
+                .Where(s => GetEventCountUnsafe(s.SessionId) == 0)
+                .Select(s => s.SessionId)
+                .ToList();
+
+            if (emptySessionIds.Count == 0)
+                return;
+
+            foreach (var sessionId in emptySessionIds)
+            {
+                _sessions.RemoveAll(s => s.SessionId == sessionId);
+                var eventPath = EventPath(sessionId);
+                try
+                {
+                    if (File.Exists(eventPath))
+                        File.Delete(eventPath);
+                }
+                catch { }
+            }
+        }
+    }
+
+    private long GetEventCountUnsafe(SessionId sessionId)
+    {
+        var eventPath = EventPath(sessionId);
+        if (!File.Exists(eventPath))
+            return 0;
+
+        try
+        {
+            return File.ReadLines(eventPath).Count(l => !string.IsNullOrWhiteSpace(l));
+        }
+        catch
+        {
+            return 0;
         }
     }
 

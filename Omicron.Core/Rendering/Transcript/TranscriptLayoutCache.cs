@@ -87,6 +87,52 @@ public sealed class TranscriptLayoutCache
     }
 
     /// <summary>
+    /// Reflow a single block and insert / replace its lines without reflowing
+    /// the entire transcript. Used during streaming to avoid O(n) reflow on
+    /// every delta.
+    /// </summary>
+    public void ReflowBlock(TranscriptBlock block, TranscriptStore store, int terminalWidth)
+    {
+        if (block is null) return;
+
+        // Remove existing lines for this block
+        int removeFrom = -1;
+        int removeCount = 0;
+        for (int i = 0; i < _wrappedLines.Count; i++)
+        {
+            if (_wrappedLines[i].BlockId == block.Id)
+            {
+                if (removeFrom < 0) removeFrom = i;
+                removeCount++;
+            }
+            else if (removeFrom >= 0)
+            {
+                break;
+            }
+        }
+        if (removeFrom >= 0)
+            _wrappedLines.RemoveRange(removeFrom, removeCount);
+
+        _blockLines.Remove(block.Id);
+
+        // Wrap just this block
+        var lines = WrapBlock(block, store, terminalWidth);
+        _blockLines[block.Id] = lines;
+
+        // Re-insert at the correct position
+        if (removeFrom >= 0)
+        {
+            _wrappedLines.InsertRange(removeFrom, lines);
+        }
+        else
+        {
+            // Find insertion point (after all preceding blocks)
+            // Since blocks are mostly ordered by insertion, just append
+            _wrappedLines.AddRange(lines);
+        }
+    }
+
+    /// <summary>
     /// Get visible wrapped lines for a window into the transcript.
     /// </summary>
     public IReadOnlyList<WrappedLineInfo> GetVisibleLines(int firstWrappedRow, int height)
@@ -107,26 +153,22 @@ public sealed class TranscriptLayoutCache
     {
         _blockLines[blockId] = lines;
 
-        // Find the position to insert
-        int insertAt = 0;
+        // Find the position to insert or replace the existing run for this block.
         for (int i = 0; i < _wrappedLines.Count; i++)
         {
             if (_wrappedLines[i].BlockId == blockId)
             {
-                // Replace existing lines for this block
                 int end = i;
                 while (end < _wrappedLines.Count && _wrappedLines[end].BlockId == blockId)
                     end++;
-                int count = end - i;
-                _wrappedLines.RemoveRange(i, count);
+
+                _wrappedLines.RemoveRange(i, end - i);
                 _wrappedLines.InsertRange(i, lines);
                 return;
             }
-            if (CompareBlockIds(_wrappedLines[i].BlockId, blockId) < 0)
-                insertAt = i + 1;
         }
 
-        // Block not found in flat list — append
+        // Block not found in flat list — append.
         _wrappedLines.AddRange(lines);
     }
 
@@ -146,6 +188,7 @@ public sealed class TranscriptLayoutCache
             AssistantMessageBlock amb => amb.Position.GlobalByteOffset,
             ToolCallBlock tcb => tcb.Position.GlobalByteOffset,
             SystemNoticeBlock snb => snb.Position.GlobalByteOffset,
+            SeparatorBlock sb => sb.Position.GlobalByteOffset,
             _ => 0
         };
 
@@ -155,6 +198,7 @@ public sealed class TranscriptLayoutCache
             AssistantMessageBlock amb => amb.ByteLength,
             ToolCallBlock tcb => tcb.ByteLength,
             SystemNoticeBlock snb => snb.ByteLength,
+            SeparatorBlock sb => sb.ByteLength,
             _ => 0
         };
 

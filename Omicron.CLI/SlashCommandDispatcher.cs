@@ -6,10 +6,6 @@ using Omicron.Core.Sessions;
 
 namespace Omicron.CLI;
 
-// ============================================================
-// Types
-// ============================================================
-
 internal enum ChatCommandAction
 {
     Continue,
@@ -50,40 +46,20 @@ internal enum ChatLoopExitReason
     ExitApp
 }
 
-// ============================================================
-// Slash command dispatcher
-// ============================================================
-
 internal sealed class SlashCommandDispatcher
 {
     private static readonly string[] CommandNames =
     [
-        "/help",
-        "/model",
-        "/models",
-        "/status",
-        "/tools",
-        "/events",
-        "/provider-state",
-        "/clear-state",
-        "/persist",
-        "/sessions",
-        "/resume",
-        "/fork",
-        "/reset",
-        "/exit",
-        "/quit"
+        "/help", "/model", "/models", "/status", "/tools", "/events",
+        "/provider-state", "/clear-state", "/persist", "/sessions",
+        "/resume", "/fork", "/reset", "/exit", "/quit"
     ];
 
-    /// <summary>Return possible completions for the current input.</summary>
     public IReadOnlyList<string> GetCompletions(string input, SlashCommandContext context)
     {
         var trimmed = input.TrimStart();
-        if (trimmed.Length == 0)
-            return CommandNames;
-
-        if (!trimmed.StartsWith('/'))
-            return [];
+        if (trimmed.Length == 0) return CommandNames;
+        if (!trimmed.StartsWith('/')) return [];
 
         if (trimmed.StartsWith("/model ", StringComparison.OrdinalIgnoreCase))
         {
@@ -97,96 +73,51 @@ internal sealed class SlashCommandDispatcher
                 .ToList();
         }
 
-        return CommandNames
-            .Where(c => c.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        return CommandNames.Where(c => c.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase)).ToList();
     }
 
-    /// <summary>Check if input starts with a slash or is a bare alias.</summary>
     public bool IsCommand(string input)
     {
         if (string.IsNullOrEmpty(input)) return false;
         if (input.StartsWith('/')) return true;
-
-        // Bare aliases
         var lower = input.Trim().ToLowerInvariant();
         return lower is "exit" or "reset" or "?" or "quit";
     }
 
-    /// <summary>
-    /// Execute a slash command and return a result.
-    /// Handlers print their own output for simplicity.
-    /// </summary>
     public ChatCommandResult Execute(string input, SlashCommandContext context)
     {
         var trimmed = input.Trim();
-        var lower = trimmed.ToLowerInvariant();
-
-        // Normalize: strip leading slash for command matching.
-        // A bare "/" should not crash; treat it as help.
         var cmdText = trimmed.StartsWith('/') ? trimmed[1..] : trimmed;
-        if (string.IsNullOrWhiteSpace(cmdText))
-            return ShowHelp();
+        if (string.IsNullOrWhiteSpace(cmdText)) return ShowHelp();
 
         var parts = cmdText.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
         var command = parts[0].ToLowerInvariant();
         var args = parts.Length > 1 ? parts[1] : "";
 
-        switch (command)
+        return command switch
         {
-            case "help":
-            case "?":
-                return ShowHelp();
+            "help" or "?" => ShowHelp(),
+            "model" => string.IsNullOrWhiteSpace(args) ? ShowModel(context) : SwitchModel(context, args),
+            "models" => ShowModels(context),
+            "status" => ShowStatus(context),
+            "tools" => ShowTools(context),
+            "events" => ShowEvents(context, args),
+            "provider-state" => ShowProviderState(context),
+            "persist" => ShowPersistence(context),
+            "clear-state" => ClearProviderState(context),
+            "sessions" => ListSessions(context, args),
+            "resume" => ResumeSession(context, args),
+            "fork" => ForkSession(context, args),
+            "reset" => ResetSession(context),
+            "exit" or "quit" => new ChatCommandResult(ChatCommandAction.ExitApp, "Goodbye!"),
+            _ => UnknownCommand(command)
+        };
+    }
 
-            case "model":
-                return string.IsNullOrWhiteSpace(args)
-                    ? ShowModel(context)
-                    : SwitchModel(context, args);
-
-            case "models":
-                return ShowModels(context);
-
-            case "status":
-                return ShowStatus(context);
-
-            case "tools":
-                return ShowTools(context);
-
-            case "events":
-                return ShowEvents(context, args);
-
-            case "provider-state":
-                return ShowProviderState(context);
-
-            case "persist":
-                return ShowPersistence(context);
-
-            case "clear-state":
-                return ClearProviderState(context);
-
-            case "sessions":
-                return ListSessions(context, args);
-
-            case "resume":
-                return ResumeSession(context, args);
-
-            case "fork":
-                return ForkSession(context, args);
-
-            case "reset":
-                return ResetSession(context);
-
-
-            case "exit":
-                return new ChatCommandResult(ChatCommandAction.ExitApp, "Goodbye!");
-
-            case "quit":
-                return new ChatCommandResult(ChatCommandAction.ExitApp, "Goodbye!");
-
-            default:
-                Console.WriteLine($"  Unknown command: /{command}. Type /help for available commands.");
-                return new ChatCommandResult(ChatCommandAction.Continue);
-        }
+    private static ChatCommandResult UnknownCommand(string command)
+    {
+        Console.WriteLine($"  Unknown command: /{command}. Type /help for available commands.");
+        return new ChatCommandResult(ChatCommandAction.Continue);
     }
 
     private static ChatCommandResult ShowHelp()
@@ -203,9 +134,9 @@ internal sealed class SlashCommandDispatcher
         Console.WriteLine("    /provider-state     Show provider state for current session/model");
         Console.WriteLine("    /clear-state        Clear provider state for current session/model only");
         Console.WriteLine("    /persist            Show session storage type and event counts");
-        Console.WriteLine("    /sessions [n]       List persisted sessions");
-        Console.WriteLine("    /resume <id|n>      Resume a persisted session");
-        Console.WriteLine("    /fork <id|n>        Fork a session [--model <model-key|n>]");
+        Console.WriteLine("    /sessions [n]       List persisted sessions (newest first)");
+        Console.WriteLine("    /resume <id|n|-1>   Resume a persisted session; -1 means most recent");
+        Console.WriteLine("    /fork <id|n|-1>     Fork a session [--model <model-key|n>] (-1 = most recent)");
         Console.WriteLine("    /reset              Reset the conversation and all provider state");
         Console.WriteLine("    /exit               Exit the application");
         Console.WriteLine("    /quit               Exit the application");
@@ -261,12 +192,14 @@ internal sealed class SlashCommandDispatcher
         {
             var (key, m) = visible[i];
             var marker = key == context.ModelKey ? "*" : " ";
-            var free = context.Catalog.IsFreeModel(key) && !HasProviderEnvironmentKey(m.ProviderName) && !context.Config.ApiKeys.ContainsKey(m.ProviderName)
-                ? "free"
-                : "    ";
+            var free = context.Catalog.IsFreeModel(key) &&
+                       !HasProviderEnvironmentKey(m.ProviderName) &&
+                       !context.Config.ApiKeys.ContainsKey(m.ProviderName)
+                ? "free" : "    ";
             var ctxWindow = context.Catalog.GetEffectiveContextWindow(m);
             Console.WriteLine($"    [{i + 1,2}] {marker} {free} {m.Name,-36} {m.ProviderName,-12} {m.ApiType,-16} {FormatTokenCountCompact(ctxWindow),-6} {key}");
         }
+
         Console.WriteLine();
         Console.WriteLine("  Switch with: /model <number>  or  /model <catalog-key>");
         Console.WriteLine();
@@ -287,7 +220,7 @@ internal sealed class SlashCommandDispatcher
         {
             if (index < 1 || index > visible.Count)
             {
-                Console.WriteLine($"  Invalid model number. Use /models to list available models.");
+                Console.WriteLine("  Invalid model number. Use /models to list available models.");
                 return new ChatCommandResult(ChatCommandAction.Continue);
             }
             selectedKey = visible[index - 1].Key;
@@ -321,15 +254,11 @@ internal sealed class SlashCommandDispatcher
             .Select(kv => (kv.Key, kv.Value));
     }
 
-    private static bool HasConfiguredProviderAccess(
-        AgentConfig config,
-        IModelCatalog catalog,
-        string key,
-        Model model)
+    private static bool HasConfiguredProviderAccess(AgentConfig config, IModelCatalog catalog, string key, Model model)
     {
-        return catalog.IsFreeModel(key)
-            || config.ApiKeys.ContainsKey(model.ProviderName)
-            || HasProviderEnvironmentKey(model.ProviderName);
+        return catalog.IsFreeModel(key) ||
+               config.ApiKeys.ContainsKey(model.ProviderName) ||
+               HasProviderEnvironmentKey(model.ProviderName);
     }
 
     private static bool HasProviderEnvironmentKey(string providerName)
@@ -342,7 +271,6 @@ internal sealed class SlashCommandDispatcher
             "openrouter" => "OPENROUTER_API_KEY",
             _ => null
         };
-
         return envVarName is not null && !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(envVarName));
     }
 
@@ -353,8 +281,6 @@ internal sealed class SlashCommandDispatcher
         var host = context.Host;
         var compat = m.GetEffectiveCompatibility();
         var toolCount = host.Tools.AllTools.Count();
-
-        // Count session events
         var events = host.EventLog.GetSessionEvents(session.Id);
         var eventCount = events.Count;
 
@@ -375,6 +301,7 @@ internal sealed class SlashCommandDispatcher
     private static ChatCommandResult ShowTools(SlashCommandContext context)
     {
         var tools = context.Host.Tools.AllTools;
+
         Console.WriteLine();
         if (!tools.Any())
         {
@@ -384,17 +311,15 @@ internal sealed class SlashCommandDispatcher
         {
             Console.WriteLine($"  Registered tools ({tools.Count()}):");
             foreach (var tool in tools)
-            {
                 Console.WriteLine($"    - {tool.Name}: {tool.Description}");
-            }
         }
+
         Console.WriteLine();
         return new ChatCommandResult(ChatCommandAction.Continue);
     }
 
     private static ChatCommandResult ShowEvents(SlashCommandContext context, string args)
     {
-        // Parse count, default 20
         if (!int.TryParse(args, out var count) || count <= 0)
             count = 20;
 
@@ -416,6 +341,7 @@ internal sealed class SlashCommandDispatcher
                 Console.WriteLine($"    #{evt.Sequence,-4} {label,-40} {detail}");
             }
         }
+
         Console.WriteLine();
         return new ChatCommandResult(ChatCommandAction.Continue);
     }
@@ -444,11 +370,13 @@ internal sealed class SlashCommandDispatcher
         Console.WriteLine();
         Console.WriteLine("  Session Storage:");
         Console.WriteLine($"    Store type:  {storeType}");
-
         if (store is JsonlSessionStore jsonl)
             Console.WriteLine($"    Directory:   {jsonl.StoreDirectory}");
 
-        var sessions = store.ListSessionsAsync(new SessionListQuery(int.MaxValue)).GetAwaiter().GetResult();
+        var sessions = store.ListSessionsAsync(new SessionListQuery(int.MaxValue))
+            .GetAwaiter().GetResult()
+            .OrderByDescending(s => s.LastActivityAt ?? s.CreatedAt)
+            .ToList();
         Console.WriteLine($"    Sessions:    {sessions.Count}");
 
         try
@@ -469,14 +397,7 @@ internal sealed class SlashCommandDispatcher
     {
         var session = context.Session;
         var m = context.Model;
-
-        var key = ProviderStateKey.Create(
-            session.Id,
-            session.AgentId,
-            m.ProviderName,
-            m.Id,
-            m.ApiType);
-
+        var key = ProviderStateKey.Create(session.Id, session.AgentId, m.ProviderName, m.Id, m.ApiType);
         var state = context.Host.ProviderStateManager.Get(key);
 
         Console.WriteLine();
@@ -495,14 +416,7 @@ internal sealed class SlashCommandDispatcher
     {
         var session = context.Session;
         var m = context.Model;
-
-        var key = ProviderStateKey.Create(
-            session.Id,
-            session.AgentId,
-            m.ProviderName,
-            m.Id,
-            m.ApiType);
-
+        var key = ProviderStateKey.Create(session.Id, session.AgentId, m.ProviderName, m.Id, m.ApiType);
         context.Host.ProviderStateManager.Clear(key, reason: "slash_command_clear_state");
         Console.WriteLine("  Provider state cleared for current session/model.");
         return new ChatCommandResult(ChatCommandAction.Continue);
@@ -510,82 +424,83 @@ internal sealed class SlashCommandDispatcher
 
     private static ChatCommandResult ListSessions(SlashCommandContext context, string args)
     {
-        // Parse count, default 20
-        int.TryParse(args, out var count);
-        if (count <= 0) count = 20;
-
+        var (limit, offset, filter) = ParseSessionsArgs(args);
         var sessions = context.Host.SessionStore
-            .ListSessionsAsync(new SessionListQuery(Limit: count))
-            .GetAwaiter().GetResult();
+            .ListSessionsAsync(new SessionListQuery(Limit: int.MaxValue, Offset: 0, StatusFilter: filter))
+            .GetAwaiter()
+            .GetResult();
+        sessions = sessions.OrderByDescending(s => s.LastActivityAt ?? s.CreatedAt).ToList();
+
+        if (offset < 0)
+            offset = Math.Max(0, sessions.Count + offset);
+
+        var page = sessions.Skip(offset).Take(limit).ToList();
 
         Console.WriteLine();
-        if (sessions.Count == 0)
+        if (page.Count == 0)
         {
             Console.WriteLine("  No saved sessions.");
+            Console.WriteLine();
+            return new ChatCommandResult(ChatCommandAction.Continue);
         }
-        else
+
+        Console.WriteLine($"  Saved sessions (showing {page.Count} of {sessions.Count}, offset {offset}):");
+        Console.WriteLine($"  [  0] current active session  msgs={context.Session.Messages.Count}");
+        for (int i = 0; i < page.Count; i++)
         {
-            Console.WriteLine($"  Saved sessions ({sessions.Count}):");
-            for (int i = 0; i < sessions.Count; i++)
-            {
-                var s = sessions[i];
-                var shortId = s.SessionId.ToString()[..8];
-                var status = s.Status == SessionStatus.Active ? "  " : " [archived]";
-                Console.WriteLine($"  [{i + 1}] {shortId}  {s.ModelId,-20} {s.ProviderName,-12} {s.CreatedAt:yyyy-MM-dd HH:mm}{status}");
-            }
+            var s = page[i];
+            var shortId = s.SessionId.ToString()[..8];
+            var last = s.LastActivityAt?.ToString("yyyy-MM-dd HH:mm") ?? "(never)";
+            var created = s.CreatedAt.ToString("yyyy-MM-dd HH:mm");
+            var status = s.Status == SessionStatus.Active ? "active" : s.Status.ToString().ToLowerInvariant();
+            var msgCount = SafeEventCount(context.Host.SessionStore, s.SessionId);
+            Console.WriteLine($"  [{offset + i + 1,3}] {shortId}  {status,-9} msgs={msgCount,-4} {last,-16} {created,-16} {s.ProviderName,-12} {s.ModelId,-22} {Truncate(s.Label ?? "", 24)}");
         }
         Console.WriteLine();
+        Console.WriteLine("  Use: /resume <index|session-id-prefix|-1>   /sessions <limit> [offset] [all|active|archived|error]");
+        Console.WriteLine();
         return new ChatCommandResult(ChatCommandAction.Continue);
+    }
+
+    private static (int limit, int offset, SessionStatus? filter) ParseSessionsArgs(string args)
+    {
+        var parts = args.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        int limit = 20;
+        int offset = 0;
+        SessionStatus? filter = null;
+        if (parts.Length > 0 && int.TryParse(parts[0], out var l) && l > 0) limit = l;
+        if (parts.Length > 1 && int.TryParse(parts[1], out var o)) offset = o;
+        if (parts.Length > 2)
+        {
+            filter = parts[2].ToLowerInvariant() switch
+            {
+                "active" => SessionStatus.Active,
+                "archived" => SessionStatus.Archived,
+                "error" => SessionStatus.Error,
+                _ => null
+            };
+        }
+        return (limit, offset, filter);
     }
 
     private static ChatCommandResult ResumeSession(SlashCommandContext context, string args)
     {
         if (string.IsNullOrWhiteSpace(args))
         {
-            Console.WriteLine("  Usage: /resume <session-id-prefix|index>");
+            Console.WriteLine("  Usage: /resume <session-id-prefix|index|-1>");
             return new ChatCommandResult(ChatCommandAction.Continue);
         }
 
-        var sessions = context.Host.SessionStore
-            .ListSessionsAsync(new SessionListQuery(int.MaxValue))
-            .GetAwaiter().GetResult();
+        var sessions = GetOrderedSessions(context);
+        if (TryResolveSessionArg(sessions, args, out var record, out var err))
+            return ResumeFromRecord(context, record!);
 
-        // Try as index first
-        if (int.TryParse(args, out var idx) && idx >= 1 && idx <= sessions.Count)
-        {
-            var record = sessions[idx - 1];
-            return ResumeFromRecord(context, record);
-        }
-
-        // Try as prefix match — check for ambiguity
-        var matches = sessions
-            .Where(s => s.SessionId.ToString().StartsWith(args, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        if (matches.Count == 0)
-        {
-            Console.WriteLine($"  No session matching '{args}'.");
-            return new ChatCommandResult(ChatCommandAction.Continue);
-        }
-
-        if (matches.Count > 1)
-        {
-            Console.WriteLine($"  Multiple sessions match '{args}':");
-            var sessionsList = sessions.ToList();
-            foreach (var m in matches)
-            {
-                var sIdx = sessionsList.IndexOf(m) + 1;
-                Console.WriteLine($"    [{sIdx}] {m.SessionId.ToString()[..8]}  {m.ModelId}  ({m.ProviderName})");
-            }
-            return new ChatCommandResult(ChatCommandAction.Continue);
-        }
-
-        return ResumeFromRecord(context, matches[0]);
+        Console.WriteLine(err);
+        return new ChatCommandResult(ChatCommandAction.Continue);
     }
 
     private static ChatCommandResult ResumeFromRecord(SlashCommandContext context, SessionRecord record)
     {
-        // Look up the model in the catalog (same model)
         var model = context.Catalog.Models.Values
             .FirstOrDefault(m => m.Id == record.ModelId && m.ProviderName == record.ProviderName);
         if (model is null)
@@ -595,79 +510,42 @@ internal sealed class SlashCommandDispatcher
         }
 
         var apiKey = context.Config.ApiKeys.TryGetValue(model.ProviderName, out var key) ? key : null;
-        var resumed = context.Host.ResumeSessionAsync(record.SessionId, model, apiKey)
-            .GetAwaiter().GetResult();
-
+        var resumed = context.Host.ResumeSessionAsync(record.SessionId, model, apiKey).GetAwaiter().GetResult();
         if (resumed is null)
         {
             Console.WriteLine($"  Failed to resume session {record.SessionId}.");
             return new ChatCommandResult(ChatCommandAction.Continue);
         }
 
-        var modelKey = context.Catalog.Models.FirstOrDefault(kv => kv.Value.Id == model.Id && kv.Value.ProviderName == model.ProviderName).Key;
+        var modelKey = context.Catalog.Models
+            .FirstOrDefault(kv => kv.Value.Id == model.Id && kv.Value.ProviderName == model.ProviderName).Key;
         Console.WriteLine($"  Resumed session {record.SessionId.ToString()[..8]} with {resumed.Messages.Count} messages.");
-        return new ChatCommandResult(ChatCommandAction.SwitchSession, NewSession: resumed, NewModel: model,
-            NewModelKey: modelKey ?? context.ModelKey);
+        return new ChatCommandResult(ChatCommandAction.SwitchSession,
+            NewSession: resumed, NewModel: model, NewModelKey: modelKey ?? context.ModelKey);
     }
 
     private static ChatCommandResult ForkSession(SlashCommandContext context, string args)
     {
         if (string.IsNullOrWhiteSpace(args))
         {
-            Console.WriteLine("  Usage: /fork <session-id-prefix|index> [--model <model-key|n>]");
+            Console.WriteLine("  Usage: /fork <session-id-prefix|index|-1> [--model <model-key|n>]");
             return new ChatCommandResult(ChatCommandAction.Continue);
         }
 
-        // Parse optional --model argument
         var parts = args.Split(" --model ", 2, StringSplitOptions.RemoveEmptyEntries);
         var sessionArg = parts[0].Trim();
         var modelArg = parts.Length > 1 ? parts[1].Trim() : null;
+        var sessions = GetOrderedSessions(context);
 
-        var sessions = context.Host.SessionStore
-            .ListSessionsAsync(new SessionListQuery(int.MaxValue))
-            .GetAwaiter().GetResult();
-
-        SessionRecord? sourceRecord = null;
-        if (int.TryParse(sessionArg, out var idx) && idx >= 1 && idx <= sessions.Count)
-            sourceRecord = sessions[idx - 1];
-        else
+        if (!TryResolveSessionArg(sessions, sessionArg, out var sourceRecord, out var err))
         {
-            var prefixMatches = sessions
-                .Where(s => s.SessionId.ToString().StartsWith(sessionArg, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            if (prefixMatches.Count == 0)
-            {
-                Console.WriteLine($"  No session matching '{sessionArg}'.");
-                return new ChatCommandResult(ChatCommandAction.Continue);
-            }
-
-            if (prefixMatches.Count > 1)
-            {
-                Console.WriteLine($"  Multiple sessions match '{sessionArg}':");
-                var sessionsList = sessions.ToList();
-                foreach (var m in prefixMatches)
-                {
-                    var sIdx = sessionsList.IndexOf(m) + 1;
-                    Console.WriteLine($"    [{sIdx}] {m.SessionId.ToString()[..8]}  {m.ModelId}  ({m.ProviderName})");
-                }
-                return new ChatCommandResult(ChatCommandAction.Continue);
-            }
-
-            sourceRecord = prefixMatches[0];
-        }
-
-        if (sourceRecord is null)
-        {
-            Console.WriteLine($"  No source session matching '{sessionArg}'.");
+            Console.WriteLine(err);
             return new ChatCommandResult(ChatCommandAction.Continue);
         }
 
-        // Determine target model
         Model? targetModel = null;
         if (modelArg is not null)
         {
-            // Use specified model — try as catalog key first, then as visible list index
             if (context.Catalog.Models.TryGetValue(modelArg, out var m))
             {
                 targetModel = m;
@@ -676,7 +554,9 @@ internal sealed class SlashCommandDispatcher
             {
                 var visible = GetVisibleModels(context).ToList();
                 if (modelIdx <= visible.Count)
+                {
                     targetModel = visible[modelIdx - 1].Model;
+                }
                 else
                 {
                     Console.WriteLine($"  Model index {modelIdx} out of range ({visible.Count} models).");
@@ -691,7 +571,6 @@ internal sealed class SlashCommandDispatcher
         }
         else
         {
-            // Same model as original
             targetModel = context.Catalog.Models.Values
                 .FirstOrDefault(m => m.Id == sourceRecord.ModelId && m.ProviderName == sourceRecord.ProviderName);
             if (targetModel is null)
@@ -704,17 +583,102 @@ internal sealed class SlashCommandDispatcher
         var apiKey = context.Config.ApiKeys.TryGetValue(targetModel.ProviderName, out var key) ? key : null;
         var forked = context.Host.ForkSessionAsync(sourceRecord.SessionId, targetModel, apiKey: apiKey)
             .GetAwaiter().GetResult();
-
         if (forked is null)
         {
-            Console.WriteLine($"  Failed to fork session.");
+            Console.WriteLine("  Failed to fork session.");
             return new ChatCommandResult(ChatCommandAction.Continue);
         }
 
-        var targetKey = context.Catalog.Models.FirstOrDefault(kv => kv.Value.Id == targetModel.Id && kv.Value.ProviderName == targetModel.ProviderName).Key;
+        var targetKey = context.Catalog.Models
+            .FirstOrDefault(kv => kv.Value.Id == targetModel.Id && kv.Value.ProviderName == targetModel.ProviderName).Key;
         Console.WriteLine($"  Forked session {forked.Id.ToString()[..8]} from {sourceRecord.SessionId.ToString()[..8]} with {forked.Messages.Count} messages.");
-        return new ChatCommandResult(ChatCommandAction.SwitchSession, NewSession: forked, NewModel: targetModel,
-            NewModelKey: targetKey ?? context.ModelKey);
+        return new ChatCommandResult(ChatCommandAction.SwitchSession,
+            NewSession: forked, NewModel: targetModel, NewModelKey: targetKey ?? context.ModelKey);
+    }
+
+    private static List<SessionRecord> GetOrderedSessions(SlashCommandContext context)
+    {
+        var sessions = context.Host.SessionStore
+            .ListSessionsAsync(new SessionListQuery(Limit: int.MaxValue))
+            .GetAwaiter()
+            .GetResult()
+            .Where(s => HasSessionEvents(context.Host.SessionStore, s.SessionId))
+            .OrderByDescending(s => s.LastActivityAt ?? s.CreatedAt)
+            .ToList();
+
+        return sessions;
+    }
+
+    private static bool TryResolveSessionArg(List<SessionRecord> sessions, string arg,
+        out SessionRecord? record, out string error)
+    {
+        record = null;
+        error = string.Empty;
+
+        if (arg == "-1")
+        {
+            if (sessions.Count == 0)
+            {
+                error = "  No saved sessions.";
+                return false;
+            }
+            record = sessions[0];
+            return true;
+        }
+
+        if (int.TryParse(arg, out var idx))
+        {
+            if (idx >= 1 && idx <= sessions.Count)
+            {
+                record = sessions[idx - 1];
+                return true;
+            }
+            error = $"  Session index {idx} out of range (1..{sessions.Count}).";
+            return false;
+        }
+
+        var matches = sessions
+            .Where(s => s.SessionId.ToString().StartsWith(arg, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (matches.Count == 0)
+        {
+            error = $"  No session matching '{arg}'.";
+            return false;
+        }
+        if (matches.Count > 1)
+        {
+            error = $"  Multiple sessions match '{arg}':\n"
+                + string.Join('\n', matches.Select(m =>
+                    $"    {m.SessionId.ToString()[..8]}  {m.ProviderName}  {m.ModelId}"));
+            return false;
+        }
+
+        record = matches[0];
+        return true;
+    }
+
+    private static bool HasSessionEvents(ISessionStore store, SessionId sessionId)
+    {
+        try
+        {
+            return store.GetEventCountAsync(sessionId).GetAwaiter().GetResult() > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static long SafeEventCount(ISessionStore store, SessionId sessionId)
+    {
+        try
+        {
+            return store.GetEventCountAsync(sessionId).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     private static ChatCommandResult ResetSession(SlashCommandContext context)
@@ -733,11 +697,13 @@ internal sealed class SlashCommandDispatcher
     private static string Truncate(string? value, int maxLength)
     {
         if (string.IsNullOrEmpty(value)) return "";
-        return value.Length <= maxLength ? value : value[..(maxLength - 1)] + "\u2026";
+        return value.Length <= maxLength ? value : value[..(maxLength - 1)] + "…";
     }
 
     private static string FormatTokenCount(int? tokens)
-        => tokens.HasValue ? $"{tokens.Value:N0} tokens" : "unknown";
+    {
+        return tokens.HasValue ? $"{tokens.Value:N0} tokens" : "unknown";
+    }
 
     private static string FormatTokenCountCompact(int? tokens)
     {

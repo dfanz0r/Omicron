@@ -1,5 +1,6 @@
 using System.Text;
 using Omicron.Core.Events;
+using Omicron.Core.Models;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
 using Omicron.Core.Rendering.Transcript;
@@ -19,60 +20,48 @@ public sealed class TranscriptViewportWidget : ITuiWidget
     private readonly ViewportState _viewport = new();
     private readonly Dictionary<BlockId, TranscriptBlock> _blockById = new();
     private Rect _bounds;
+    private bool _assistantPrefixAdded;
 
-    /// <summary>The transcript store.</summary>
     public TranscriptStore Store => _store;
-
-    /// <summary>The layout cache.</summary>
+    public int ViewportHeight => _bounds.Height;
     public TranscriptLayoutCache Layout => _layout;
-
-    /// <summary>The viewport state.</summary>
     public ViewportState Viewport => _viewport;
-
-    /// <summary>Callback invoked when a render is needed after streaming updates.</summary>
     public Action? RequestRender { get; set; }
 
-    /// <summary>Scroll up by the given number of rows.</summary>
     public void ScrollUp(int rows) => _viewport.ScrollUp(rows);
-
-    /// <summary>Scroll down by the given number of rows.</summary>
     public void ScrollDown(int rows) => _viewport.ScrollDown(rows);
-
-    /// <summary>Scroll to the top of the transcript.</summary>
     public void ScrollToTop() => _viewport.ScrollToTop();
-
-    /// <summary>Scroll to the bottom of the transcript.</summary>
     public void ScrollToBottom() => _viewport.ScrollToBottom(_layout.TotalWrappedRows, _bounds.Height);
 
-    /// <summary>
-    /// Process an OmicronEvent and update the transcript store accordingly.
-    /// </summary>
     public void UpdateFromEvent(OmicronEvent evt)
     {
         switch (evt)
         {
             case UserMessageEvent ue:
-                var userBytes = Encoding.UTF8.GetBytes(ue.Text);
-                _store.AppendUserMessage(userBytes);
                 FlushPending();
+                _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
+                _store.AppendUserMessage(Encoding.UTF8.GetBytes($"  You: {ue.Text}"));
+                _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
                 RebuildLayout();
                 break;
 
             case AssistantTextDeltaEvent delta:
-                // Flush every delta so streaming text is visible immediately
+                if (!_assistantPrefixAdded)
+                {
+                    _store.AppendSeparator();
+                    _pendingAssistantText.Append("  Agent: ");
+                    _assistantPrefixAdded = true;
+                }
                 _pendingAssistantText.Append(delta.Delta);
-                _pendingAssistantBytes += Encoding.UTF8.GetByteCount(delta.Delta);
-                FlushPending();
-                InvalidateLastBlock();
                 RequestRender?.Invoke();
                 break;
 
-            case AssistantResponseCompleteEvent complete:
+            case AssistantResponseCompleteEvent:
                 FlushPending();
                 if (_store.Blocks.Count > 0 && _store.Blocks[^1] is AssistantMessageBlock)
-                {
                     _store.CompleteLastAssistantBlock();
-                }
+                _assistantPrefixAdded = false;
+                _store.AppendSeparator();
                 RebuildLayout();
                 break;
 
@@ -84,14 +73,10 @@ public sealed class TranscriptViewportWidget : ITuiWidget
 
             case ToolInvocationCompletedEvent tic:
                 var resultBytes = Encoding.UTF8.GetBytes(
-                    tic.IsError
-                        ? $"\n[Error: {tic.Result}]"
-                        : $"\n{tic.Result}");
-                // Update the last tool call block
-                var blocks = _store.Blocks;
-                for (int i = blocks.Count - 1; i >= 0; i--)
+                    tic.IsError ? $"\n[Error: {tic.Result}]" : $"\n{tic.Result}");
+                for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                 {
-                    if (blocks[i] is ToolCallBlock tcb)
+                    if (_store.Blocks[i] is ToolCallBlock tcb)
                     {
                         _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, resultBytes);
                         break;
@@ -109,8 +94,50 @@ public sealed class TranscriptViewportWidget : ITuiWidget
             case SessionResetEvent:
                 FlushPending();
                 _store.Clear();
+                _assistantPrefixAdded = false;
                 _viewport.ScrollToBottom(0, _bounds.Height);
                 _layout.ReflowForWidth(Math.Max(1, _bounds.Width), _store);
+                break;
+        }
+    }
+
+    public void LoadMessages(IEnumerable<Message> messages)
+    {
+        _store.Clear();
+        _assistantPrefixAdded = false;
+        foreach (var msg in messages)
+            AppendMessage(msg);
+
+        RebuildLayout();
+        ScrollToBottom();
+    }
+
+    private void AppendMessage(Message msg)
+    {
+        switch (msg.Role)
+        {
+            case MessageRole.User:
+                _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
+                _store.AppendUserMessage(Encoding.UTF8.GetBytes($"  You: {msg.Text}"));
+                _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
+                break;
+            case MessageRole.Assistant:
+                _store.AppendSeparator();
+                var assistant = "  Agent: " + (msg.Text ?? string.Empty);
+                _store.AppendAssistantDelta(Encoding.UTF8.GetBytes(assistant));
+                _store.CompleteLastAssistantBlock();
+                _store.AppendSeparator();
+                break;
+            case MessageRole.ToolResult:
+                _store.AppendToolCall(msg.ToolName ?? "tool");
+                for (int i = _store.Blocks.Count - 1; i >= 0; i--)
+                {
+                    if (_store.Blocks[i] is ToolCallBlock tcb)
+                    {
+                        _store.UpdateToolCall(tcb.Id, msg.IsError ? ToolCallState.Failed : ToolCallState.Completed, Encoding.UTF8.GetBytes(msg.Text ?? string.Empty));
+                        break;
+                    }
+                }
                 break;
         }
     }
@@ -119,25 +146,174 @@ public sealed class TranscriptViewportWidget : ITuiWidget
     {
         if (_store.Blocks.Count > 0)
         {
-            var lastBlockId = _store.Blocks[^1].Id;
-            _layout.InvalidateFrom(lastBlockId);
-            _layout.ReflowForWidth(Math.Max(1, _bounds.Width), _store);
-            _viewport.UpdateTotalRows(_layout.TotalWrappedRows, _bounds.Height);
+            var lastBlock = _store.Blocks[^1];
+            _layout.ReflowBlock(lastBlock, _store, Math.Max(1, _bounds.Width));
+            _viewport.OnContentAppended(_layout.TotalWrappedRows, _bounds.Height);
+            RebuildBlockIndex();
         }
     }
 
-    // Streaming state
+    // ── Search / Find state ──
+
+    /// <summary>
+    /// A match found during search. Stores the wrapped line and byte offset.
+    /// </summary>
+    public readonly record struct SearchMatch(int WrappedRow, long ByteOffset, int Length);
+
+    private readonly List<SearchMatch> _searchMatches = [];
+    private int _currentMatchIndex = -1;
+    private string _findQuery = "";
+
+    /// <summary>Current find query (empty if not searching).</summary>
+    public string FindQuery => _findQuery;
+
+    /// <summary>Number of matches for the current query.</summary>
+    public int MatchCount => _searchMatches.Count;
+
+    /// <summary>Index of the currently highlighted match (-1 if none).</summary>
+    public int CurrentMatchIndex => _currentMatchIndex;
+
+    /// <summary>Whether find mode is active.</summary>
+    public bool IsFindActive => _findQuery.Length > 0;
+
+    /// <summary>
+    /// Perform a search for the given query. Scrolls to the first match.
+    /// Returns the number of matches found.
+    /// </summary>
+    public int Find(string query)
+    {
+        _findQuery = query ?? "";
+        _searchMatches.Clear();
+        _currentMatchIndex = -1;
+
+        if (string.IsNullOrEmpty(_findQuery))
+            return 0;
+
+        var pattern = System.Text.Encoding.UTF8.GetBytes(_findQuery.ToLowerInvariant());
+        if (pattern.Length == 0)
+            return 0;
+
+        var allText = _store.Text.ToArray();
+        var allTextLower = ToLowerBytes(allText);
+
+        int searchStart = 0;
+        while (true)
+        {
+            int idx = IndexOfBytes(allTextLower, pattern, searchStart);
+            if (idx < 0) break;
+
+            // Find which wrapped row this byte offset falls into
+            int wrappedRow = FindWrappedRowForOffset(idx);
+            if (wrappedRow >= 0)
+            {
+                _searchMatches.Add(new SearchMatch(wrappedRow, idx, pattern.Length));
+            }
+
+            searchStart = idx + 1;
+        }
+
+        if (_searchMatches.Count > 0)
+        {
+            _currentMatchIndex = 0;
+            GoToMatch(0);
+        }
+
+        return _searchMatches.Count;
+    }
+
+    /// <summary>Go to the next match. Returns true if there was a next match.</summary>
+    public bool FindNext()
+    {
+        if (_searchMatches.Count == 0) return false;
+        _currentMatchIndex = (_currentMatchIndex + 1) % _searchMatches.Count;
+        GoToMatch(_currentMatchIndex);
+        return true;
+    }
+
+    /// <summary>Go to the previous match. Returns true if there was a previous match.</summary>
+    public bool FindPrevious()
+    {
+        if (_searchMatches.Count == 0) return false;
+        _currentMatchIndex = (_currentMatchIndex - 1 + _searchMatches.Count) % _searchMatches.Count;
+        GoToMatch(_currentMatchIndex);
+        return true;
+    }
+
+    /// <summary>Clear search state.</summary>
+    public void ClearFind()
+    {
+        _findQuery = "";
+        _searchMatches.Clear();
+        _currentMatchIndex = -1;
+    }
+
+    private void GoToMatch(int index)
+    {
+        if (index < 0 || index >= _searchMatches.Count) return;
+        var match = _searchMatches[index];
+        // Scroll to the wrapped row of the match
+        int targetRow = match.WrappedRow - _bounds.Height / 3;
+        if (targetRow < 0) targetRow = 0;
+        _viewport.FirstVisibleWrappedRow = targetRow;
+        _viewport.FollowTail = false;
+    }
+
+    private int FindWrappedRowForOffset(long byteOffset)
+    {
+        for (int i = 0; i < _layout.WrappedLines.Count; i++)
+        {
+            var line = _layout.WrappedLines[i];
+            if (byteOffset >= line.ByteStart && byteOffset < line.ByteStart + line.ByteLength)
+                return i;
+        }
+        return -1;
+    }
+
+    private static byte[] ToLowerBytes(ReadOnlySpan<byte> utf8)
+    {
+        // Simple ASCII-only lowercasing. For full Unicode case folding,
+        // we'd need a proper case-folding implementation, but ASCII covers
+        // most search scenarios.
+        var result = new byte[utf8.Length];
+        for (int i = 0; i < utf8.Length; i++)
+        {
+            byte b = utf8[i];
+            if (b >= (byte)'A' && b <= (byte)'Z')
+                result[i] = (byte)(b + 32);
+            else
+                result[i] = b;
+        }
+        return result;
+    }
+
+    private static int IndexOfBytes(byte[] haystack, byte[] needle, int start)
+    {
+        if (needle.Length == 0) return -1;
+        int end = haystack.Length - needle.Length;
+        for (int i = start; i <= end; i++)
+        {
+            bool found = true;
+            for (int j = 0; j < needle.Length; j++)
+            {
+                if (haystack[i + j] != needle[j])
+                {
+                    found = false;
+                    break;
+                }
+            }
+            if (found) return i;
+        }
+        return -1;
+    }
+
     private readonly StringBuilder _pendingAssistantText = new();
-    private int _pendingAssistantBytes;
 
     private void FlushPending()
     {
         if (_pendingAssistantText.Length > 0)
         {
-            var utf8 = Encoding.UTF8.GetBytes(_pendingAssistantText.ToString());
-            _store.AppendAssistantDelta(utf8);
+            _store.AppendAssistantDelta(Encoding.UTF8.GetBytes(_pendingAssistantText.ToString()));
             _pendingAssistantText.Clear();
-            _pendingAssistantBytes = 0;
         }
     }
 
@@ -156,58 +332,78 @@ public sealed class TranscriptViewportWidget : ITuiWidget
             _blockById[block.Id] = block;
     }
 
-    // ── ITuiWidget implementation ──
-
     public Size Measure(Size available) => available;
 
     public void Arrange(Rect bounds)
     {
         _bounds = bounds;
-        if (_layout.TerminalWidth != bounds.Width && bounds.Width > 0)
+        if (bounds.Width > 0 && _layout.TerminalWidth != bounds.Width)
         {
             _layout.ReflowForWidth(bounds.Width, _store);
-            _viewport.UpdateTotalRows(_layout.TotalWrappedRows, _bounds.Height);
+            _viewport.ScrollToBottom(_layout.TotalWrappedRows, _bounds.Height);
             RebuildBlockIndex();
         }
+
+        _viewport.UpdateTotalRows(_layout.TotalWrappedRows, _bounds.Height);
     }
 
     public void Render(RenderContext context)
     {
+        FlushPending();
+        if (_assistantPrefixAdded && _store.Blocks.Count > 0 && _store.Blocks[^1] is AssistantMessageBlock)
+            InvalidateLastBlock();
+
         int visibleHeight = _bounds.Height;
+        if (visibleHeight <= 0) return;
+
         int firstRow = _viewport.FirstVisibleWrappedRow;
-
         var visibleLines = _layout.GetVisibleLines(firstRow, visibleHeight);
-
         int row = 0;
         foreach (var line in visibleLines)
         {
             if (row >= visibleHeight)
                 break;
 
-            // Read the bytes from the store
-            var bytes = _store.Text.Slice(line.ByteStart, line.ByteLength);
-
-            // Determine style based on block type (O(1) via dictionary)
             var style = GetStyleForBlock(line.BlockId);
-
-            // Draw the line at the widget's bounds Y + row
-            if (bytes.Length > 0)
+            _blockById.TryGetValue(line.BlockId, out var blk);
+            bool hasAmberAccent = blk switch
             {
-                context.DrawText(_bounds.X, _bounds.Y + row, bytes.Span, style);
+                UserMessageBlock => true,
+                SeparatorBlock sep => sep.BgR == 75,
+                _ => false
+            };
+
+            if (hasAmberAccent)
+            {
+                var barCell = new RenderCell
+                {
+                    Glyph = GlyphRef.Ascii((byte)' '),
+                    Width = 1,
+                    Style = new TextStyle(235, 195, 80, 75, 55, 20, false, false, false),
+                };
+                int barWidth = Math.Min(3, _bounds.Width);
+                context.FillRect(new Rect(_bounds.X, _bounds.Y + row, barWidth, 1), barCell);
+            }
+
+            if (!(blk is SeparatorBlock))
+            {
+                var bytes = _store.Text.Slice(line.ByteStart, line.ByteLength);
+                if (bytes.Length > 0)
+                {
+                    int textOffset = hasAmberAccent ? 3 : 0;
+                    context.DrawText(_bounds.X + textOffset, _bounds.Y + row, bytes.Span, style);
+                }
             }
             row++;
         }
 
-        // Draw unseen-line indicator
         if (_viewport.UnseenLineCount > 0 && !_viewport.FollowTail)
         {
-            string indicator = $" \u2193 {_viewport.UnseenLineCount} new ";
+            string indicator = $" ↓ {_viewport.UnseenLineCount} new ";
             int indicatorX = _bounds.X + _bounds.Width - GetDisplayWidth(indicator);
             if (indicatorX >= _bounds.X && row > 0)
             {
-                context.DrawText(indicatorX, _bounds.Y + row - 1,
-                    Encoding.UTF8.GetBytes(indicator),
-                    TextStyle.Inverted);
+                context.DrawText(indicatorX, _bounds.Y + row - 1, Encoding.UTF8.GetBytes(indicator), new TextStyle(235, 195, 80, 75, 55, 20, false, false, false));
             }
         }
     }
@@ -218,10 +414,11 @@ public sealed class TranscriptViewportWidget : ITuiWidget
         {
             return block switch
             {
-                UserMessageBlock => TextStyle.ForegroundOnly(100, 200, 255), // light blue
-                AssistantMessageBlock => TextStyle.Default,
-                ToolCallBlock => TextStyle.ForegroundOnly(128, 128, 128), // dim gray
-                SystemNoticeBlock => TextStyle.ForegroundOnly(255, 100, 100), // red-ish
+                UserMessageBlock => TextStyle.ForegroundOnly(235, 195, 80),
+                AssistantMessageBlock => TextStyle.ForegroundOnly(200, 200, 200),
+                ToolCallBlock => TextStyle.ForegroundOnly(150, 135, 100),
+                SystemNoticeBlock => TextStyle.ForegroundOnly(255, 200, 80),
+                SeparatorBlock sep => new TextStyle(235, 195, 80, sep.BgR, sep.BgG, sep.BgB, false, false, false),
                 _ => TextStyle.Default
             };
         }

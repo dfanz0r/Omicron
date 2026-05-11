@@ -11,6 +11,9 @@ public sealed class VStack : ITuiWidget
     private readonly List<Rect> _childBounds = [];
     private Rect _bounds;
 
+    /// <summary>Vertical gap in rows between children (default 0).</summary>
+    public int Gap { get; set; } = 0;
+
     /// <summary>Children widgets stacked vertically.</summary>
     public IReadOnlyList<ITuiWidget> Children => _children;
 
@@ -21,15 +24,16 @@ public sealed class VStack : ITuiWidget
     {
         int totalHeight = 0;
         int maxWidth = 0;
+        int gapTotal = Math.Max(0, _children.Count - 1) * Gap;
 
         foreach (var child in _children)
         {
-            var size = child.Measure(new Size(available.Width, available.Height - totalHeight));
+            var size = child.Measure(new Size(available.Width, available.Height - totalHeight - gapTotal));
             totalHeight += size.Height;
             maxWidth = Math.Max(maxWidth, size.Width);
         }
 
-        return new Size(maxWidth, totalHeight);
+        return new Size(maxWidth, totalHeight + gapTotal);
     }
 
     public void Arrange(Rect bounds)
@@ -64,7 +68,8 @@ public sealed class VStack : ITuiWidget
         }
 
         // Second pass: arrange everyone in order with correct Y positions
-        int remainingHeight = Math.Max(0, bounds.Height - fixedHeight);
+        int totalGap = Math.Max(0, _children.Count - 1) * Gap;
+        int remainingHeight = Math.Max(0, bounds.Height - fixedHeight - totalGap);
         int flexHeight = flexCount > 0 ? remainingHeight / flexCount : 0;
         int y = bounds.Y;
 
@@ -86,12 +91,19 @@ public sealed class VStack : ITuiWidget
             var childRect = new Rect(bounds.X, y, bounds.Width, h);
             child.Arrange(childRect);
             _childBounds.Add(childRect);
-            y += h;
+            y += h + Gap;
         }
     }
 
     public void Render(RenderContext context)
     {
+        var emptyCell = new RenderCell
+        {
+            Glyph = GlyphRef.Ascii((byte)' '),
+            Width = 1,
+            Style = TextStyle.Default,
+        };
+
         for (int i = 0; i < _children.Count; i++)
         {
             Rect childRect = i < _childBounds.Count ? _childBounds[i] : _bounds;
@@ -100,6 +112,17 @@ public sealed class VStack : ITuiWidget
                 context.Clip.Intersect(childRect),
                 context.DefaultStyle);
             _children[i].Render(childContext);
+
+            // Clear gap rows between children so stale content doesn't bleed
+            if (Gap > 0 && i < _children.Count - 1)
+            {
+                int gapY = childRect.Bottom;
+                if (gapY < context.Clip.Bottom)
+                {
+                    var gapRect = new Rect(childRect.X, gapY, childRect.Width, Math.Min(Gap, context.Clip.Bottom - gapY));
+                    context.FillRect(gapRect, emptyCell);
+                }
+            }
         }
     }
 }

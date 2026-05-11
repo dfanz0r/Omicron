@@ -34,7 +34,6 @@ public class LineEditorTests
         engine.ProcessKey(EditorKeyInfo.Char('b'), state);
 
         Assert.Equal("a\nb", state.Buffer.ToString());
-        Assert.False(state.InPaste);
     }
 
     // ---- Navigation ----
@@ -242,21 +241,6 @@ public class LineEditorTests
 
         engine.ProcessKey(EditorKeyInfo.Tab, state);
         Assert.Equal("xyz", state.Buffer.ToString());
-    }
-
-    // ---- Paste mode ----
-
-    [Fact]
-    public void InPasteMode_EnterInsertsNewline()
-    {
-        var (engine, state) = Create();
-        state.InPaste = true;
-
-        engine.ProcessKey(EditorKeyInfo.Char('a'), state);
-        engine.ProcessKey(EditorKeyInfo.Enter, state);
-        engine.ProcessKey(EditorKeyInfo.Char('b'), state);
-
-        Assert.Equal("a\nb", state.Buffer.ToString());
     }
 
     // ---- Insert in middle of buffer ----

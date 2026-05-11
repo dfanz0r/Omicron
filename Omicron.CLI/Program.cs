@@ -4,16 +4,43 @@ using Omicron.Core.Config;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Rendering;
+using Omicron.Core.Rendering.Layout;
 using Omicron.Core.Sessions;
 using Omicron.CLI;
 using Omicron.CLI.Tui;
 
 Console.OutputEncoding = Encoding.UTF8;
 
+// === Shared initialization (used by both console and TUI modes) ===
+
+var configManager = new ConfigManager();
+configManager.Load();
+var cfg = configManager.Config;
+
+var sessionStoreDir = Path.Combine(
+    Path.GetDirectoryName(configManager.GetConfigPath())!,
+    "sessions");
+var sessionStore = new JsonlSessionStore(sessionStoreDir);
+using var host = new OmicronHost(Environment.CurrentDirectory, sessionStore);
+host.LoadBuiltinExtensions();
+
+var catalog = host.ModelCatalog;
+await catalog.DiscoverAsync(quiet: true);
+try
+{
+    using var metaCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+    await host.RefreshModelMetadataAsync(metaCts.Token);
+}
+catch { } // non-fatal
+
+// Safety net: if a previous TUI session crashed and left the console in raw / VT-input mode,
+// restore traditional input processing before we decide which mode to enter.
+SystemTerminalBackend.EnsureSafeConsoleInputMode();
+
 // ── TUI mode ──
 if (args is { Length: > 0 } && args.Contains("--tui"))
 {
-    await TuiMode.RunAsync();
+    await RunTuiSessionAsync(host, catalog, cfg, sessionStore);
     return;
 }
 
@@ -24,51 +51,12 @@ Console.WriteLine("║   API Shapes: Chat · Anthropic · Responses     ║");
 Console.WriteLine("║   Providers: OpenAI · Anthropic · OpenCode · OR ║");
 Console.WriteLine("╚══════════════════════════════════════════════════╝");
 Console.WriteLine();
-
-// --- Config ---
-var configManager = new ConfigManager();
-configManager.Load();
-
-var cfg = configManager.Config;
 Console.WriteLine($"Config: {configManager.GetConfigPath()}");
-
-// --- Host ---
-// Keep the live EventLog in memory, but persist the authoritative session/event
-// stream to disk by default so conversations can be inspected/replayed later.
-var sessionStoreDir = Path.Combine(
-    Path.GetDirectoryName(configManager.GetConfigPath())!,
-    "sessions");
-var sessionStore = new JsonlSessionStore(sessionStoreDir);
-using var host = new OmicronHost(Environment.CurrentDirectory, sessionStore);
-host.LoadBuiltinExtensions();
 Console.WriteLine($"Session store: {sessionStore.StoreDirectory}");
-
-// --- Provider setup ---
 Console.WriteLine("Registered providers:");
 foreach (var name in host.Providers.ProviderNames)
     Console.WriteLine($"  \u2022 {name}");
-
-// --- Model catalog ---
 Console.WriteLine();
-var catalog = host.ModelCatalog;
-
-// Auto-discover from all providers
-await catalog.DiscoverAsync(quiet: true);
-
-// Best-effort metadata refresh (models.dev) with 3-second timeout
-try
-{
-    using var metaCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-    await host.RefreshModelMetadataAsync(metaCts.Token);
-}
-catch (OperationCanceledException) when (host.ModelCatalog is not null)
-{
-    // timeout — metadata stays at static baseline
-}
-catch
-{
-    // non-fatal, metadata stays at static baseline
-}
 
 // Create slash command dispatcher
 var slashDispatcher = new SlashCommandDispatcher();
@@ -526,6 +514,170 @@ async Task ReadSessionOutput(AgentSession session, string input, CancellationTok
     }
 }
 
+/// <summary>
+/// TUI mode entry point — creates or resumes a session, launches the full chat TUI.
+/// </summary>
+async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConfig cfg, JsonlSessionStore sessionStore)
+{
+    using var backend = new SystemTerminalBackend();
+    backend.Initialize();
+    using var shell = new TuiShell(backend);
+
+    // Build the slash command bridge
+    var slashBridge = new TuiSlashCommandBridge(host, cfg, catalog);
+
+    // Try to find a model and create a session
+    var visibleModels = GetVisibleModels(catalog, cfg);
+    AgentSession? session = null;
+    Model? selectedModel = null;
+    string modelKey = "";
+
+    if (visibleModels.Count > 0)
+    {
+        // Try last-used model first
+        if (cfg.LastModel is not null)
+        {
+            // cfg.LastModel stores the catalog KEY, not the model Id/Name.
+            var lastModelEntry = visibleModels
+                .FirstOrDefault(kv => kv.Key == cfg.LastModel);
+            var lastModel = lastModelEntry.Value;
+            if (lastModel is not null)
+            {
+                var apiKey = ResolveApiKey(lastModel);
+                if (apiKey is not null)
+                {
+                    selectedModel = lastModel;
+                    modelKey = lastModelEntry.Key;
+                    session = host.CreateSession(SessionConfig.Create(selectedModel, cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.", apiKey, cfg.DefaultMaxTokens, cfg.DefaultTemperature, maxIterations: cfg.MaxIterations));
+                }
+            }
+        }
+
+        // If no session yet, show model picker inside TUI
+        if (session is null)
+        {
+            var picker = new TuiModelPicker();
+            picker.SetModels(visibleModels.Select(kv => kv.Value).ToList(), cfg.LastModel);
+
+            var pickerTask = new TaskCompletionSource<Model?>();
+            picker.OnModelSelected += (m) => pickerTask.TrySetResult(m);
+            picker.OnCancelled += () => pickerTask.TrySetResult(null);
+
+            // Run a mini event loop for the picker
+            await shell.RunAsync(
+                onEvent: (evt) =>
+                {
+                    if (evt is KeyEvent ke)
+                    {
+                        if (ke.Key == Key.Character && ke.Text?.Value == 4) // Ctrl+D in picker = cancel
+                        {
+                            pickerTask.TrySetResult(null);
+                            shell.Cancel();
+                            return Task.FromResult(true);
+                        }
+                        picker.HandleKey(ke);
+                        if (picker.IsCompleted)
+                        {
+                            shell.Cancel(); // Exit the event loop — modal complete
+                        }
+                    }
+                    return Task.FromResult(true);
+                },
+                onRender: (frame) =>
+                {
+                    frame.Clear();
+                    var ctx = new RenderContext(frame, new Rect(0, 0, frame.Width, frame.Height), TextStyle.Default);
+                    picker.Render(ctx);
+                    return Task.CompletedTask;
+                });
+
+            selectedModel = await pickerTask.Task;
+            if (selectedModel is not null)
+            {
+                // Look up the catalog key for the selected model
+                modelKey = catalog.Models
+                    .FirstOrDefault(kv => kv.Value.Id == selectedModel.Id && kv.Value.ProviderName == selectedModel.ProviderName)
+                    .Key ?? selectedModel.Id;
+                var apiKey = ResolveApiKey(selectedModel);
+                if (apiKey is null)
+                {
+                    // Show API key prompt inside TUI
+                    var prompt = new TuiApiKeyPrompt();
+                    prompt.Reset(selectedModel.ProviderName);
+
+                    var promptTask = new TaskCompletionSource<string?>();
+                    await shell.RunAsync(
+                        onEvent: (evt) =>
+                        {
+                            if (evt is KeyEvent ke)
+                            {
+                                if (prompt.HandleKey(ke))
+                                {
+                                    if (prompt.IsCompleted)
+                                    {
+                                        promptTask.TrySetResult(prompt.IsCancelled ? null : prompt.ApiKey);
+                                        shell.Cancel(); // Exit the event loop — modal complete
+                                    }
+                                }
+                            }
+                            return Task.FromResult(true);
+                        },
+                        onRender: (frame) =>
+                        {
+                            frame.Clear();
+                            var ctx = new RenderContext(frame, new Rect(0, 0, frame.Width, frame.Height), TextStyle.Default);
+                            prompt.Render(ctx);
+                            return Task.CompletedTask;
+                        });
+
+                    apiKey = await promptTask.Task;
+                }
+
+                if (apiKey is not null)
+                {
+                    var sessionConfig = SessionConfig.Create(selectedModel, cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.", apiKey, cfg.DefaultMaxTokens, cfg.DefaultTemperature, maxIterations: cfg.MaxIterations);
+                    session = host.CreateSession(sessionConfig);
+                    cfg.LastModel = modelKey;
+                    configManager.Save();
+                }
+            }
+        }
+    }
+
+    if (session is null || selectedModel is null)
+    {
+        // No session — cancelled by user or no models available
+        Console.WriteLine("\nReturning to CLI mode. Use --tui to re-enter the TUI.");
+        return;
+    }
+
+    // Run the main chat TUI
+    using var app = new AppLayout(shell, session, modelKey)
+    {
+        SlashBridge = slashBridge
+    };
+    await app.RunAsync();
+
+    // Cleanup: only persist sessions that actually have content.
+    try
+    {
+        if (session.Messages.Count == 0)
+        {
+            var sessionPath = Path.Combine(sessionStore.StoreDirectory, $"{session.Id}.jsonl");
+            if (File.Exists(sessionPath))
+                File.Delete(sessionPath);
+        }
+        else
+        {
+            Console.WriteLine("\nSession saved. Exiting Omicron TUI.");
+        }
+    }
+    catch
+    {
+        // Non-fatal
+    }
+}
+
 public static class DisplayHelpers
 {
     public static void DisplayTruncated(string text, int lineWidth, int maxLines)
@@ -560,63 +712,4 @@ public static class DisplayHelpers
         => value.Length <= maxLength ? value : value[..(maxLength - 1)] + "\u2026";
 }
 
-/// <summary>TUI mode entry point.</summary>
-public static class TuiMode
-{
-    public static async Task RunAsync(AgentSession? session = null)
-    {
-        Console.WriteLine("Starting Omicron TUI mode...");
-
-        using var backend = new SystemTerminalBackend();
-        backend.Initialize();
-        using var shell = new TuiShell(backend);
-
-        if (session is not null)
-        {
-            using var app = new AppLayout(shell, session);
-            await app.RunAsync();
-        }
-        else
-        {
-            // Fallback: run shell with simple text if no session is available
-            var transcriptLines = new List<string>
-            {
-                "Welcome to Omicron TUI",
-                "Type a message to start a conversation.",
-                "",
-                "Available commands:",
-                "  Ctrl+D  Exit TUI",
-                "  Escape  Cancel current operation",
-            };
-
-            await shell.RunAsync(
-                onEvent: async (evt) =>
-                {
-                    if (evt is KeyEvent ke)
-                    {
-                        if (ke.Key == Key.Character && ke.Text?.Value == 4) // Ctrl+D
-                            return false;
-                    }
-                    return false;
-                },
-                onRender: async (frame) =>
-                {
-                    frame.Clear();
-
-                    var textStyle = TextStyle.Default;
-                    for (int i = 0; i < transcriptLines.Count && i < frame.Height - 2; i++)
-                    {
-                        if (!string.IsNullOrEmpty(transcriptLines[i]))
-                        {
-                            frame.SetText(i, 0, Encoding.UTF8.GetBytes(transcriptLines[i]), textStyle);
-                        }
-                    }
-
-                    SimpleStatusBar.Render(frame, "Omicron TUI", "ready", "Ctrl+D to exit");
-                });
-        }
-
-        Console.WriteLine("TUI mode exited.");
-    }
-}
 

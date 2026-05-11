@@ -11,6 +11,12 @@ namespace Omicron.Core.Rendering;
 /// </summary>
 public static class AnsiEncoder
 {
+    /// <summary>
+    /// When true, emit explicit RGB(0,0,0) for black backgrounds instead of
+    /// treating them as "terminal default" (no background). Enable this for
+    /// terminals with light or non-black default backgrounds.
+    /// </summary>
+    public static bool EmitExplicitBlackBackground { get; set; } = false;
     // ── Screen ──
 
     /// <summary>Clear the entire screen and home the cursor.</summary>
@@ -73,9 +79,33 @@ public static class AnsiEncoder
         if (style.FgR != prev.FgR || style.FgG != prev.FgG || style.FgB != prev.FgB)
             WriteRgbSequence(38, style.FgR, style.FgG, style.FgB, output);
 
-        // Background color
-        if (style.BgR != prev.BgR || style.BgG != prev.BgG || style.BgB != prev.BgB)
-            WriteRgbSequence(48, style.BgR, style.BgG, style.BgB, output);
+        // Background color.
+        // Pure black background (0,0,0) is normally treated as "terminal default"
+        // to avoid visual mismatch between explicit RGB(0,0,0) and the terminal's
+        // native default background. Set <see cref="EmitExplicitBlackBackground"/>
+        // to true for terminals with non-black default backgrounds.
+        bool prevHasBg = HasExplicitBg(prev);
+        bool newHasBg = HasExplicitBg(style);
+
+        if (newHasBg)
+        {
+            if (style.BgR != prev.BgR || style.BgG != prev.BgG || style.BgB != prev.BgB)
+            {
+                WriteRgbSequence(48, style.BgR, style.BgG, style.BgB, output);
+            }
+        }
+        else if (prevHasBg)
+        {
+            // Transition from explicit background back to default
+            output.Write("\x1b[49m"u8);
+        }
+    }
+
+    private static bool HasExplicitBg(TextStyle style)
+    {
+        if (EmitExplicitBlackBackground)
+            return true; // always emit explicit backgrounds
+        return style.BgR != 0 || style.BgG != 0 || style.BgB != 0;
     }
 
     private static void EmitFullStyle(TextStyle style, IBufferWriter<byte> output)
@@ -96,7 +126,8 @@ public static class AnsiEncoder
         WriteRgbSequence(38, style.FgR, style.FgG, style.FgB, output);
 
         // Background
-        WriteRgbSequence(48, style.BgR, style.BgG, style.BgB, output);
+        if (HasExplicitBg(style))
+            WriteRgbSequence(48, style.BgR, style.BgG, style.BgB, output);
     }
 
     private static void WriteRgbSequence(byte code, byte r, byte g, byte b, IBufferWriter<byte> output)

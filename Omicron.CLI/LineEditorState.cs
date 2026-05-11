@@ -26,13 +26,12 @@ public readonly record struct EditorKeyInfo(
 
 /// <summary>
 /// Mutable state for the LineEditor engine.
-/// Tracks the buffer, cursor position, and paste mode.
+/// Tracks the buffer, cursor position, and completion state.
 /// </summary>
 public sealed class LineEditorState
 {
     public System.Text.StringBuilder Buffer { get; } = new();
     public int Cursor { get; set; }
-    public bool InPaste { get; set; }
     public bool EscapePressed { get; set; }
 
     /// <summary>Set by the engine when multiple completions should be displayed (e.g. tab pressed with no unique prefix).</summary>
@@ -91,12 +90,6 @@ public class LineEditorEngine
                     state.Buffer.Remove(state.Cursor - 1, 1);
                     state.Cursor--;
                 }
-                Insert('\n', state);
-                return LineEditorAction.None;
-            }
-
-            if (state.InPaste)
-            {
                 Insert('\n', state);
                 return LineEditorAction.None;
             }

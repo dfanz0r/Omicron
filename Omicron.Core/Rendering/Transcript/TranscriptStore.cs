@@ -129,6 +129,19 @@ public sealed class TranscriptStore
     }
 
     /// <summary>
+    /// Append a blank visual separator (empty line padding between messages).
+    /// Optionally tint the separator with a background color so adjacent message
+    /// backgrounds can visually bleed into the padding.
+    /// </summary>
+    public void AppendSeparator(byte bgR = 0, byte bgG = 0, byte bgB = 0)
+    {
+        var utf8 = System.Text.Encoding.UTF8.GetBytes(" ");
+        var pos = Text.Append(utf8);
+        var block = new SeparatorBlock(BlockId.New(), pos, utf8.Length, bgR, bgG, bgB);
+        _blocks.Add(block);
+    }
+
+    /// <summary>
     /// Mark the last assistant block as complete (sets IsStreaming = false).
     /// </summary>
     public void CompleteLastAssistantBlock()

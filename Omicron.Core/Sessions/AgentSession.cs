@@ -196,6 +196,33 @@ public sealed class AgentSession
                 _writer.Envelope()));
     }
 
+    /// <summary>
+    /// Resolve any dangling tool calls — assistant messages with ToolCalls
+    /// that have no corresponding ToolResult message after them.
+    /// Injects dummy error tool results so the conversation history remains valid
+    /// for the next API call.
+    /// </summary>
+    public void ResolvePendingToolCalls()
+    {
+        for (int i = _messages.Count - 1; i >= 0; i--)
+        {
+            if (_messages[i] is not { Role: MessageRole.Assistant, ToolCalls: { Count: > 0 } toolCalls })
+                continue;
+
+            bool allResolved = toolCalls.All(tc =>
+                _messages.Skip(i + 1).Any(m => m is { Role: MessageRole.ToolResult, ToolCallId: { } id } && id == tc.Id));
+
+            if (!allResolved)
+            {
+                foreach (var tc in toolCalls)
+                {
+                    _messages.Insert(i + 1, Message.ToolResultMessage(
+                        tc.Id, tc.Name, "(cancelled)", isError: true));
+                }
+            }
+        }
+    }
+
     // ================================================================
     // Core agent loop
     // ================================================================

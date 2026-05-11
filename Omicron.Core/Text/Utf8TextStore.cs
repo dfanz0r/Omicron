@@ -191,6 +191,27 @@ public sealed class Utf8TextStore : IDisposable
         throw new ArgumentOutOfRangeException(nameof(byteOffset), "Byte offset not found in any chunk.");
     }
 
+    /// <summary>
+    /// Copy all stored bytes into a single byte array.
+    /// </summary>
+    public byte[] ToArray()
+    {
+        byte[] result = new byte[LengthBytes];
+        int offset = 0;
+
+        lock (_appendLock)
+        {
+            foreach (var chunk in _chunks)
+            {
+                int len = chunk.Length;
+                chunk.AsMemory().Slice(0, len).Span.CopyTo(result.AsSpan(offset));
+                offset += len;
+            }
+        }
+
+        return result;
+    }
+
     /// <summary>Release all pooled chunk buffers to the ArrayPool.</summary>
     public void Dispose()
     {

@@ -10,6 +10,7 @@ public sealed class DifferentialRenderer
 {
     private readonly SwapChain _swapChain;
     private bool _firstRender = true;
+    private bool _fullRedrawQueued;
 
     /// <summary>The swap chain backing this renderer.</summary>
     public SwapChain SwapChain => _swapChain;
@@ -25,26 +26,34 @@ public sealed class DifferentialRenderer
     /// </summary>
     public void Render(TerminalFrame source, IBufferWriter<byte> output)
     {
-        // Copy source into the current (back) buffer, including the glyph table
+        // Copy source cells into the back buffer.
+        // We do NOT copy the glyph table — instead we pass the source glyph
+        // table directly to Diff/EmitFullFrame, avoiding an O(n) hash-map
+        // rebuild on every single render.
         var current = _swapChain.Current;
         Array.Copy(source.Cells, current.Cells, source.Cells.Length);
-        current.GlyphTable.CopyFrom(source.GlyphTable);
 
-        if (_firstRender)
+        if (_firstRender || _fullRedrawQueued)
         {
-            // First render: clear screen and emit full frame
-            AnsiEncoder.ClearScreen(output);
-            AnsiEncoder.HideCursor(output);
+            // Full frame redraw: first render emits clear+hide, scroll redraws skip it.
+            if (_firstRender)
+            {
+                AnsiEncoder.ClearScreen(output);
+                AnsiEncoder.HideCursor(output);
+            }
 
-            // Emit all non-empty cells
-            EmitFullFrame(current, output);
+            // Wrap full frame in synchronized output (DEC 2026)
+            AnsiEncoder.BeginSynchronizedOutput(output);
+            EmitFullFrame(current, output, source.GlyphTable);
+            AnsiEncoder.EndSynchronizedOutput(output);
 
             _firstRender = false;
+            _fullRedrawQueued = false;
         }
         else
         {
-            // Diff against previous
-            _swapChain.Diff(output, useSynchronizedOutput: false);
+            // Diff against previous, using synchronized output (DEC 2026)
+            _swapChain.Diff(output, useSynchronizedOutput: true, source.GlyphTable);
         }
 
         // Swap buffers
@@ -58,11 +67,23 @@ public sealed class DifferentialRenderer
         _firstRender = true; // Force full redraw on resize
     }
 
-    private static void EmitFullFrame(TerminalFrame frame, IBufferWriter<byte> output)
+    /// <summary>
+    /// Request a full frame redraw on the next render (without clearing the screen).
+    /// Call this when the viewport scrolls to avoid the row-by-row flicker
+    /// that the diff renderer produces during large viewport shifts.
+    /// The full redraw wraps the entire frame in synchronized output so the
+    /// terminal renders all rows atomically.
+    /// </summary>
+    public void RequestFullRedraw()
     {
-        TextStyle currentStyle = TextStyle.Default;
+        _fullRedrawQueued = true;
+    }
+
+    private static void EmitFullFrame(TerminalFrame frame, IBufferWriter<byte> output, GlyphInternTable? glyphTable = null)
+    {
         int width = frame.Width;
         int height = frame.Height;
+        var glyphs = glyphTable ?? frame.GlyphTable;
 
         for (int row = 0; row < height; row++)
         {
@@ -81,8 +102,15 @@ public sealed class DifferentialRenderer
             if (lastCol < 0)
                 continue; // Entirely empty row — skip
 
+            // Write the entire row so trailing empty cells get the explicit
+            // default background. Otherwise cells beyond lastCol retain the
+            // terminal's default background from ESC[2J, creating a visible
+            // mismatch when diff later clears text cells to explicit black.
+            lastCol = width - 1;
+
             AnsiEncoder.SetCursorPosition(row, 0, output);
-            currentStyle = TextStyle.Default;
+            AnsiEncoder.ResetStyle(output); // ESC[2J does not reset SGR
+            TextStyle? currentStyle = null;
 
             ReadOnlySpan<byte> spaceSpan = " "u8;
 
@@ -106,7 +134,7 @@ public sealed class DifferentialRenderer
                 }
                 else
                 {
-                    AnsiEncoder.WriteGlyph(cell.Glyph, output, frame.GlyphTable);
+                    AnsiEncoder.WriteGlyph(cell.Glyph, output, glyphs);
                 }
             }
 

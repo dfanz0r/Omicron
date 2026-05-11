@@ -46,3 +46,14 @@ public sealed record SystemNoticeBlock(
     TextPosition Position,
     int ByteLength,
     string Text) : TranscriptBlock(Id);
+
+/// <summary>A visual separator (blank line padding between messages).
+/// Carries an optional background color so adjacent message types can
+/// extend their background into the padding rows.</summary>
+public sealed record SeparatorBlock(
+    BlockId Id,
+    TextPosition Position,
+    int ByteLength,
+    byte BgR = 0,
+    byte BgG = 0,
+    byte BgB = 0) : TranscriptBlock(Id);

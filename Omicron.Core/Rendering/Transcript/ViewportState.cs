@@ -8,6 +8,7 @@ public sealed class ViewportState
 {
     private int _firstVisibleWrappedRow;
     private int _lastTotalWrappedRows;
+    private int _viewportHeight = 1;
 
     /// <summary>First wrapped row visible at the top of the viewport.</summary>
     public int FirstVisibleWrappedRow
@@ -53,7 +54,7 @@ public sealed class ViewportState
     /// <summary>Scroll down by the given number of rows.</summary>
     public void ScrollDown(int rows)
     {
-        int maxTop = Math.Max(0, _lastTotalWrappedRows - 1);
+        int maxTop = Math.Max(0, _lastTotalWrappedRows - _viewportHeight);
         _firstVisibleWrappedRow = Math.Min(maxTop, _firstVisibleWrappedRow + rows);
 
         // If we reached the bottom, resume follow
@@ -75,7 +76,8 @@ public sealed class ViewportState
     public void ScrollToBottom(int totalWrappedRows, int viewportHeight = 1)
     {
         _lastTotalWrappedRows = totalWrappedRows;
-        _firstVisibleWrappedRow = Math.Max(0, totalWrappedRows - viewportHeight);
+        _viewportHeight = Math.Max(1, viewportHeight);
+        _firstVisibleWrappedRow = Math.Max(0, totalWrappedRows - _viewportHeight);
         FollowTail = true;
         UnseenLineCount = 0;
     }
@@ -92,9 +94,10 @@ public sealed class ViewportState
     public void UpdateTotalRows(int totalWrappedRows, int viewportHeight = 1)
     {
         _lastTotalWrappedRows = totalWrappedRows;
+        _viewportHeight = Math.Max(1, viewportHeight);
         if (FollowTail)
         {
-            _firstVisibleWrappedRow = Math.Max(0, totalWrappedRows - viewportHeight);
+            _firstVisibleWrappedRow = Math.Max(0, totalWrappedRows - _viewportHeight);
         }
     }
 }

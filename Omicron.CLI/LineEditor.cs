@@ -8,8 +8,6 @@ namespace Omicron.CLI;
 /// - Enter          → submit
 /// - Shift+Enter    → insert literal newline
 /// - Backslash+Enter → insert literal newline (fallback)
-/// - Paste          → detected by pre-buffered console input;
-///                     newlines stay literal, Enter does not submit.
 ///
 /// Delegates core logic to <see cref="LineEditorEngine"/> for testability.
 /// </summary>
@@ -26,13 +24,10 @@ public class LineEditor
         _engine = new LineEditorEngine(completionProvider);
     }
 
-    private bool _inPaste;
-
     public string? ReadLine(string prompt = "> ")
     {
         _buf.Clear();
         _col = 0;
-        _inPaste = false;
 
         Console.Write(prompt);
 
@@ -41,14 +36,6 @@ public class LineEditor
         while (true)
         {
             var rawKey = Console.ReadKey(intercept: true);
-
-            // Paste detection: another key already queued?
-            if (!_inPaste && Console.KeyAvailable)
-                _inPaste = true;
-            else if (_inPaste && !Console.KeyAvailable)
-                _inPaste = false;
-
-            state.InPaste = _inPaste;
 
             var previousBuffer = state.Buffer.ToString();
             var previousCursor = state.Cursor;
@@ -86,7 +73,7 @@ public class LineEditor
 
         if (key.Key == ConsoleKey.Enter)
         {
-            if (_inPaste || (key.Modifiers & ConsoleModifiers.Shift) != 0 || (_col > 0 && _buf[_col - 1] == '\\'))
+            if ((key.Modifiers & ConsoleModifiers.Shift) != 0 || (_col > 0 && _buf[_col - 1] == '\\'))
             {
                 if (!((key.Modifiers & ConsoleModifiers.Shift) != 0) && _col > 0 && _buf[_col - 1] == '\\')
                 {
@@ -103,7 +90,7 @@ public class LineEditor
             var deleted = previousBuffer[previousCursor - 1];
             if (deleted == '\n')
             {
-                Console.Write("\r\x1b[1A\x1b[0J");
+                Console.Write("\x1b[K\x1b[1A\x1b[K");
                 RedrawTail();
             }
             else

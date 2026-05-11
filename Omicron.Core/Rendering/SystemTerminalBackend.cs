@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -29,6 +28,7 @@ public sealed class SystemTerminalBackend : ITerminalBackend
     private Termios _originalTermios;
     private bool _termiosSaved;
     private int _stdinFd;
+    private Stream? _inputStream;
 
     // Input buffering for UTF-8 multi-byte sequences across reads
     private readonly byte[] _readBuffer = new byte[2048];
@@ -109,22 +109,57 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         }
     }
 
+    private TerminalSize _lastReportedSize;
+    private DateTime _lastSizeCheck = DateTime.MinValue;
+
     public IAsyncEnumerable<TerminalEvent> ReadEvents(CancellationToken cancellationToken)
         => ReadEventsImpl(cancellationToken);
 
     private async IAsyncEnumerable<TerminalEvent> ReadEventsImpl(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var inputStream = Console.OpenStandardInput();
+        _inputStream ??= Console.OpenStandardInput();
+        _lastReportedSize = Size;
 
         while (!cancellationToken.IsCancellationRequested)
         {
+            // Periodically check for terminal resize (every 500ms)
+            if ((DateTime.UtcNow - _lastSizeCheck).TotalMilliseconds >= 500)
+            {
+                _lastSizeCheck = DateTime.UtcNow;
+                RefreshSize();
+                if (_size.Width != _lastReportedSize.Width || _size.Height != _lastReportedSize.Height)
+                {
+                    _lastReportedSize = _size;
+                    yield return new ResizeEvent(_size.Width, _size.Height);
+                }
+            }
+
             int bytesRead;
             try
             {
-                // Read after any pending bytes from previous incomplete UTF-8 sequence
-                bytesRead = await inputStream.ReadAsync(
-                    _readBuffer.AsMemory(_pendingCount), cancellationToken);
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    // Windows console handles do not support async I/O reliably in raw mode.
+                    // Offload the synchronous read to a thread-pool thread so it blocks
+                    // only that thread and returns as soon as input is available.
+                    // Use a short timeout to allow periodic resize checks.
+                    var readTask = Task.Run(() => _inputStream.Read(
+                        _readBuffer, _pendingCount, _readBuffer.Length - _pendingCount), cancellationToken);
+                    var delayTask = Task.Delay(100, cancellationToken);
+                    var completed = await Task.WhenAny(readTask, delayTask);
+                    if (completed == delayTask)
+                    {
+                        // Timeout — loop back to check resize
+                        continue;
+                    }
+                    bytesRead = await readTask;
+                }
+                else
+                {
+                    bytesRead = await _inputStream.ReadAsync(
+                        _readBuffer.AsMemory(_pendingCount), cancellationToken);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -352,11 +387,15 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                if (!GetConsoleScreenBufferInfo(_stdOutHandle, out var csbi))
-                    return;
-
-                _size = new TerminalSize(csbi.srWindow.Right - csbi.srWindow.Left + 1,
-                                         csbi.srWindow.Bottom - csbi.srWindow.Top + 1);
+                if (GetConsoleScreenBufferInfo(_stdOutHandle, out var csbi))
+                {
+                    _size = new TerminalSize(csbi.srWindow.Right - csbi.srWindow.Left + 1,
+                                             csbi.srWindow.Bottom - csbi.srWindow.Top + 1);
+                }
+                else
+                {
+                    _size = new TerminalSize(Console.WindowWidth, Console.WindowHeight);
+                }
             }
             else
             {
@@ -426,6 +465,56 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         _outputWriter.Write(bytes);
     }
 
+    /// <summary>
+    /// Static safety-net: restore the console input mode to a state compatible
+    /// with <see cref="Console.ReadKey"/> and standard line reading.
+    /// Call this before entering standard CLI mode if the TUI may have left
+    /// the terminal in raw / VT-input mode.
+    /// </summary>
+    public static void EnsureSafeConsoleInputMode()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var stdInHandle = GetStdHandle(STD_INPUT_HANDLE);
+            if (stdInHandle == IntPtr.Zero)
+                return;
+
+            if (!GetConsoleMode(stdInHandle, out uint currentMode))
+                return;
+
+            // If VT input is enabled, the console is in TUI/raw mode.
+            // Disable it and re-enable the traditional input processing flags
+            // so Console.ReadKey works correctly.
+            if ((currentMode & ENABLE_VIRTUAL_TERMINAL_INPUT) != 0)
+            {
+                uint safeMode = currentMode;
+                safeMode &= ~ENABLE_VIRTUAL_TERMINAL_INPUT;
+                safeMode &= ~ENABLE_MOUSE_INPUT;
+                safeMode &= ~ENABLE_WINDOW_INPUT;
+                safeMode |= ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT;
+                SetConsoleMode(stdInHandle, safeMode);
+            }
+        }
+        else
+        {
+            int stdinFd = STDIN_FILENO;
+            if (tcgetattr(stdinFd, out Termios current) != 0)
+                return;
+
+            // If canonical mode or echo is disabled, restore them.
+            const uint needed = ECHO | ICANON;
+            if ((current.c_lflag & needed) != needed)
+            {
+                var safe = current;
+                safe.c_lflag |= needed;
+                safe.c_iflag |= ICRNL;
+                safe.c_cc[VMIN] = 1;
+                safe.c_cc[VTIME] = 0;
+                tcsetattr(stdinFd, TCSANOW, ref safe);
+            }
+        }
+    }
+
     // ── Internal: Byte buffer writer for IBufferWriter<byte> ──
 
     private sealed class ByteBufferWriter : IBufferWriter<byte>
@@ -435,6 +524,8 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         private int _written;
 
         public ByteBufferWriter(Stream stream) => _stream = stream;
+
+        public int WrittenCount => _written;
 
         public void Advance(int count) => _written += count;
         public Memory<byte> GetMemory(int sizeHint = 0)

@@ -32,9 +32,9 @@ public sealed class SwapChain
     /// </summary>
     public void Swap()
     {
-        // Clear the new back buffer (which was the previous front buffer)
-        Previous.Clear();
         _useA = !_useA;
+        // Clear the new back buffer (the one we will draw into next frame).
+        Current.Clear();
     }
 
     /// <summary>Resize both buffers.</summary>
@@ -51,16 +51,15 @@ public sealed class SwapChain
     /// If <paramref name="useSynchronizedOutput"/> is true, wraps the diff
     /// in DEC 2026 synchronization sequences.
     /// </summary>
-    public void Diff(IBufferWriter<byte> output, bool useSynchronizedOutput = false)
+    public void Diff(IBufferWriter<byte> output, bool useSynchronizedOutput = false, GlyphInternTable? glyphTable = null)
     {
         var prev = Previous;
         var cur = Current;
-
-        if (useSynchronizedOutput)
-            AnsiEncoder.BeginSynchronizedOutput(output);
+        var glyphs = glyphTable ?? cur.GlyphTable;
 
         int width = cur.Width;
         int height = cur.Height;
+        bool syncStarted = false;
 
         for (int row = 0; row < height; row++)
         {
@@ -98,11 +97,22 @@ public sealed class SwapChain
             if (lastChanged < firstChanged)
                 continue;
 
+            // Start synchronized output on the first row that actually changes
+            if (useSynchronizedOutput && !syncStarted)
+            {
+                AnsiEncoder.BeginSynchronizedOutput(output);
+                syncStarted = true;
+            }
+
             // Move cursor to start of changed region
             AnsiEncoder.SetCursorPosition(row, firstChanged, output);
 
-            // Emit the changed run
-            TextStyle currentStyle = TextStyle.Default;
+            // Emit the changed run.
+            // currentStyle is nullable so the FIRST cell always emits its full
+            // style. If we initialized to TextStyle.Default and the first cell
+            // also happened to be Default, no style would be emitted and the
+            // terminal's previous active style would bleed through.
+            TextStyle? currentStyle = null;
             ReadOnlySpan<byte> spaceSpan = " "u8;
 
             for (int col = firstChanged; col <= lastChanged; col++)
@@ -128,7 +138,7 @@ public sealed class SwapChain
                 else
                 {
                     // Write the glyph
-                    AnsiEncoder.WriteGlyph(cell.Glyph, output, cur.GlyphTable);
+                    AnsiEncoder.WriteGlyph(cell.Glyph, output, glyphs);
                 }
             }
 
@@ -139,7 +149,7 @@ public sealed class SwapChain
             }
         }
 
-        if (useSynchronizedOutput)
+        if (syncStarted)
             AnsiEncoder.EndSynchronizedOutput(output);
     }
 }

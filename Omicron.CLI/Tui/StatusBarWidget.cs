@@ -1,4 +1,3 @@
-using System.Text;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
 using Omicron.Core.Text;
@@ -6,9 +5,10 @@ using Omicron.Core.Text;
 namespace Omicron.CLI.Tui;
 
 /// <summary>
-/// Renders a single-row status bar with model name (left),
-/// provider (center), and status text (right).
-/// Uses <see cref="CellWidthCalculator"/> for correct alignment of CJK text.
+/// Renders a single-row status bar with a Windows-2000-style gold gradient
+/// background. The gradient transitions from dark amber on the left through
+/// bright gold to safety-orange on the right. Text is drawn in very dark
+/// brown for readability across the full gradient.
 /// </summary>
 public sealed class StatusBarWidget : ITuiWidget
 {
@@ -23,6 +23,16 @@ public sealed class StatusBarWidget : ITuiWidget
 
     private Rect _bounds;
 
+    // ── Gradient colours (amber → gold → safety-orange) ──
+    // Values come from TuiColors so they stay in sync with DividerWidget.
+    private static (byte R, byte G, byte B) GradientStart => TuiColors.StatusBarGradientStart;
+    private static (byte R, byte G, byte B) GradientEnd => TuiColors.StatusBarGradientEnd;
+
+    /// <summary>Text foreground gradient: dark brown → medium brown.
+    /// Each character gets its own interpolated shade for smooth readability.</summary>
+    private static (byte R, byte G, byte B) TextStart => TuiColors.StatusBarTextStart;
+    private static (byte R, byte G, byte B) TextEnd => TuiColors.StatusBarTextEnd;
+
     public Size Measure(Size available) => new(available.Width, 1);
 
     public void Arrange(Rect bounds)
@@ -33,46 +43,36 @@ public sealed class StatusBarWidget : ITuiWidget
     public void Render(RenderContext context)
     {
         int row = _bounds.Y;
-        var style = TextStyle.Inverted;
+        int width = _bounds.Width;
+        if (width <= 0) return;
 
-        // Clear the row with inverted spaces
-        var emptyCell = new RenderCell
-        {
-            Glyph = GlyphRef.Ascii((byte)' '),
-            Width = 1,
-            Style = style,
-        };
-        context.FillRect(_bounds, emptyCell);
+        // Fill the bar with a per-column gold gradient.
+        GradientHelper.Fill(context, _bounds, GradientDirection.Horizontal,
+            GradientStart, GradientEnd);
 
-        // Left: model name
+        // Left: model name (per-character foreground gradient)
         if (!string.IsNullOrEmpty(ModelName))
-        {
-            var leftBytes = Encoding.UTF8.GetBytes($" {ModelName} ");
-            context.DrawText(_bounds.X, row, leftBytes, style);
-        }
+            GradientHelper.DrawText(context, _bounds.X, row, $" {ModelName} ",
+                GradientDirection.Horizontal, TextStart, TextEnd);
 
-        // Center: provider (use display width for CJK alignment)
+        // Center: provider
         if (!string.IsNullOrEmpty(ProviderName))
         {
             int displayWidth = GetDisplayWidth(ProviderName);
-            int centerCol = _bounds.X + (_bounds.Width - displayWidth) / 2;
+            int centerCol = _bounds.X + (width - displayWidth) / 2;
             if (centerCol >= 0)
-            {
-                var centerBytes = Encoding.UTF8.GetBytes(ProviderName);
-                context.DrawText(centerCol, row, centerBytes, style);
-            }
+                GradientHelper.DrawText(context, centerCol, row, ProviderName,
+                    GradientDirection.Horizontal, TextStart, TextEnd);
         }
 
-        // Right: status text (use display width for CJK alignment)
+        // Right: status text
         if (!string.IsNullOrEmpty(StatusText))
         {
             int displayWidth = GetDisplayWidth(StatusText);
-            int rightCol = _bounds.Right - displayWidth - 1;
+            int rightCol = _bounds.Right - displayWidth - 2;
             if (rightCol >= _bounds.X)
-            {
-                var rightBytes = Encoding.UTF8.GetBytes($" {StatusText} ");
-                context.DrawText(rightCol, row, rightBytes, style);
-            }
+                GradientHelper.DrawText(context, rightCol, row, $" {StatusText} ",
+                    GradientDirection.Horizontal, TextStart, TextEnd);
         }
     }
 
