@@ -8,25 +8,35 @@ The repository currently contains:
 
 ```text
 Omicron.Core/          Core agent loop, providers, models, tools, and config
-Omicron.CLI/           Console MVP frontend
+Omicron.CLI/           Console MVP frontend (TUI + classic CLI modes)
 Omicron.Core.Tests/    xUnit tests
 READ_ONLY/             External/reference snapshots, not edited in place
 docs/rfcs/             Canonical architecture RFCs
 docs/implementation-plans/ Tactical implementation plans
+docs/reports/          Audit reports and gap analyses
 ```
 
 The MVP already supports:
 
 - streaming agent responses;
-- multiple provider/API-shape paths;
-- model discovery;
-- TOML-backed configuration;
-- tool calling;
+- multiple provider/API-shape paths (OpenAI Responses, Anthropic, OpenRouter, etc.);
+- model discovery with metadata refresh;
+- TOML-backed configuration with API key management;
+- tool calling (file read, shell execution, workspace operations);
 - direct file and shell tools with basic workspace containment;
 - a simple console chat loop;
+- **a rich terminal UI (TUI)** with:
+  - differential rendering (ANSI swap-chain, only changed cells redrawn);
+  - gradient status bar and dividers;
+  - scrollable transcript viewport with search/find;
+  - input editor with history, tab completions, and bracketed paste;
+  - interactive model picker with filtering and keyboard navigation;
+  - API key prompt with visibility toggle;
+  - slash command integration (`/model`, `/sessions`, `/resume`, `/fork`, etc.);
+  - resize detection and 60fps frame pacing;
 - core/provider tests.
 
-It does **not** yet implement the full long-term architecture: durable event logs, VFS snapshots, plugin runtime, sandboxing, rich TUI, GUI, remoting, syntax rendering, or WASM extensions.
+It does **not** yet implement the full long-term architecture: durable event logs, VFS snapshots, plugin runtime, sandboxing, GUI, remoting, syntax rendering, or WASM extensions.
 
 ## Active Planning Sources
 
@@ -50,9 +60,9 @@ Near-term work should focus on:
 4. routing built-in tools through the same extension/tool pipeline future plugins will use;
 5. adding permission, workspace, and execution broker seams;
 6. hardening sessions and events into durable/replayable shapes;
-7. keeping current CLI behavior working while the core is modularized.
+7. keeping current CLI and TUI behavior working while the core is modularized.
 
-This prepares the codebase for later work such as persistence, richer TUI rendering, sandboxing, WASM plugins, remoting, and GUI frontends.
+This prepares the codebase for later work such as persistence, GUI frontends, sandboxing, WASM plugins, remoting, and syntax rendering.
 
 ## Build and Test
 
@@ -62,10 +72,16 @@ Run tests with:
 dotnet test Omicron.slnx --nologo
 ```
 
-Run the console MVP with:
+Run the console MVP with classic CLI mode:
 
 ```bash
 dotnet run --project Omicron.CLI
+```
+
+Run with the rich TUI (default when stdout is a terminal):
+
+```bash
+dotnet run --project Omicron.CLI -- --tui
 ```
 
 ## Reference Material
