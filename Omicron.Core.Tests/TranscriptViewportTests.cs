@@ -426,6 +426,229 @@ public class TranscriptViewportTests
         Assert.True(cell.Style.BgR > 0 || cell.Style.BgG > 0 || cell.Style.BgB > 0,
             "Status bar should have non-black background (gradient)");
         Assert.Equal(1, cell.Width);
+
+        // Text foreground should be pure black (0,0,0) for consistent rendering
+        // across VS Code and Windows Terminal.  Dark brown was auto-adjusted to
+        // white by VS Code's minimum-contrast logic.
+        Assert.True(cell.Style.FgR == 0 && cell.Style.FgG == 0 && cell.Style.FgB == 0,
+            $"Status bar text should be pure black (got {cell.Style.FgR},{cell.Style.FgG},{cell.Style.FgB})");
+    }
+
+    [Fact]
+    public void StatusBarWidget_TextForeground_IsNotWhite()
+    {
+        // Regression: every cell in the status bar should share the full-bar
+        // text gradient. No cell should retain the white foreground from an
+        // old Fill() call.
+        var frame = new TerminalFrame(80, 1);
+        var widget = new Omicron.CLI.Tui.StatusBarWidget
+        {
+            ModelName = "gpt-4",
+            ProviderName = "",
+            StatusText = ""
+        };
+
+        widget.Arrange(new Rect(0, 0, 80, 1));
+        var ctx = new RenderContext(frame, new Rect(0, 0, 80, 1), TextStyle.Default);
+        widget.Render(ctx);
+
+        // Every cell must be pure black.  VS Code auto-adjusts low-contrast
+        // colours to white; pure black on the amber background avoids this.
+        for (int col = 0; col < 80; col++)
+        {
+            var cell = frame[0, col];
+            Assert.True(cell.Style.FgR == 0 && cell.Style.FgG == 0 && cell.Style.FgB == 0,
+                $"Cell at col {col} should be pure black (got {cell.Style.FgR},{cell.Style.FgG},{cell.Style.FgB})");
+        }
+
+        var left = frame[0, 0];
+        var right = frame[0, 79];
+        Assert.True(left.Style.FgR == 0 && left.Style.FgG == 0 && left.Style.FgB == 0,
+            $"Left edge should be black (got {left.Style.FgR},{left.Style.FgG},{left.Style.FgB})");
+        Assert.True(right.Style.FgR == 0 && right.Style.FgG == 0 && right.Style.FgB == 0,
+            $"Right edge should be black (got {right.Style.FgR},{right.Style.FgG},{right.Style.FgB})");
+    }
+
+    [Fact]
+    public void StatusBarWidget_DiffRenderer_EmitsCorrectAnsi()
+    {
+        // Ensure the differential renderer emits the correct ANSI sequences
+        // for the status bar text — every text cell should have the text gradient fg.
+        var renderer = new DifferentialRenderer(80, 1);
+        var widget = new Omicron.CLI.Tui.StatusBarWidget
+        {
+            ModelName = "gpt-4",
+            ProviderName = "",
+            StatusText = ""
+        };
+
+        // First render (empty frame → establishes baseline)
+        renderer.Render(new TerminalFrame(80, 1), new ArrayBufferWriter());
+
+        // Second render with status bar content
+        var curFrame = new TerminalFrame(80, 1);
+        widget.Arrange(new Rect(0, 0, 80, 1));
+        var ctx = new RenderContext(curFrame, new Rect(0, 0, 80, 1), TextStyle.Default);
+        widget.Render(ctx);
+
+        var output = new ArrayBufferWriter();
+        renderer.Render(curFrame, output);
+
+        var text = Encoding.UTF8.GetString(output.WrittenSpan);
+
+        // Text is pure black (0, 0, 0) — no cream, no white.
+        Assert.Contains("38;2;0;0;0", text);
+        Assert.DoesNotContain("38;2;255;255;255", text);
+    }
+
+    [Fact]
+    public void StatusBarWidget_FullFrame_NoWhiteForeground()
+    {
+        // The full-frame ANSI output must not contain white foreground
+        // (255,255,255) — every cell should use the text gradient.
+        var renderer = new DifferentialRenderer(80, 1);
+        var widget = new Omicron.CLI.Tui.StatusBarWidget
+        {
+            ModelName = "OpenAI: GPT-5.4 Mini",
+            ProviderName = "openai",
+            StatusText = "ready"
+        };
+
+        renderer.Render(new TerminalFrame(80, 1), new ArrayBufferWriter());
+
+        var curFrame = new TerminalFrame(80, 1);
+        widget.Arrange(new Rect(0, 0, 80, 1));
+        var ctx = new RenderContext(curFrame, new Rect(0, 0, 80, 1), TextStyle.Default);
+        widget.Render(ctx);
+
+        var output = new ArrayBufferWriter();
+        renderer.Render(curFrame, output);
+
+        var text = Encoding.UTF8.GetString(output.WrittenSpan);
+
+        // No white foreground anywhere in the bar
+        Assert.DoesNotContain("38;2;255;255;255", text);
+
+        // Text is pure black (0, 0, 0) — no cream, no white.
+        Assert.Contains("38;2;0;0;0", text);
+    }
+
+    [Fact]
+    public void Scrollbar_NotVisible_WhenContentFits()
+    {
+        var widget = new Omicron.CLI.Tui.TranscriptViewportWidget();
+        widget.Arrange(new Rect(0, 0, 80, 10));
+
+        // Add a small amount of content that fits entirely
+        widget.Store.AppendNotice("Hello world");
+        widget.Layout.ReflowForWidth(80, widget.Store);
+        widget.Viewport.UpdateTotalRows(widget.Layout.TotalWrappedRows, 10);
+
+        var frame = new TerminalFrame(80, 10);
+        var ctx = new RenderContext(frame, new Rect(0, 0, 80, 10), TextStyle.Default);
+        widget.Render(ctx);
+
+        // Rightmost column should NOT have scrollbar track color (50,45,38)
+        var rightCell = frame[0, 79];
+        Assert.False(
+            rightCell.Style.BgR == 50 && rightCell.Style.BgG == 45 && rightCell.Style.BgB == 38,
+            "Scrollbar should not appear when content fits viewport");
+    }
+
+    [Fact]
+    public void Scrollbar_Visible_AfterScroll()
+    {
+        var widget = new Omicron.CLI.Tui.TranscriptViewportWidget();
+        widget.Arrange(new Rect(0, 0, 80, 5));
+
+        // Add enough content to overflow the viewport
+        for (int i = 0; i < 50; i++)
+            widget.Store.AppendNotice($"Line {i}: " + new string('x', 70));
+
+        widget.Layout.ReflowForWidth(80, widget.Store);
+        widget.Viewport.UpdateTotalRows(widget.Layout.TotalWrappedRows, 5);
+
+        // Scroll up to trigger visibility
+        widget.ScrollUp(5);
+
+        var frame = new TerminalFrame(80, 5);
+        var ctx = new RenderContext(frame, new Rect(0, 0, 80, 5), TextStyle.Default);
+        widget.Render(ctx);
+
+        // Rightmost column should have scrollbar track or thumb color
+        var rightCell = frame[0, 79];
+        bool isTrack = rightCell.Style.BgR == 50 && rightCell.Style.BgG == 45 && rightCell.Style.BgB == 38;
+        bool isThumb = rightCell.Style.BgR == 140 && rightCell.Style.BgG == 115 && rightCell.Style.BgB == 60;
+        Assert.True(isTrack || isThumb,
+            $"Scrollbar should be visible after scroll (got bg {rightCell.Style.BgR},{rightCell.Style.BgG},{rightCell.Style.BgB})");
+    }
+
+    [Fact]
+    public void Scrollbar_ThumbPosition_NearTop()
+    {
+        var widget = new Omicron.CLI.Tui.TranscriptViewportWidget();
+        widget.Arrange(new Rect(0, 0, 80, 10));
+
+        for (int i = 0; i < 100; i++)
+            widget.Store.AppendNotice($"Line {i}: " + new string('x', 70));
+
+        widget.Layout.ReflowForWidth(80, widget.Store);
+        widget.Viewport.UpdateTotalRows(widget.Layout.TotalWrappedRows, 10);
+
+        // Scroll to top
+        widget.ScrollToTop();
+
+        var frame = new TerminalFrame(80, 10);
+        var ctx = new RenderContext(frame, new Rect(0, 0, 80, 10), TextStyle.Default);
+        widget.Render(ctx);
+
+        // Thumb should be near the top (rows 0-2)
+        int thumbRow = -1;
+        for (int row = 0; row < 10; row++)
+        {
+            var cell = frame[row, 79];
+            if (cell.Style.BgR == 140 && cell.Style.BgG == 115 && cell.Style.BgB == 60)
+            {
+                thumbRow = row;
+                break;
+            }
+        }
+        Assert.True(thumbRow >= 0 && thumbRow <= 2,
+            $"Thumb should be near top when scrolled to top (found at row {thumbRow})");
+    }
+
+    [Fact]
+    public void Scrollbar_ThumbPosition_NearBottom()
+    {
+        var widget = new Omicron.CLI.Tui.TranscriptViewportWidget();
+        widget.Arrange(new Rect(0, 0, 80, 10));
+
+        for (int i = 0; i < 100; i++)
+            widget.Store.AppendNotice($"Line {i}: " + new string('x', 70));
+
+        widget.Layout.ReflowForWidth(80, widget.Store);
+        widget.Viewport.UpdateTotalRows(widget.Layout.TotalWrappedRows, 10);
+
+        // Scroll to bottom
+        widget.ScrollToBottom();
+
+        var frame = new TerminalFrame(80, 10);
+        var ctx = new RenderContext(frame, new Rect(0, 0, 80, 10), TextStyle.Default);
+        widget.Render(ctx);
+
+        // Thumb should be near the bottom (rows 7-9)
+        int thumbRow = -1;
+        for (int row = 0; row < 10; row++)
+        {
+            var cell = frame[row, 79];
+            if (cell.Style.BgR == 140 && cell.Style.BgG == 115 && cell.Style.BgB == 60)
+            {
+                thumbRow = row;
+                break;
+            }
+        }
+        Assert.True(thumbRow >= 7 && thumbRow <= 9,
+            $"Thumb should be near bottom when scrolled to bottom (found at row {thumbRow})");
     }
 
     // ============================================================

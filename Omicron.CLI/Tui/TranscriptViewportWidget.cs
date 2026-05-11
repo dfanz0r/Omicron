@@ -1,3 +1,4 @@
+using System;
 using System.Text;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
@@ -28,10 +29,36 @@ public sealed class TranscriptViewportWidget : ITuiWidget
     public ViewportState Viewport => _viewport;
     public Action? RequestRender { get; set; }
 
-    public void ScrollUp(int rows) => _viewport.ScrollUp(rows);
-    public void ScrollDown(int rows) => _viewport.ScrollDown(rows);
-    public void ScrollToTop() => _viewport.ScrollToTop();
-    public void ScrollToBottom() => _viewport.ScrollToBottom(_layout.TotalWrappedRows, _bounds.Height);
+    private DateTime _lastScrollTime = DateTime.MinValue;
+    private const int ScrollbarTimeoutMs = 2000;
+
+    private bool IsScrollbarVisible =>
+        _layout.TotalWrappedRows > _bounds.Height &&
+        (DateTime.UtcNow - _lastScrollTime).TotalMilliseconds < ScrollbarTimeoutMs;
+
+    public void ScrollUp(int rows)
+    {
+        _viewport.ScrollUp(rows);
+        _lastScrollTime = DateTime.UtcNow;
+    }
+
+    public void ScrollDown(int rows)
+    {
+        _viewport.ScrollDown(rows);
+        _lastScrollTime = DateTime.UtcNow;
+    }
+
+    public void ScrollToTop()
+    {
+        _viewport.ScrollToTop();
+        _lastScrollTime = DateTime.UtcNow;
+    }
+
+    public void ScrollToBottom()
+    {
+        _viewport.ScrollToBottom(_layout.TotalWrappedRows, _bounds.Height);
+        _lastScrollTime = DateTime.UtcNow;
+    }
 
     public void UpdateFromEvent(OmicronEvent evt)
     {
@@ -43,6 +70,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 _store.AppendUserMessage(Encoding.UTF8.GetBytes($"  You: {ue.Text}"));
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
                 RebuildLayout();
+                RequestRender?.Invoke();
                 break;
 
             case AssistantTextDeltaEvent delta:
@@ -405,6 +433,47 @@ public sealed class TranscriptViewportWidget : ITuiWidget
             {
                 context.DrawText(indicatorX, _bounds.Y + row - 1, Encoding.UTF8.GetBytes(indicator), new TextStyle(235, 195, 80, 75, 55, 20, false, false, false));
             }
+        }
+
+        // Draw scrollbar overlay on the right edge
+        if (IsScrollbarVisible)
+            DrawScrollbar(context);
+    }
+
+    private void DrawScrollbar(RenderContext context)
+    {
+        int totalRows = _layout.TotalWrappedRows;
+        int viewportHeight = _bounds.Height;
+        if (totalRows <= viewportHeight) return;
+
+        int thumbHeight = Math.Max(1, viewportHeight * viewportHeight / totalRows);
+        int maxScroll = Math.Max(1, totalRows - viewportHeight);
+        int thumbStart = _viewport.FirstVisibleWrappedRow * (viewportHeight - thumbHeight) / maxScroll;
+
+        int scrollbarCol = _bounds.X + _bounds.Width - 1;
+        if (scrollbarCol < context.Clip.X || scrollbarCol >= context.Clip.Right) return;
+        if (scrollbarCol >= context.Frame.Width) return;
+
+        var trackBg = TuiColors.ScrollbarTrackBg;
+        var thumbBg = TuiColors.ScrollbarThumbBg;
+
+        for (int i = 0; i < viewportHeight; i++)
+        {
+            int row = _bounds.Y + i;
+            if (row < context.Clip.Y || row >= context.Clip.Bottom) continue;
+            if (row < 0 || row >= context.Frame.Height) continue;
+
+            bool isThumb = i >= thumbStart && i < thumbStart + thumbHeight;
+            var bg = isThumb ? thumbBg : trackBg;
+            int idx = row * context.Frame.Width + scrollbarCol;
+            var existing = context.Frame.Cells[idx];
+            context.Frame.Cells[idx] = new RenderCell
+            {
+                Glyph = GlyphRef.Ascii((byte)' '),
+                Width = 1,
+                Style = new TextStyle(existing.Style.FgR, existing.Style.FgG, existing.Style.FgB,
+                    bg.R, bg.G, bg.B, false, false, false),
+            };
         }
     }
 

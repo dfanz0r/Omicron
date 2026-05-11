@@ -592,6 +592,7 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
                 });
 
             selectedModel = await pickerTask.Task;
+            shell.ForceFullRedraw(); // Prevent picker artifacts from leaking into main app
             if (selectedModel is not null)
             {
                 // Look up the catalog key for the selected model
@@ -631,6 +632,7 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
                         });
 
                     apiKey = await promptTask.Task;
+                    shell.ForceFullRedraw(); // Prevent prompt artifacts from leaking into main app
                 }
 
                 if (apiKey is not null)

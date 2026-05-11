@@ -235,6 +235,88 @@ public static class GradientHelper
         DrawText(context, x, y, text, GradientDirection.Horizontal, stops, null);
     }
 
+    /// <summary>
+    /// Draw UTF-8 text at (<paramref name="x"/>, <paramref name="y"/>) by
+    /// changing only the glyph and width, preserving the existing cell style
+    /// (foreground and background colours). Useful when the background and
+    /// foreground gradients have already been filled (e.g. by
+    /// <see cref="Fill"/>) and only the glyph needs to be stamped on top.
+    /// </summary>
+    public static void DrawGlyphsOnly(
+        RenderContext context,
+        int x, int y,
+        ReadOnlySpan<byte> utf8)
+    {
+        if (utf8.IsEmpty) return;
+        if (y < context.Clip.Y || y >= context.Clip.Bottom) return;
+        if (x >= context.Clip.Right) return;
+
+        int maxWidth = context.Clip.Right - x;
+        if (maxWidth <= 0) return;
+
+        var cells = context.Frame.Cells;
+        int frameWidth = context.Frame.Width;
+
+        var clusters = GraphemeSegmenter.SegmentUtf8(utf8);
+        int currentCol = x;
+
+        foreach (var cluster in clusters)
+        {
+            if (currentCol >= context.Clip.Right) break;
+
+            int w = CellWidthCalculator.GetWidth(
+                utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength));
+            if (w == 0) continue;
+
+            int idx = y * frameWidth + currentCol;
+            var existingStyle = cells[idx].Style;
+
+            // ASCII fast path
+            if (cluster.ByteLength == 1 && utf8[(int)cluster.ByteOffset] < 0x80)
+            {
+                cells[idx] = new RenderCell
+                {
+                    Glyph = GlyphRef.Ascii(utf8[(int)cluster.ByteOffset]),
+                    Width = (byte)Math.Min(w, 2),
+                    Style = existingStyle,
+                };
+            }
+            else
+            {
+                var glyphBytes = utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength);
+                int internId = context.Frame.GlyphTable.Intern(glyphBytes);
+                cells[idx] = new RenderCell
+                {
+                    Glyph = GlyphRef.Interned(internId),
+                    Width = (byte)Math.Min(w, 2),
+                    Style = existingStyle,
+                };
+            }
+
+            // Mark continuation cell for wide chars
+            if (w == 2 && currentCol + 1 < frameWidth)
+            {
+                cells[idx + 1] = new RenderCell
+                {
+                    Glyph = GlyphRef.Ascii((byte)' '),
+                    Width = 0,
+                    Style = existingStyle,
+                };
+            }
+
+            currentCol += w;
+        }
+    }
+
+    /// <summary>Convenience overload: draw a string, preserving existing style.</summary>
+    public static void DrawGlyphsOnly(
+        RenderContext context,
+        int x, int y,
+        string text)
+    {
+        DrawGlyphsOnly(context, x, y, Encoding.UTF8.GetBytes(text));
+    }
+
     private static (byte R, byte G, byte B) Lerp(
         (byte R, byte G, byte B) a,
         (byte R, byte G, byte B) b,

@@ -372,14 +372,10 @@ public sealed class AppLayout : IDisposable
             return;
         }
 
-        // Show user message immediately, before the API call
-        _transcript.Store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
-        _transcript.Store.AppendUserMessage(Encoding.UTF8.GetBytes($"  You: {text}"));
-        _transcript.Store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
-        _transcript.Layout.ReflowForWidth(Math.Max(1, _transcript.Layout.TerminalWidth), _transcript.Store);
-        _transcript.Viewport.UpdateTotalRows(_transcript.Layout.TotalWrappedRows, _transcript.ViewportHeight);
-        _transcript.ScrollToBottom();
-        _shell.RequestRender();
+        // The user message will be rendered when PromptAsync emits the
+        // UserMessageEvent — UpdateFromEvent handles it. Do NOT eagerly
+        // append here or the message appears twice (once now, once from
+        // the event stream).
 
         _isGenerating = true;
         _statusBar.StatusText = "processing...";

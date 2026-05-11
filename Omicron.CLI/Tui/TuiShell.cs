@@ -62,6 +62,13 @@ public sealed class TuiShell : IDisposable
         while (_renderSignal.Reader.TryRead(out _)) { }
     }
 
+    /// <summary>
+    /// Force a full screen clear + full frame redraw on the next render.
+    /// Call this when switching from a modal overlay (picker, prompt) back
+    /// to the main app so the diff renderer doesn't leave modal artifacts.
+    /// </summary>
+    public void ForceFullRedraw() => _renderer.ForceFullRedraw();
+
     public async Task RunAsync(
         Func<TerminalEvent, Task<bool>> onEvent,
         Func<TerminalFrame, Task> onRender)

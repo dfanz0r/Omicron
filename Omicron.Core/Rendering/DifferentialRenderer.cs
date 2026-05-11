@@ -79,6 +79,17 @@ public sealed class DifferentialRenderer
         _fullRedrawQueued = true;
     }
 
+    /// <summary>
+    /// Force a full screen clear + full frame redraw on the next render.
+    /// Use when switching from a modal overlay back to the main app so
+    /// diff artifacts from the modal don't leak into the main view.
+    /// </summary>
+    public void ForceFullRedraw()
+    {
+        _firstRender = true;
+        _fullRedrawQueued = true;
+    }
+
     private static void EmitFullFrame(TerminalFrame frame, IBufferWriter<byte> output, GlyphInternTable? glyphTable = null)
     {
         int width = frame.Width;

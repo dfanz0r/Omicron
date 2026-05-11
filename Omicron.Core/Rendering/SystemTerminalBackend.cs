@@ -121,6 +121,19 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         _inputStream ??= Console.OpenStandardInput();
         _lastReportedSize = Size;
 
+        // On Windows, console Read() is synchronous and uncancellable once
+        // it has started. We keep a single long-lived background read task
+        // alive across loop iterations and wait on it with a timeout so we
+        // can still poll for terminal resize. Note: passing a CancellationToken
+        // to Task.Run does NOT cancel the blocking Read() — it only prevents
+        // the task from starting if cancellation is already requested.
+        Task<int>? windowsReadTask = null;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            windowsReadTask = Task.Run(() => _inputStream.Read(
+                _readBuffer, _pendingCount, _readBuffer.Length - _pendingCount));
+        }
+
         while (!cancellationToken.IsCancellationRequested)
         {
             // Periodically check for terminal resize (every 500ms)
@@ -140,20 +153,26 @@ public sealed class SystemTerminalBackend : ITerminalBackend
             {
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
-                    // Windows console handles do not support async I/O reliably in raw mode.
-                    // Offload the synchronous read to a thread-pool thread so it blocks
-                    // only that thread and returns as soon as input is available.
-                    // Use a short timeout to allow periodic resize checks.
-                    var readTask = Task.Run(() => _inputStream.Read(
-                        _readBuffer, _pendingCount, _readBuffer.Length - _pendingCount), cancellationToken);
-                    var delayTask = Task.Delay(100, cancellationToken);
-                    var completed = await Task.WhenAny(readTask, delayTask);
-                    if (completed == delayTask)
+                    // Wait for the background read to complete or a short
+                    // timeout (whichever comes first). The timeout lets us
+                    // loop back to the resize check without abandoning the
+                    // read task — it stays alive and will deliver data when
+                    // a key is pressed.
+                    var completed = await Task.WhenAny(
+                        windowsReadTask!,
+                        Task.Delay(100, cancellationToken));
+
+                    if (completed != windowsReadTask)
                     {
                         // Timeout — loop back to check resize
                         continue;
                     }
-                    bytesRead = await readTask;
+
+                    bytesRead = await windowsReadTask!;
+
+                    // Start the next read promptly to keep latency low
+                    windowsReadTask = Task.Run(() => _inputStream.Read(
+                        _readBuffer, _pendingCount, _readBuffer.Length - _pendingCount));
                 }
                 else
                 {
