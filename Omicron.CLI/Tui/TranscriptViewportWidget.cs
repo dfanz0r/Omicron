@@ -28,6 +28,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
     public TranscriptLayoutCache Layout => _layout;
     public ViewportState Viewport => _viewport;
     public Action? RequestRender { get; set; }
+    public Rect Bounds => _bounds;
 
     private DateTime _lastScrollTime = DateTime.MinValue;
     private const int ScrollbarTimeoutMs = 2000;
@@ -35,6 +36,55 @@ public sealed class TranscriptViewportWidget : ITuiWidget
     private bool IsScrollbarVisible =>
         _layout.TotalWrappedRows > _bounds.Height &&
         (DateTime.UtcNow - _lastScrollTime).TotalMilliseconds < ScrollbarTimeoutMs;
+
+    /// <summary>
+    /// Whether the given terminal coordinate is within the scrollbar column.
+    /// </summary>
+    public bool IsScrollbarHit(int row, int col) =>
+        IsScrollbarVisible &&
+        col == _bounds.X + _bounds.Width - 1 &&
+        row >= _bounds.Y && row < _bounds.Bottom;
+
+    /// <summary>
+    /// Whether the given terminal coordinate is on the scrollbar thumb.
+    /// </summary>
+    public bool IsScrollbarThumbHit(int row, int col)
+    {
+        if (!IsScrollbarHit(row, col)) return false;
+
+        int totalRows = _layout.TotalWrappedRows;
+        int viewportHeight = _bounds.Height;
+        int thumbHeight = Math.Max(1, viewportHeight * viewportHeight / totalRows);
+        int maxScroll = Math.Max(1, totalRows - viewportHeight);
+        int thumbStart = _viewport.FirstVisibleWrappedRow * (viewportHeight - thumbHeight) / maxScroll;
+
+        int relativeY = row - _bounds.Y;
+        return relativeY >= thumbStart && relativeY < thumbStart + thumbHeight;
+    }
+
+    /// <summary>
+    /// Scroll so the scrollbar thumb centres on the given mouse Y (terminal row).
+    /// Clicking anywhere on the scrollbar track jumps to that proportional
+    /// position.
+    /// </summary>
+    public void ScrollToMouseY(int mouseY)
+    {
+        int totalRows = _layout.TotalWrappedRows;
+        int viewportHeight = _bounds.Height;
+        if (totalRows <= viewportHeight) return;
+
+        int thumbHeight = Math.Max(1, viewportHeight * viewportHeight / totalRows);
+        int maxScroll = Math.Max(1, totalRows - viewportHeight);
+        int trackLength = Math.Max(1, viewportHeight - thumbHeight);
+
+        int relativeY = mouseY - _bounds.Y;
+        int targetRow = relativeY * maxScroll / trackLength;
+        targetRow = Math.Clamp(targetRow, 0, maxScroll);
+
+        _viewport.FirstVisibleWrappedRow = targetRow;
+        _viewport.FollowTail = false;
+        _lastScrollTime = DateTime.UtcNow;
+    }
 
     public void ScrollUp(int rows)
     {
@@ -104,7 +154,8 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                     tic.IsError ? $"\n[Error: {tic.Result}]" : $"\n{tic.Result}");
                 for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                 {
-                    if (_store.Blocks[i] is ToolCallBlock tcb)
+                    if (_store.Blocks[i] is ToolCallBlock tcb &&
+                        tcb.State is ToolCallState.Running or ToolCallState.Pending)
                     {
                         _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, resultBytes);
                         break;

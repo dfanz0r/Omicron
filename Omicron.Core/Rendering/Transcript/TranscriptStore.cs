@@ -95,6 +95,11 @@ public sealed class TranscriptStore
         {
             if (_blocks[i] is ToolCallBlock tcb && tcb.Id == blockId)
             {
+                // Already in the target state — don't append output again.
+                // This guards against duplicate events or double-processing.
+                if (tcb.State == newState)
+                    return tcb;
+
                 // Append output text
                 Text.Append(outputText);
                 var updated = tcb with

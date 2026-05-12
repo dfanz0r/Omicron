@@ -29,6 +29,9 @@ public sealed class AppLayout : IDisposable
     private bool _disposed;
     private bool _isGenerating;
     private bool _isFindMode;
+    private bool _isDraggingScrollbar;
+    private DateTime _lastDragRenderTime = DateTime.MinValue;
+    private const int DragRenderIntervalMs = 16; // ~60 FPS cap during drag
     private string? _toastMessage;
     private DateTime _toastExpiry = DateTime.MinValue;
 
@@ -219,6 +222,50 @@ public sealed class AppLayout : IDisposable
                 break;
 
             case MouseEvent me:
+                // ── Scrollbar drag ──
+                // Once grabbed, follow the mouse Y everywhere in the terminal
+                // until the button is released.  Some terminals send Dragged
+                // events while holding; others send Pressed on re-entry after
+                // the cursor left the window. Accept either while dragging.
+                if (_isDraggingScrollbar)
+                {
+                    if (me.Button == MouseButton.Left &&
+                        (me.Kind == MouseEventKind.Dragged ||
+                         me.Kind == MouseEventKind.Pressed))
+                    {
+                        _transcript.ScrollToMouseY(me.Row);
+                        // Throttle renders during rapid dragging so the
+                        // render pipeline isn't overwhelmed. The scroll
+                        // position updates immediately but the screen only
+                        // refreshes at ~60 FPS.
+                        if ((DateTime.UtcNow - _lastDragRenderTime).TotalMilliseconds >= DragRenderIntervalMs)
+                        {
+                            _lastDragRenderTime = DateTime.UtcNow;
+                            _shell.RequestRender();
+                        }
+                        return true;
+                    }
+                    if (me.Kind == MouseEventKind.Released)
+                    {
+                        _isDraggingScrollbar = false;
+                        _shell.RequestRender(); // final render to clear any skipped frames
+                        return true;
+                    }
+                }
+
+                // Start a new scrollbar drag (only when Left is pressed inside
+                // the scrollbar column).
+                if (me.Button == MouseButton.Left &&
+                    me.Kind == MouseEventKind.Pressed &&
+                    _transcript.IsScrollbarHit(me.Row, me.Column))
+                {
+                    _isDraggingScrollbar = true;
+                    _transcript.ScrollToMouseY(me.Row);
+                    _shell.RequestRender();
+                    return true;
+                }
+
+                // ── Mouse wheel ──
                 switch (me.Button)
                 {
                     case MouseButton.ScrollUp:

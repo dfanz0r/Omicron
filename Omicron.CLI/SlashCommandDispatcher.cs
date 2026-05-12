@@ -580,6 +580,12 @@ internal sealed class SlashCommandDispatcher
             }
         }
 
+        if (targetModel is null)
+        {
+            Console.WriteLine("  No target model selected.");
+            return new ChatCommandResult(ChatCommandAction.Continue);
+        }
+
         var apiKey = context.Config.ApiKeys.TryGetValue(targetModel.ProviderName, out var key) ? key : null;
         var forked = context.Host.ForkSessionAsync(sourceRecord.SessionId, targetModel, apiKey: apiKey)
             .GetAwaiter().GetResult();

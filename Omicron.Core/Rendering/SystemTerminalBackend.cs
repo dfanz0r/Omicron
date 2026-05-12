@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Runtime.InteropServices;
 using System.Text;
+using Omicron.Core.Collections;
 
 namespace Omicron.Core.Rendering;
 
@@ -33,6 +34,15 @@ public sealed class SystemTerminalBackend : ITerminalBackend
     // Input buffering for UTF-8 multi-byte sequences across reads
     private readonly byte[] _readBuffer = new byte[2048];
     private int _pendingCount = 0;
+
+    // Lock-free SPSC queue isolates the Windows background read thread
+    // from the main parsing thread.  The producer reads raw console bytes
+    // into a temp buffer and pushes them; the consumer pops into _readBuffer.
+    private readonly QueueSPSC<byte> _inputQueue = new(8192);
+
+    // Dedicated producer thread (Windows only) — never uses the thread pool.
+    private CancellationTokenSource? _producerCts;
+    private Thread? _producerThread;
 
     private TerminalSize _size;
 
@@ -121,17 +131,23 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         _inputStream ??= Console.OpenStandardInput();
         _lastReportedSize = Size;
 
-        // On Windows, console Read() is synchronous and uncancellable once
-        // it has started. We keep a single long-lived background read task
-        // alive across loop iterations and wait on it with a timeout so we
-        // can still poll for terminal resize. Note: passing a CancellationToken
-        // to Task.Run does NOT cancel the blocking Read() — it only prevents
-        // the task from starting if cancellation is already requested.
-        Task<int>? windowsReadTask = null;
+        // On Windows start a dedicated background thread that reads from the
+        // console into the lock-free SPSC queue.  This isolates the blocking
+        // Read() call from the parsing thread — no shared _readBuffer, no
+        // race condition, no spliced escape sequences.  We use a real Thread
+        // (not Task.Run) so the thread pool is never blocked.
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            windowsReadTask = Task.Run(() => _inputStream.Read(
-                _readBuffer, _pendingCount, _readBuffer.Length - _pendingCount));
+            _producerCts = new CancellationTokenSource();
+            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, _producerCts.Token);
+
+            _producerThread = new Thread(() => WindowsProducerLoop(linkedCts.Token))
+            {
+                IsBackground = true,
+                Name = "OmicronTerminalInput"
+            };
+            _producerThread.Start();
         }
 
         while (!cancellationToken.IsCancellationRequested)
@@ -153,26 +169,15 @@ public sealed class SystemTerminalBackend : ITerminalBackend
             {
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
-                    // Wait for the background read to complete or a short
-                    // timeout (whichever comes first). The timeout lets us
-                    // loop back to the resize check without abandoning the
-                    // read task — it stays alive and will deliver data when
-                    // a key is pressed.
-                    var completed = await Task.WhenAny(
-                        windowsReadTask!,
-                        Task.Delay(100, cancellationToken));
-
-                    if (completed != windowsReadTask)
+                    // Drain the lock-free queue into _readBuffer.  If the queue
+                    // is empty we yield briefly so the async enumerator doesn't
+                    // spin at 100% CPU.
+                    bytesRead = DrainInputQueue();
+                    if (bytesRead == 0)
                     {
-                        // Timeout — loop back to check resize
+                        await Task.Delay(5, cancellationToken);
                         continue;
                     }
-
-                    bytesRead = await windowsReadTask!;
-
-                    // Start the next read promptly to keep latency low
-                    windowsReadTask = Task.Run(() => _inputStream.Read(
-                        _readBuffer, _pendingCount, _readBuffer.Length - _pendingCount));
                 }
                 else
                 {
@@ -197,6 +202,8 @@ public sealed class SystemTerminalBackend : ITerminalBackend
 
             while (offset < totalLength)
             {
+                int startOffset = offset;
+
                 // Check for escape sequences and resize events
                 if (TryParseResizeEvent(_readBuffer, ref offset, totalLength, out var resizeEvent))
                 {
@@ -207,6 +214,38 @@ public sealed class SystemTerminalBackend : ITerminalBackend
                 if (TryParseEscapeSequence(_readBuffer, ref offset, totalLength, out var terminalEvent))
                 {
                     yield return terminalEvent!;
+                    continue;
+                }
+
+                // If the escape parser couldn't make forward progress AND
+                // we're sitting on an ESC byte, we have an incomplete escape
+                // sequence at the end of the buffer. Preserve all remaining
+                // bytes for the next read so they don't get mis-decoded as
+                // typed characters.
+                if (offset == startOffset && _readBuffer[offset] == 0x1B)
+                {
+                    int remaining = totalLength - offset;
+                    _readBuffer.AsSpan(offset, remaining).CopyTo(_readBuffer);
+                    _pendingCount = remaining;
+                    break;
+                }
+
+                // Some Windows console configurations return UTF-16 data with
+                // NUL bytes interleaved (0x1B 0x00 0x5B 0x00 ...). Skip NULs
+                // so they don't break escape-sequence parsing.
+                if (_readBuffer[offset] == 0x00)
+                {
+                    offset++;
+                    continue;
+                }
+
+                // Fallback: under heavy load the ESC prefix can be separated
+                // from the rest of the SGR mouse sequence. Try to parse what
+                // looks like a mouse event even without the leading ESC.
+                if (TryParseSgrMouseFallback(_readBuffer, offset, totalLength, out var fallbackEvent, out int fallbackConsumed))
+                {
+                    offset += fallbackConsumed;
+                    yield return fallbackEvent;
                     continue;
                 }
 
@@ -254,24 +293,32 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         {
             // CSI sequence: ESC[...~
             int seqStart = offset;
-            offset += 2; // skip ESC[
+            int scan = offset + 2; // skip ESC[ locally
 
             // Read parameters until final byte (0x40–0x7E)
-            int paramStart = offset;
-            while (offset < length && (buffer[offset] < 0x40 || buffer[offset] > 0x7E))
-                offset++;
+            int paramStart = scan;
+            while (scan < length && (buffer[scan] < 0x40 || buffer[scan] > 0x7E))
+                scan++;
 
-            if (offset >= length)
+            if (scan >= length)
             {
-                // Incomplete sequence — rewind and treat as literal
-                offset = seqStart + 1;
+                // Incomplete sequence — don't advance offset so the caller
+                // preserves all remaining bytes for the next read.
                 return false;
             }
 
-            byte finalByte = buffer[offset++];
-            string param = Encoding.ASCII.GetString(buffer, paramStart, offset - paramStart - 1);
+            byte finalByte = buffer[scan];
+            string param = Encoding.ASCII.GetString(buffer, paramStart, scan - paramStart);
+
+            // Windows console can inject NUL bytes inside escape sequences.
+            // Strip them before parsing so int.TryParse doesn't fail.
+            param = param.Replace("\0", "");
+
+            offset = scan + 1;
 
             // SGR mouse: ESC[<button;col;rowM  or ESC[<button;col;rowm
+            // In mode 1002 (button-event tracking) motion while a button is
+            // held sets bit 5 (value 32) in the button code.
             if (param.Length > 0 && param[0] == '<' && (finalByte == (byte)'M' || finalByte == (byte)'m'))
             {
                 var mouseParts = param[1..].Split(';');
@@ -280,8 +327,11 @@ public sealed class SystemTerminalBackend : ITerminalBackend
                     int.TryParse(mouseParts[1], out var col) &&
                     int.TryParse(mouseParts[2], out var row))
                 {
+                    bool isMotion = (btn & 32) != 0; // bit 5 = motion while pressed
                     var (button, mouseModifiers) = MapSgrMouseButton(btn);
-                    var kind = finalByte == (byte)'M' ? MouseEventKind.Pressed : MouseEventKind.Released;
+                    var kind = finalByte == (byte)'m' ? MouseEventKind.Released
+                        : isMotion ? MouseEventKind.Dragged
+                        : MouseEventKind.Pressed;
                     terminalEvent = new MouseEvent(row - 1, col - 1, button, kind, mouseModifiers);
                     return true;
                 }
@@ -355,6 +405,82 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         return (button, modifiers);
     }
 
+    /// <summary>
+    /// Fallback SGR mouse parser for sequences that lost their ESC prefix.
+    /// Under heavy load the Windows console can split VT sequences across
+    /// reads or interleave NUL bytes, causing the ESC to be consumed as a
+    /// plain Escape key while the rest of the sequence leaks as characters.
+    /// This parser recognises the patterns <c>[&lt;btn;col;rowM</c> and
+    /// <c>&lt;btn;col;rowM</c> (with 'm' for release) so they don't end up
+    /// in the input field.
+    /// </summary>
+    private static bool TryParseSgrMouseFallback(
+        byte[] buffer, int offset, int length,
+        out TerminalEvent? terminalEvent, out int consumed)
+    {
+        terminalEvent = null;
+        consumed = 0;
+
+        int i = offset;
+
+        // Optional leading '[' (the ESC was already consumed)
+        if (i < length && buffer[i] == (byte)'[')
+            i++;
+
+        if (i >= length || buffer[i] != (byte)'<')
+            return false;
+
+        // Scan: digits, ';', digits, ';', digits, 'M' or 'm'
+        int startParam = i + 1;
+        int semicolons = 0;
+        int end = -1;
+        int scan = startParam;
+        while (scan < length)
+        {
+            byte b = buffer[scan];
+            if (b == (byte)';')
+            {
+                semicolons++;
+                if (semicolons > 2)
+                    return false;
+            }
+            else if (b == (byte)'M' || b == (byte)'m')
+            {
+                end = scan;
+                break;
+            }
+            else if (b < (byte)'0' || b > (byte)'9')
+            {
+                return false;
+            }
+            scan++;
+        }
+
+        if (end < 0 || semicolons != 2)
+            return false;
+
+        // Parse the three parameters
+        var paramText = Encoding.ASCII.GetString(buffer, startParam, end - startParam);
+        var parts = paramText.Split(';');
+        if (parts.Length != 3 ||
+            !int.TryParse(parts[0], out var btn) ||
+            !int.TryParse(parts[1], out var col) ||
+            !int.TryParse(parts[2], out var row))
+        {
+            return false;
+        }
+
+        bool isMotion = (btn & 32) != 0;
+        var (button, mouseModifiers) = MapSgrMouseButton(btn);
+        var kind = buffer[end] == (byte)'m' ? MouseEventKind.Released
+            : isMotion ? MouseEventKind.Dragged
+            : MouseEventKind.Pressed;
+
+        terminalEvent = new MouseEvent(row - 1, col - 1, button, kind, mouseModifiers);
+        consumed = end - offset + 1;
+        return true;
+    }
+
     private static Key MapCsiSequence(byte finalByte, int param)
     {
         return (finalByte, param) switch
@@ -386,6 +512,66 @@ public sealed class SystemTerminalBackend : ITerminalBackend
             (0x7E, 24) => Key.F12,
             _ => Key.None
         };
+    }
+
+    // ----------------------------------------------------------------
+    // Windows SPSC producer / consumer helpers
+    // ----------------------------------------------------------------
+
+    /// <summary>
+    /// Background producer loop (Windows only). Reads raw bytes from the
+    /// console input stream into a temporary buffer, then pushes each byte
+    /// into the lock-free SPSC queue.  Never touches _readBuffer or
+    /// _pendingCount — those belong exclusively to the consumer thread.
+    /// </summary>
+    private void WindowsProducerLoop(CancellationToken cancellationToken)
+    {
+        var temp = new byte[512];
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            int read;
+            try
+            {
+                read = _inputStream!.Read(temp, 0, temp.Length);
+            }
+            catch
+            {
+                break;
+            }
+            if (read == 0)
+                break;
+
+            for (int i = 0; i < read; i++)
+            {
+                // Blocking push — spin until space is available.  The queue
+                // is large (8 KiB) so this should be extremely rare.
+                while (!_inputQueue.TryPush(temp[i]) && !cancellationToken.IsCancellationRequested)
+                {
+                    Thread.SpinWait(1);
+                }
+                if (cancellationToken.IsCancellationRequested)
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Consumer-side drain: pop as many bytes as possible from the SPSC
+    /// queue into _readBuffer starting at _pendingCount.  Returns the
+    /// number of bytes transferred (may be zero).
+    /// </summary>
+    private int DrainInputQueue()
+    {
+        int space = _readBuffer.Length - _pendingCount;
+        if (space <= 0) return 0;
+
+        int count = 0;
+        while (count < space && _inputQueue.TryPop(out var b))
+        {
+            _readBuffer[_pendingCount + count] = b;
+            count++;
+        }
+        return count;
     }
 
     private bool TryParseResizeEvent(byte[] buffer, ref int offset, int length, out ResizeEvent? resizeEvent)
@@ -448,6 +634,9 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         if (_disposed) return;
         _disposed = true;
 
+        // Signal the dedicated producer thread to exit
+        _producerCts?.Cancel();
+
         // Restore alternate screen
         if (_alternateScreenEnabled)
         {
@@ -474,6 +663,15 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         {
             tcsetattr(_stdinFd, TCSANOW, ref _originalTermios);
         }
+
+        // Wait for the producer thread to finish (with a generous timeout)
+        if (_producerThread is not null && _producerThread.IsAlive)
+        {
+            try { _producerThread.Join(TimeSpan.FromSeconds(2)); }
+            catch { /* ignore */ }
+        }
+
+        _producerCts?.Dispose();
 
         // Do NOT dispose _outputStream — it's Console.OpenStandardOutput(), owned by the process
     }
