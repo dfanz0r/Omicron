@@ -145,20 +145,52 @@ public sealed class TranscriptViewportWidget : ITuiWidget
 
             case ToolInvocationStartedEvent tis:
                 FlushPending();
-                _store.AppendToolCall(tis.ToolName);
+                _store.AppendToolCall(tis.ToolName, tis.ToolCallId.Value);
                 RebuildLayout();
                 break;
 
             case ToolInvocationCompletedEvent tic:
                 var resultBytes = Encoding.UTF8.GetBytes(
                     tic.IsError ? $"\n[Error: {tic.Result}]" : $"\n{tic.Result}");
+                // Match by ToolCallId first (precise), then by ToolName + Running state
+                bool updated = false;
                 for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                 {
                     if (_store.Blocks[i] is ToolCallBlock tcb &&
+                        tcb.ToolCallId == tic.ToolCallId.Value &&
                         tcb.State is ToolCallState.Running or ToolCallState.Pending)
                     {
                         _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, resultBytes);
+                        updated = true;
                         break;
+                    }
+                }
+                if (!updated)
+                {
+                    // Fallback: match by tool name + Running state
+                    for (int i = _store.Blocks.Count - 1; i >= 0; i--)
+                    {
+                        if (_store.Blocks[i] is ToolCallBlock tcb &&
+                            tcb.ToolName == tic.ToolName &&
+                            tcb.State is ToolCallState.Running or ToolCallState.Pending)
+                        {
+                            _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, resultBytes);
+                            updated = true;
+                            break;
+                        }
+                    }
+                }
+                if (!updated)
+                {
+                    // Last resort: match any Running/Pending tool block
+                    for (int i = _store.Blocks.Count - 1; i >= 0; i--)
+                    {
+                        if (_store.Blocks[i] is ToolCallBlock tcb &&
+                            tcb.State is ToolCallState.Running or ToolCallState.Pending)
+                        {
+                            _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, resultBytes);
+                            break;
+                        }
                     }
                 }
                 RebuildLayout();
@@ -208,10 +240,12 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 _store.AppendSeparator();
                 break;
             case MessageRole.ToolResult:
-                _store.AppendToolCall(msg.ToolName ?? "tool");
+                _store.AppendToolCall(msg.ToolName ?? "tool", msg.ToolCallId);
                 for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                 {
-                    if (_store.Blocks[i] is ToolCallBlock tcb)
+                    if (_store.Blocks[i] is ToolCallBlock tcb &&
+                        tcb.ToolCallId == msg.ToolCallId &&
+                        tcb.State is ToolCallState.Running or ToolCallState.Pending)
                     {
                         _store.UpdateToolCall(tcb.Id, msg.IsError ? ToolCallState.Failed : ToolCallState.Completed, Encoding.UTF8.GetBytes(msg.Text ?? string.Empty));
                         break;

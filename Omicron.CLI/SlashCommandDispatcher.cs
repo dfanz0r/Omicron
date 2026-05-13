@@ -572,10 +572,10 @@ internal sealed class SlashCommandDispatcher
         else
         {
             targetModel = context.Catalog.Models.Values
-                .FirstOrDefault(m => m.Id == sourceRecord.ModelId && m.ProviderName == sourceRecord.ProviderName);
+                .FirstOrDefault(m => m.Id == sourceRecord!.ModelId && m.ProviderName == sourceRecord.ProviderName);
             if (targetModel is null)
             {
-                Console.WriteLine($"  Original model '{sourceRecord.ModelId}' not found.");
+                Console.WriteLine($"  Original model '{sourceRecord!.ModelId}' not found.");
                 return new ChatCommandResult(ChatCommandAction.Continue);
             }
         }
@@ -587,7 +587,7 @@ internal sealed class SlashCommandDispatcher
         }
 
         var apiKey = context.Config.ApiKeys.TryGetValue(targetModel.ProviderName, out var key) ? key : null;
-        var forked = context.Host.ForkSessionAsync(sourceRecord.SessionId, targetModel, apiKey: apiKey)
+        var forked = context.Host.ForkSessionAsync(sourceRecord!.SessionId, targetModel, apiKey: apiKey)
             .GetAwaiter().GetResult();
         if (forked is null)
         {

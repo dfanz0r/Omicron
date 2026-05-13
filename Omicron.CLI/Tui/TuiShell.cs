@@ -76,6 +76,8 @@ public sealed class TuiShell : IDisposable
         ResetState();
 
         // Enter alternate screen, hide cursor, enable mouse tracking, bracketed paste
+        // Kitty keyboard protocol is negotiated during backend initialization
+        // (see SystemTerminalBackend.ProbeKittyProtocol), not as a terminal scope.
         using var altScreen = TerminalScope.UseAlternateScreen(_backend);
         using var hideCursor = TerminalScope.HideCursor(_backend);
         using var mouseScope = TerminalScope.UseMouse(_backend);

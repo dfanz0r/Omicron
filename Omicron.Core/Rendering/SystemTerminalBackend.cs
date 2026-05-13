@@ -35,6 +35,14 @@ public sealed class SystemTerminalBackend : ITerminalBackend
     private readonly byte[] _readBuffer = new byte[2048];
     private int _pendingCount = 0;
 
+    // Bracketed paste accumulation
+    private bool _accumulatingPaste;
+    private readonly List<byte> _pasteBuffer = new();
+
+    // Kitty keyboard protocol state
+    private bool _kittyProtocolActive;
+    private bool _suppressNextLegacyEnter;
+
     // Lock-free SPSC queue isolates the Windows background read thread
     // from the main parsing thread.  The producer reads raw console bytes
     // into a temp buffer and pushes them; the consumer pops into _readBuffer.
@@ -117,6 +125,17 @@ public sealed class SystemTerminalBackend : ITerminalBackend
                 _rawMode = true;
             }
         }
+
+        // xterm modifyOtherKeys mode 2 — encodes modifiers for keys that
+        // already use escape sequences (arrows, function keys, etc.) as
+        // CSI 27;modifier;key~.  This is independent of the kitty keyboard
+        // protocol and acts as a fallback for terminals that support it but
+        // not kitty.
+        WriteRaw("\x1b[>4;2m");
+        Flush();
+
+        // Optimistically enable kitty keyboard protocol (flags = disambiguate | report_alternates | report_all_keys).
+        EnableKittyProtocolOptimistically();
     }
 
     private TerminalSize _lastReportedSize;
@@ -211,6 +230,59 @@ public sealed class SystemTerminalBackend : ITerminalBackend
                     continue;
                 }
 
+                // Bracketed paste accumulation mode: scan for paste end marker
+                if (_accumulatingPaste)
+                {
+                    // Scan for ESC[201~ (0x1B 0x5B 0x32 0x30 0x31 0x7E)
+                    int endIdx = -1;
+                    for (int i = offset; i <= totalLength - 6; i++)
+                    {
+                        if (_readBuffer[i] == 0x1B && _readBuffer[i + 1] == '[' &&
+                            _readBuffer[i + 2] == '2' && _readBuffer[i + 3] == '0' &&
+                            _readBuffer[i + 4] == '1' && _readBuffer[i + 5] == '~')
+                        {
+                            endIdx = i;
+                            break;
+                        }
+                    }
+
+                    if (endIdx >= 0)
+                    {
+                        // Accumulate raw bytes before the end marker
+                        for (int i = offset; i < endIdx; i++)
+                            _pasteBuffer.Add(_readBuffer[i]);
+
+                        offset = endIdx + 6; // Skip ESC[201~
+
+                        string pasteText = Encoding.UTF8.GetString(_pasteBuffer.ToArray());
+                        _pasteBuffer.Clear();
+                        _accumulatingPaste = false;
+                        yield return new PasteEvent(pasteText);
+                    }
+                    else
+                    {
+                        // No end marker — accumulate all remaining bytes for next read
+                        for (int i = offset; i < totalLength; i++)
+                            _pasteBuffer.Add(_readBuffer[i]);
+                        offset = totalLength;
+                        _pendingCount = 0;
+                    }
+                    continue;
+                }
+
+                // 1. Kitty protocol sequences (CSI ... u with proper format)
+                if (TryParseKittyKeySequence(_readBuffer, ref offset, totalLength, out var kittyEvent))
+                {
+                    // Partial kitty support: some terminals send both the kitty
+                    // sequence AND the legacy character. Suppress the next bare
+                    // \r so it doesn't trigger a duplicate Enter/Submit.
+                    if (kittyEvent is KeyEvent ke && ke.Key == Key.Enter)
+                        _suppressNextLegacyEnter = true;
+                    yield return kittyEvent!;
+                    continue;
+                }
+
+                // 2. Legacy escape sequences (CSI without kitty format, SS3, etc.)
                 if (TryParseEscapeSequence(_readBuffer, ref offset, totalLength, out var terminalEvent))
                 {
                     yield return terminalEvent!;
@@ -239,17 +311,7 @@ public sealed class SystemTerminalBackend : ITerminalBackend
                     continue;
                 }
 
-                // Fallback: under heavy load the ESC prefix can be separated
-                // from the rest of the SGR mouse sequence. Try to parse what
-                // looks like a mouse event even without the leading ESC.
-                if (TryParseSgrMouseFallback(_readBuffer, offset, totalLength, out var fallbackEvent, out int fallbackConsumed))
-                {
-                    offset += fallbackConsumed;
-                    yield return fallbackEvent;
-                    continue;
-                }
-
-                // Decode UTF-8 from current position
+                // 3. Raw UTF-8 / control characters (legacy terminals only)
                 var status = Rune.DecodeFromUtf8(
                     _readBuffer.AsSpan(offset, totalLength - offset),
                     out var rune, out int consumed);
@@ -257,7 +319,50 @@ public sealed class SystemTerminalBackend : ITerminalBackend
                 if (status == System.Buffers.OperationStatus.Done)
                 {
                     offset += consumed;
-                    yield return new KeyEvent(Key.Character, KeyModifiers.None, rune);
+
+                    // Detect \ + \r as Shift+Enter (some terminals encode it this way).
+                    // Both bytes arrive in the same buffer — consume them together
+                    // so the consumer never sees the intermediate \.
+                    if (rune.Value == '\\' && offset < totalLength && _readBuffer[offset] == '\r')
+                    {
+                        offset++; // Consume \r
+                        yield return new KeyEvent(Key.Enter, KeyModifiers.Shift, null);
+                        continue;
+                    }
+
+                    // Windows fallback for non-kitty terminals:
+                    // When the terminal does not support kitty keyboard protocol
+                    // (or it ignored our request), Enter and Shift+Enter both send
+                    // bare \r. Poll physical key state on Windows to distinguish them.
+                    // This only runs when we're in the raw UTF-8 path, meaning
+                    // neither the kitty parser nor the legacy escape parser matched.
+                    bool handled = false;
+#if !OMIT_WINDOWS_KEY_FALLBACK
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && rune.Value == '\r')
+                    {
+                        if (_suppressNextLegacyEnter)
+                        {
+                            // Terminal sent both kitty sequence and legacy \r;
+                            // the kitty parser already handled this keypress.
+                            _suppressNextLegacyEnter = false;
+                            handled = true;
+                        }
+                        else
+                        {
+                            var modifiers = KeyModifiers.None;
+                            if ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0) modifiers |= KeyModifiers.Shift;
+                            if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) modifiers |= KeyModifiers.Control;
+                            if ((GetAsyncKeyState(VK_MENU) & 0x8000) != 0) modifiers |= KeyModifiers.Alt;
+                            yield return new KeyEvent(Key.Enter, modifiers, null);
+                            handled = true;
+                        }
+                    }
+#endif
+
+                    if (!handled)
+                    {
+                        yield return new KeyEvent(Key.Character, KeyModifiers.None, rune);
+                    }
                 }
                 else if (status == System.Buffers.OperationStatus.NeedMoreData)
                 {
@@ -278,7 +383,7 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         }
     }
 
-    private static bool TryParseEscapeSequence(byte[] buffer, ref int offset, int length, out TerminalEvent? terminalEvent)
+    private bool TryParseEscapeSequence(byte[] buffer, ref int offset, int length, out TerminalEvent? terminalEvent)
     {
         terminalEvent = null;
 
@@ -292,7 +397,6 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         if (buffer[offset + 1] == '[')
         {
             // CSI sequence: ESC[...~
-            int seqStart = offset;
             int scan = offset + 2; // skip ESC[ locally
 
             // Read parameters until final byte (0x40–0x7E)
@@ -315,6 +419,14 @@ public sealed class SystemTerminalBackend : ITerminalBackend
             param = param.Replace("\0", "");
 
             offset = scan + 1;
+
+            // Kitty protocol push/pop/query responses — consume but don't emit.
+            if (finalByte == (byte)'u' && param.Length > 0 &&
+                (param[0] == '?' || param[0] == '>' || param[0] == '<'))
+            {
+                terminalEvent = null;
+                return true;
+            }
 
             // SGR mouse: ESC[<button;col;rowM  or ESC[<button;col;rowm
             // In mode 1002 (button-event tracking) motion while a button is
@@ -343,12 +455,78 @@ public sealed class SystemTerminalBackend : ITerminalBackend
             var modifiers = KeyModifiers.None;
             if (parts.Length > 1 && int.TryParse(parts[1], out var m))
             {
+                // CSI u protocol (final byte 'u' / 0x75) uses xterm-style modifier
+                // encoding: 1=no mod, 2=Shift, 3=Alt, 4=Shift+Alt, 5=Ctrl,
+                // 6=Shift+Ctrl, 7=Alt+Ctrl, 8=Shift+Alt+Ctrl.
+                // xterm modifyOtherKeys mode 2 (CSI 27;modifier;key~) also uses
+                // xterm-style modifier encoding.
+                // Other CSI sequences (final byte '~' / 0x7E) use DEC bit-flag
+                // encoding: 1=Shift, 2=Alt, 4=Ctrl.
+                bool useXtermEncoding = finalByte == 0x75 || (finalByte == 0x7E && mainParam == 27);
+                if (useXtermEncoding)
+                {
+                    // Convert xterm encoding to DEC bit-flag encoding
+                    if (m == 1) m = 0;
+                    else if (m > 1) m = m - 1;
+                }
                 if ((m & 1) != 0) modifiers |= KeyModifiers.Shift;
                 if ((m & 2) != 0) modifiers |= KeyModifiers.Alt;
                 if ((m & 4) != 0) modifiers |= KeyModifiers.Control;
             }
 
+            // Bracketed paste start/end markers
+            if (finalByte == 0x7E)
+            {
+                if (mainParam == 200)
+                {
+                    _accumulatingPaste = true;
+                    _pasteBuffer.Clear();
+                    terminalEvent = null;
+                    return true;
+                }
+                if (mainParam == 201)
+                {
+                    string pasteText = Encoding.UTF8.GetString(_pasteBuffer.ToArray());
+                    _pasteBuffer.Clear();
+                    _accumulatingPaste = false;
+                    terminalEvent = new PasteEvent(pasteText);
+                    return true;
+                }
+            }
+
+            // xterm modifyOtherKeys mode 2: CSI 27;modifier;key~
+            // The key code is the third parameter (e.g. 13 = Enter).
+            if (finalByte == 0x7E && mainParam == 27 && parts.Length >= 3 &&
+                int.TryParse(parts[2], out var otherKeyCode))
+            {
+                Key modKey = MapKeyCode(otherKeyCode);
+                terminalEvent = new KeyEvent(modKey, modifiers, null);
+                return true;
+            }
+
             Key key = MapCsiSequence(finalByte, mainParam);
+
+            // Kitty keyboard protocol with allKeysAsEscapes sends ALL keys as
+            // CSI codepoint;modifier u — not just printable characters.
+            // Control characters (1-31) must be mapped back to Key.Character
+            // so app-level handlers (e.g. Ctrl+D → Value==4) continue to work.
+            // PUA range (57344-63743) is reserved for functional keys (Shift,
+            // Ctrl, etc.) and must NOT be treated as text characters.
+            if (finalByte == 0x75 && key == Key.None &&
+                mainParam is > 0 and < 57344)
+            {
+                try
+                {
+                    var rune = new System.Text.Rune(mainParam);
+                    terminalEvent = new KeyEvent(Key.Character, modifiers, rune);
+                    return true;
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    // Invalid codepoint — fall through to default handling
+                }
+            }
+
             terminalEvent = new KeyEvent(key, modifiers, null);
             return true;
         }
@@ -405,82 +583,6 @@ public sealed class SystemTerminalBackend : ITerminalBackend
         return (button, modifiers);
     }
 
-    /// <summary>
-    /// Fallback SGR mouse parser for sequences that lost their ESC prefix.
-    /// Under heavy load the Windows console can split VT sequences across
-    /// reads or interleave NUL bytes, causing the ESC to be consumed as a
-    /// plain Escape key while the rest of the sequence leaks as characters.
-    /// This parser recognises the patterns <c>[&lt;btn;col;rowM</c> and
-    /// <c>&lt;btn;col;rowM</c> (with 'm' for release) so they don't end up
-    /// in the input field.
-    /// </summary>
-    private static bool TryParseSgrMouseFallback(
-        byte[] buffer, int offset, int length,
-        out TerminalEvent? terminalEvent, out int consumed)
-    {
-        terminalEvent = null;
-        consumed = 0;
-
-        int i = offset;
-
-        // Optional leading '[' (the ESC was already consumed)
-        if (i < length && buffer[i] == (byte)'[')
-            i++;
-
-        if (i >= length || buffer[i] != (byte)'<')
-            return false;
-
-        // Scan: digits, ';', digits, ';', digits, 'M' or 'm'
-        int startParam = i + 1;
-        int semicolons = 0;
-        int end = -1;
-        int scan = startParam;
-        while (scan < length)
-        {
-            byte b = buffer[scan];
-            if (b == (byte)';')
-            {
-                semicolons++;
-                if (semicolons > 2)
-                    return false;
-            }
-            else if (b == (byte)'M' || b == (byte)'m')
-            {
-                end = scan;
-                break;
-            }
-            else if (b < (byte)'0' || b > (byte)'9')
-            {
-                return false;
-            }
-            scan++;
-        }
-
-        if (end < 0 || semicolons != 2)
-            return false;
-
-        // Parse the three parameters
-        var paramText = Encoding.ASCII.GetString(buffer, startParam, end - startParam);
-        var parts = paramText.Split(';');
-        if (parts.Length != 3 ||
-            !int.TryParse(parts[0], out var btn) ||
-            !int.TryParse(parts[1], out var col) ||
-            !int.TryParse(parts[2], out var row))
-        {
-            return false;
-        }
-
-        bool isMotion = (btn & 32) != 0;
-        var (button, mouseModifiers) = MapSgrMouseButton(btn);
-        var kind = buffer[end] == (byte)'m' ? MouseEventKind.Released
-            : isMotion ? MouseEventKind.Dragged
-            : MouseEventKind.Pressed;
-
-        terminalEvent = new MouseEvent(row - 1, col - 1, button, kind, mouseModifiers);
-        consumed = end - offset + 1;
-        return true;
-    }
-
     private static Key MapCsiSequence(byte finalByte, int param)
     {
         return (finalByte, param) switch
@@ -510,8 +612,335 @@ public sealed class SystemTerminalBackend : ITerminalBackend
             (0x7E, 21) => Key.F10,
             (0x7E, 23) => Key.F11,
             (0x7E, 24) => Key.F12,
+            // Note: CSI u (0x75) sequences are NOT handled here anymore.
+            // They are parsed by the dedicated TryParseKittyKeySequence method
+            // which runs BEFORE TryParseEscapeSequence in the event loop.
             _ => Key.None
         };
+    }
+
+    /// <summary>
+    /// Map a numeric key code (from xterm modifyOtherKeys mode 2) to a <see cref="Key" />.
+    /// Key codes are ASCII / Unicode values: 13 = Enter, 9 = Tab, 32 = Space, etc.
+    /// </summary>
+    private static Key MapKeyCode(int code)
+    {
+        return code switch
+        {
+            13 => Key.Enter,
+            9 => Key.Tab,
+            27 => Key.Escape,
+            127 => Key.Backspace,
+            8 => Key.Backspace,
+            >= 32 and < 0x110000 => Key.Character,
+            _ => Key.None,
+        };
+    }
+
+    // ================================================================
+    // Kitty Keyboard Protocol Support
+    // ================================================================
+
+    /// <summary>
+    /// PUA (Private Use Area) key codes 57344-63743 map to functional keys
+    /// as defined by the kitty keyboard protocol.
+    /// </summary>
+    private static readonly Dictionary<int, Key> KittyPuaKeyMap = new()
+    {
+        // 0xF000-0xF00F: Cursor keys
+        [0xF000] = Key.Up,
+        [0xF001] = Key.Down,
+        [0xF002] = Key.Left,
+        [0xF003] = Key.Right,
+        [0xF004] = Key.Home,
+        [0xF005] = Key.End,
+        // 0xF006 = Insert (not in our Key enum yet? it is)
+        [0xF006] = Key.Insert,
+        [0xF007] = Key.Delete,
+        [0xF008] = Key.PageUp,
+        [0xF009] = Key.PageDown,
+        // 0xF00A-0xF00F: reserved
+
+        // 0xF010-0xF01F: Function keys F1-F19
+        [0xF010] = Key.F1,
+        [0xF011] = Key.F2,
+        [0xF012] = Key.F3,
+        [0xF013] = Key.F4,
+        [0xF014] = Key.F5,
+        [0xF015] = Key.F6,
+        [0xF016] = Key.F7,
+        [0xF017] = Key.F8,
+        [0xF018] = Key.F9,
+        [0xF019] = Key.F10,
+        [0xF01A] = Key.F11,
+        [0xF01B] = Key.F12,
+
+        // 0xF020: Keypad keys (mapped to equivalent non-keypad keys for now)
+        [0xF020] = Key.Up,
+        [0xF021] = Key.Down,
+        [0xF022] = Key.Left,
+        [0xF023] = Key.Right,
+        [0xF024] = Key.Home,
+        [0xF025] = Key.End,
+        [0xF026] = Key.PageUp,
+        [0xF027] = Key.PageDown,
+        [0xF028] = Key.Insert,
+        [0xF029] = Key.Delete,
+        [0xF02A] = Key.Tab,
+        [0xF02B] = Key.Enter,
+        [0xF02C] = Key.Escape,
+        [0xF02D] = Key.Backspace,
+
+        // 0xF030-0xF03F: Modifier keys (pressed/released)
+        // These are handled as modifier-only events, not as Key.Character.
+        [0xF030] = Key.None, // Left Shift
+        [0xF031] = Key.None, // Right Shift
+        [0xF032] = Key.None, // Left Control
+        [0xF033] = Key.None, // Right Control
+        [0xF034] = Key.None, // Left Alt
+        [0xF035] = Key.None, // Right Alt
+        [0xF036] = Key.None, // Left Meta
+        [0xF037] = Key.None, // Right Meta
+        [0xF038] = Key.None, // Left Super
+        [0xF039] = Key.None, // Right Super
+        [0xF03A] = Key.None, // Left Hyper
+        [0xF03B] = Key.None, // Right Hyper
+        [0xF03C] = Key.None, // Caps Lock
+        [0xF03D] = Key.None, // Num Lock
+        [0xF03E] = Key.None, // Scroll Lock
+        [0xF03F] = Key.None, // Print Screen
+
+        // 0xF040-0xF04F: more F keys (20-37)
+        [0xF040] = Key.F13,
+        [0xF041] = Key.F14,
+        [0xF042] = Key.F15,
+        [0xF043] = Key.F16,
+        [0xF044] = Key.F17,
+        [0xF045] = Key.F18,
+        [0xF046] = Key.F19,
+        [0xF047] = Key.F20,
+        [0xF048] = Key.F21,
+        [0xF049] = Key.F22,
+        [0xF04A] = Key.F23,
+        [0xF04B] = Key.F24,
+    };
+
+    /// <summary>
+    /// Try to parse a kitty keyboard protocol sequence.
+    /// Format: CSI unicode-key-code [:shifted-key][:base-layout-key] ; modifiers [:event-type] [; text-as-codepoints] u
+    /// </summary>
+    internal static bool TryParseKittyKeySequence(byte[] buffer, ref int offset, int length, out TerminalEvent? terminalEvent)
+    {
+        terminalEvent = null;
+
+        if (offset >= length || buffer[offset] != 0x1B)
+            return false;
+
+        if (offset + 2 > length || buffer[offset + 1] != '[')
+            return false;
+
+        // Scan forward to find the final byte (0x40-0x7E)
+        int scan = offset + 2;
+        int paramStart = scan;
+        while (scan < length && (buffer[scan] < 0x40 || buffer[scan] > 0x7E))
+            scan++;
+
+        if (scan >= length)
+            return false; // Incomplete sequence
+
+        byte finalByte = buffer[scan];
+
+        // Only interested in 'u' sequences (0x75)
+        if (finalByte != 0x75)
+            return false;
+
+        // Extract parameter string, stripping NULs
+        string rawParam = Encoding.ASCII.GetString(buffer, paramStart, scan - paramStart);
+        rawParam = rawParam.Replace("\0", "");
+
+        if (rawParam.Length == 0)
+            return false;
+
+        // Kitty query/response (prefix with ? or > or <) — consume but don't emit
+        if (rawParam[0] == '?' || rawParam[0] == '>' || rawParam[0] == '<')
+        {
+            offset = scan + 1;
+            terminalEvent = null;
+            return true;
+        }
+
+        // Split parameters by ';'
+        var parts = rawParam.Split(';');
+
+        // ---- First parameter: key-code:shifted-key:base-layout-key ----
+        var firstParts = parts[0].Split(':');
+        if (!int.TryParse(firstParts[0], out int keyCode))
+            return false;
+
+        int? shiftedKey = null;
+        if (firstParts.Length > 1 && firstParts[1].Length > 0)
+        {
+            if (int.TryParse(firstParts[1], out int sk))
+                shiftedKey = sk;
+        }
+
+        // baseLayoutKey (firstParts[2]) is not used in MVP — skip
+
+        // ---- Second parameter (optional): modifier-value[:event-type] ----
+        var modifiers = KeyModifiers.None;
+        var eventType = KeyEventType.Press;
+
+        if (parts.Length >= 2)
+        {
+            var secondParts = parts[1].Split(':');
+            if (int.TryParse(secondParts[0], out int modifierValue))
+            {
+                // Decode xterm-style modifiers: value = 1 + actual_modifiers
+                // 1=none, 2=shift, 3=alt, 4=shift+alt, 5=ctrl, 6=shift+ctrl, 7=alt+ctrl, 8=shift+alt+ctrl
+                int decMod = modifierValue - 1;
+
+                if ((decMod & 1) != 0) modifiers |= KeyModifiers.Shift;
+                if ((decMod & 2) != 0) modifiers |= KeyModifiers.Alt;
+                if ((decMod & 4) != 0) modifiers |= KeyModifiers.Control;
+            }
+
+            // Event type (Press/Repeat/Release) — default Press
+            if (secondParts.Length > 1 && int.TryParse(secondParts[1], out int eventTypeValue))
+            {
+                eventType = eventTypeValue switch
+                {
+                    2 => KeyEventType.Repeat,
+                    3 => KeyEventType.Release,
+                    _ => KeyEventType.Press,
+                };
+            }
+        }
+
+        // ---- Optional third parameter: text-as-codepoints ----
+        string? textAsCodepoints = null;
+        if (parts.Length > 2)
+        {
+            textAsCodepoints = parts[2];
+        }
+
+        offset = scan + 1;
+
+        // ---- Map key code to Key enum ----
+        Key key = MapKittyKeyCode(keyCode);
+
+        // ---- Resolve text ----
+        string? resolvedText = ResolveText(keyCode, modifiers, shiftedKey, textAsCodepoints);
+
+        Rune? rune = null;
+        if (key == Key.Character && keyCode is >= 32 and < 0x110000)
+        {
+            try { rune = new Rune(keyCode); }
+            catch (ArgumentOutOfRangeException) { }
+        }
+
+        terminalEvent = new KeyEvent(key, modifiers, rune)
+        {
+            KeyCode = keyCode,
+            ResolvedText = resolvedText,
+            EventType = eventType,
+        };
+        return true;
+    }
+
+    /// <summary>
+    /// Map a kitty key code to a <see cref="Key"/> enum value.
+    /// </summary>
+    private static Key MapKittyKeyCode(int keyCode)
+    {
+        // PUA range: functional keys (modifiers, cursor, etc.)
+        if (keyCode >= 0xE000 && keyCode <= 0xF8FF)
+        {
+            if (KittyPuaKeyMap.TryGetValue(keyCode, out var mapped))
+                return mapped;
+            return Key.None;
+        }
+
+        return keyCode switch
+        {
+            9 => Key.Tab,
+            13 => Key.Enter,
+            27 => Key.Escape,
+            127 => Key.Backspace,
+            8 => Key.Backspace,
+            // Control characters 1-26 are Key.Character (for Ctrl+A etc.)
+            >= 1 and <= 26 => Key.Character,
+            // Printable ASCII and Unicode
+            >= 32 and < 0x110000 => Key.Character,
+            _ => Key.None,
+        };
+    }
+
+    /// <summary>
+    /// Resolve the text that would be produced by a key combination.
+    /// </summary>
+    internal static string? ResolveText(int keyCode, KeyModifiers modifiers, int? shiftedKey, string? textAsCodepoints)
+    {
+        // 1. If the terminal sent explicit text (report_text flag), use it
+        if (textAsCodepoints is not null && textAsCodepoints.Length > 0)
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                foreach (var part in textAsCodepoints.Split(':'))
+                {
+                    if (int.TryParse(part, out int cp))
+                        sb.Append(char.ConvertFromUtf32(cp));
+                }
+                if (sb.Length > 0)
+                    return sb.ToString();
+            }
+            catch { /* fall through to other resolution */ }
+        }
+
+        // 2. If shifted key is available and shift is active, use it
+        if (shiftedKey.HasValue && modifiers.HasFlag(KeyModifiers.Shift))
+        {
+            try { return char.ConvertFromUtf32(shiftedKey.Value); }
+            catch (ArgumentOutOfRangeException) { }
+        }
+
+        // 3. Control characters: Ctrl+A → "\x01"
+        if (keyCode is >= 1 and <= 26 && modifiers.HasFlag(KeyModifiers.Control))
+        {
+            return ((char)keyCode).ToString();
+        }
+
+        // 4. Printable character from key code (excluding DEL at 127)
+        if ((keyCode >= 32 && keyCode < 127) || (keyCode > 127 && keyCode < 0x110000))
+        {
+            try { return char.ConvertFromUtf32(keyCode); }
+            catch (ArgumentOutOfRangeException) { }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Optimistically enable the kitty keyboard protocol.
+    /// Sends the enable sequence with flags = 13 (disambiguate + report_alternates + report_all_keys).
+    /// Also sends a query (ESC[?u) as a probe; the response, if any, is consumed silently
+    /// by the parser later.  Terminals that ignore the enable sequence continue in legacy mode.
+    /// </summary>
+    /// <remarks>
+    /// Flags breakdown:
+    ///   1 = disambiguate (CSI 27;mod;key~ for functional keys)
+    ///   4 = report_alternates (shifted-key sub-parameter, e.g. 49:33 for Shift+1)
+    ///   8 = report_all_keys (all keys as CSI codepoint;modifier u)
+    /// </remarks>
+    private void EnableKittyProtocolOptimistically()
+    {
+        // Query current state (the response, if any, is consumed silently later)
+        WriteRaw("\x1b[?u");
+        // Enable disambiguate + report_alternates + report_all_keys
+        WriteRaw("\x1b[=13u");
+        Flush();
+
+        _kittyProtocolActive = true;
     }
 
     // ----------------------------------------------------------------
@@ -653,6 +1082,18 @@ public sealed class SystemTerminalBackend : ITerminalBackend
             _cursorHidden = false;
         }
 
+        // Reset xterm modifyOtherKeys
+        WriteRaw("\x1b[>4;0m");
+
+        // Reset kitty keyboard protocol if we enabled it
+        if (_kittyProtocolActive)
+        {
+            WriteRaw("\x1b[=0u");
+            _kittyProtocolActive = false;
+        }
+
+        Flush();
+
         // Restore platform modes
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
@@ -711,6 +1152,11 @@ public sealed class SystemTerminalBackend : ITerminalBackend
                 safeMode |= ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT;
                 SetConsoleMode(stdInHandle, safeMode);
             }
+
+            // Reset kitty keyboard protocol (clear all flags) and xterm modifyOtherKeys
+            var resetBytes = Encoding.UTF8.GetBytes("\x1b[=0u\x1b[>4;0m");
+            Console.OpenStandardOutput().Write(resetBytes, 0, resetBytes.Length);
+            Console.OpenStandardOutput().Flush();
         }
         else
         {
@@ -817,6 +1263,17 @@ public sealed class SystemTerminalBackend : ITerminalBackend
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetConsoleScreenBufferInfo(IntPtr hConsoleOutput, out ConsoleScreenBufferInfo lpConsoleScreenBufferInfo);
+
+#if !OMIT_WINDOWS_KEY_FALLBACK
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    private const int VK_SHIFT = 0x10;
+    private const int VK_CONTROL = 0x11;
+    private const int VK_MENU = 0x12;
+#endif
+
+
 
     // ── Unix P/Invoke ──
 

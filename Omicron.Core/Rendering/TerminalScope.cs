@@ -42,7 +42,7 @@ public sealed class TerminalScope : IDisposable
     public static TerminalScope UseMouse(ITerminalBackend backend)
         => Acquire(backend, ScopeType.Mouse, "\x1b[?1000h\x1b[?1002h\x1b[?1006h");
 
-    private static TerminalScope Acquire(ITerminalBackend backend, ScopeType type, string? enterSequence)
+    private static TerminalScope Acquire(ITerminalBackend backend, ScopeType type, string? enterSequence, string? exitSequence = null)
     {
         var counters = ScopeCounter.GetOrCreate(backend);
         int count = counters.GetCount(type);

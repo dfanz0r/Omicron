@@ -73,13 +73,13 @@ public sealed class TranscriptStore
     /// <summary>
     /// Start a tool call block (before any output is available).
     /// </summary>
-    public ToolCallBlock AppendToolCall(string toolName)
+    public ToolCallBlock AppendToolCall(string toolName, string? toolCallId = null)
     {
         var id = BlockId.New();
         // Write a placeholder text
         var textBytes = System.Text.Encoding.UTF8.GetBytes($"[tool: {toolName}]");
         var pos = Text.Append(textBytes);
-        var block = new ToolCallBlock(id, pos, textBytes.Length, toolName, ToolCallState.Running);
+        var block = new ToolCallBlock(id, pos, textBytes.Length, toolName, toolCallId, ToolCallState.Running);
         _blocks.Add(block);
         _lastAssistantBlockId = null;
         _lastAssistantCompleted = true;
@@ -114,7 +114,7 @@ public sealed class TranscriptStore
 
         // Block not found — create a new one
         var pos = Text.Append(outputText);
-        var block = new ToolCallBlock(blockId, pos, outputText.Length, "unknown", newState);
+        var block = new ToolCallBlock(blockId, pos, outputText.Length, "unknown", null, newState);
         _blocks.Add(block);
         return block;
     }

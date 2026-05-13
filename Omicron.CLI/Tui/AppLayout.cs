@@ -150,7 +150,9 @@ public sealed class AppLayout : IDisposable
         {
             case KeyEvent ke:
                 // Ctrl+D — exit
-                if (ke.Key == Key.Character && ke.Text?.Value == 4)
+                // Kitty protocol: ResolvedText == "\x04"
+                // Legacy: Text?.Value == 4
+                if (ke.ResolvedText == "\x04" || (ke.Key == Key.Character && ke.Text?.Value == 4))
                 {
                     if (_isGenerating)
                     {
@@ -163,7 +165,9 @@ public sealed class AppLayout : IDisposable
                 }
 
                 // Ctrl+F — toggle find/search mode
-                if (ke.Key == Key.Character && ke.Text?.Value == 6) // Ctrl+F
+                // Kitty protocol: ResolvedText == "\x06"
+                // Legacy: Text?.Value == 6
+                if (ke.ResolvedText == "\x06" || (ke.Key == Key.Character && ke.Text?.Value == 6)) // Ctrl+F
                 {
                     if (_isFindMode)
                     {
@@ -220,6 +224,11 @@ public sealed class AppLayout : IDisposable
                         return true;
                 }
                 break;
+
+            case PasteEvent pe:
+                _input.Insert(pe.Text);
+                _shell.RequestRender();
+                return true;
 
             case MouseEvent me:
                 // ── Scrollbar drag ──
@@ -331,12 +340,12 @@ public sealed class AppLayout : IDisposable
                 _shell.RequestRender();
                 return true;
 
-            case Key.Character when ke.Text.HasValue:
+            case Key.Character when (ke.ResolvedText ?? ke.Text?.ToString()) is string text:
             {
-                char c = (char)ke.Text.Value.Value;
+                char c = text[0];
                 if (c >= 32 && c != 127)
                 {
-                    _input.Insert(c.ToString());
+                    _input.Insert(text);
                     UpdateFindQuery();
                 }
                 return true;

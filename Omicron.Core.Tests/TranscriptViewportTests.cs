@@ -344,7 +344,7 @@ public class TranscriptViewportTests
         var editor = new Omicron.CLI.Tui.InputEditorWidget();
         editor.Insert("hello");
         Assert.Equal("hello", editor.Text);
-        Assert.Equal(5, editor.CursorPosition);
+        Assert.Equal(5, editor.CursorColumn);
     }
 
     [Fact]
@@ -373,9 +373,9 @@ public class TranscriptViewportTests
         var editor = new Omicron.CLI.Tui.InputEditorWidget();
         editor.Insert("hello");
         editor.MoveHome();
-        Assert.Equal(0, editor.CursorPosition);
+        Assert.Equal(0, editor.CursorColumn);
         editor.MoveEnd();
-        Assert.Equal(5, editor.CursorPosition);
+        Assert.Equal(5, editor.CursorColumn);
     }
 
     [Fact]
@@ -390,7 +390,7 @@ public class TranscriptViewportTests
 
         Assert.Equal("hello", submitted);
         Assert.Empty(editor.Text);
-        Assert.Equal(0, editor.CursorPosition);
+        Assert.Equal(0, editor.CursorColumn);
     }
 
     [Fact]

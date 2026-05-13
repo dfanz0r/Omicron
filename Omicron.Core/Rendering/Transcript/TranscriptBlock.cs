@@ -38,6 +38,7 @@ public sealed record ToolCallBlock(
     TextPosition Position,
     int ByteLength,
     string ToolName,
+    string? ToolCallId,
     ToolCallState State) : TranscriptBlock(Id);
 
 /// <summary>A system notice (errors, status messages).</summary>

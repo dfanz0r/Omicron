@@ -200,7 +200,7 @@ public class TuiSessionIntegrationTests
 
         Assert.Equal("hey", editor.Text);
         Assert.True(editor.HasContent);
-        Assert.Equal(3, editor.CursorPosition);
+        Assert.Equal(3, editor.CursorColumn);
 
         // Submit
         string? submitted = null;
@@ -217,18 +217,18 @@ public class TuiSessionIntegrationTests
     {
         var editor = new Omicron.CLI.Tui.InputEditorWidget();
         editor.Insert("hello");
-        Assert.Equal(5, editor.CursorPosition);
+        Assert.Equal(5, editor.CursorColumn);
 
         editor.MoveLeft();
-        Assert.Equal(4, editor.CursorPosition);
+        Assert.Equal(4, editor.CursorColumn);
         editor.MoveLeft();
-        Assert.Equal(3, editor.CursorPosition);
+        Assert.Equal(3, editor.CursorColumn);
         editor.MoveRight();
-        Assert.Equal(4, editor.CursorPosition);
+        Assert.Equal(4, editor.CursorColumn);
         editor.MoveHome();
-        Assert.Equal(0, editor.CursorPosition);
+        Assert.Equal(0, editor.CursorColumn);
         editor.MoveEnd();
-        Assert.Equal(5, editor.CursorPosition);
+        Assert.Equal(5, editor.CursorColumn);
     }
 
     [Fact]
@@ -239,12 +239,12 @@ public class TuiSessionIntegrationTests
 
         editor.Backspace();
         Assert.Equal("hell", editor.Text);
-        Assert.Equal(4, editor.CursorPosition);
+        Assert.Equal(4, editor.CursorColumn);
 
         editor.MoveHome();
         editor.Delete();
         Assert.Equal("ell", editor.Text);
-        Assert.Equal(0, editor.CursorPosition);
+        Assert.Equal(0, editor.CursorColumn);
     }
 
     [Fact]
@@ -255,11 +255,11 @@ public class TuiSessionIntegrationTests
 
         // Ctrl+A → Home
         Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('\u0001'))));
-        Assert.Equal(0, editor.CursorPosition);
+        Assert.Equal(0, editor.CursorColumn);
 
         // Ctrl+E → End
         Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('\u0005'))));
-        Assert.Equal(11, editor.CursorPosition);
+        Assert.Equal(11, editor.CursorColumn);
 
         // Ctrl+U → Kill to start
         Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('\u0015'))));
