@@ -281,11 +281,29 @@ public sealed class InputEditorWidget : ITuiWidget
         _cursorColumn = pos;
     }
 
-    /// <summary>Delete the word backward from the cursor on the current line.</summary>
+    /// <summary>Delete the word backward from the cursor.</summary>
     public void DeleteWordBackward()
     {
         var line = _lines[_cursorLine];
-        if (_cursorColumn <= 0) return;
+
+        // At start of line — merge with previous line first, then continue
+        if (_cursorColumn <= 0)
+        {
+            if (_cursorLine > 0)
+            {
+                var prevLine = _lines[_cursorLine - 1];
+                _cursorColumn = prevLine.Length;
+                prevLine.Append(line);
+                _lines.RemoveAt(_cursorLine);
+                _cursorLine--;
+            }
+            else
+            {
+                return; // Top of buffer, nothing to delete
+            }
+            line = _lines[_cursorLine];
+        }
+
         int start = _cursorColumn - 1;
         while (start >= 0 && !IsWordChar(line[start])) start--;
         while (start >= 0 && IsWordChar(line[start])) start--;
