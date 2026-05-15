@@ -1,7 +1,7 @@
 # Future Hardening Backlog
 
 Status: Active tracking document  
-Last updated: 2026-05-10
+Date: 2026-05-12
 
 This document tracks non-blocking hardening items discovered during implementation reviews. Completed items are archived in `COMPLETED-HARDENING-BACKLOG.md`.
 
@@ -273,6 +273,61 @@ Risk:
 Potential follow-up:
 
 - Add a test verifying that `ProviderStateManager.ClearSession` emits the correct number of `ProviderStateClearedEvent`s.
+
+---
+
+### FH-0027: Azure OpenAI Chat Completions requires `api-version` query parameter
+
+Status: Open  
+Area: `Omicron.Core/Providers/OpenAiProvider.cs`, `Omicron.Core/Providers/IChatProvider.cs` (`ShapeBasedProvider`), `Omicron.Core/Providers/ApiShape.cs`  
+Priority: Medium for Azure OpenAI users. Low until Azure is officially supported.
+
+Current state:
+
+- `OpenAiProvider` (and `ShapeBasedProvider`) constructs the endpoint as `{baseUrl.TrimEnd('/')}/chat/completions`.
+- Azure OpenAI endpoints require the `?api-version=YYYY-MM-DD-preview` query parameter (e.g. `?api-version=2025-01-01-preview`).
+- Without it, Azure returns HTTP 404.
+- The OpenAI SDK's `AzureOpenAI` client handles this transparently, but `OpenAiProvider` uses raw `HttpClient`.
+- The Responses API shape (`OpenAiResponsesShape`) may also need the same treatment if Azure later supports it.
+- `OpenCodeProvider` and `OpenRouterProvider` inherit the same URL construction from `ShapeBasedProvider` and would be affected if pointed at Azure proxies.
+
+Risk:
+
+- Users targeting Azure OpenAI deployments (e.g. `cognitiveservices model-router`) cannot use the `OpenAiChat` ApiType even though the request/response body is otherwise identical.
+- Work-arounds like appending `?api-version=…` to `model.BaseUrl` are fragile because `ShapeBasedProvider` strips the trailing slash, which could break query-string handling if not done carefully.
+
+Potential follow-up:
+
+- Introduce a provider-level or model-level `ApiVersion` property.
+- In `ShapeBasedProvider.StreamAsync`, append `?api-version={apiVersion}` when the provider/model is flagged as Azure.
+- Alternatively, introduce an `AzureOpenAiProvider` that wraps the `Azure.AI.OpenAI` SDK (similar to how `azure-openai-responses` works) for the Chat Completions path.
+- Consider a more general `QueryParameters` dictionary on `Model` or `ChatOptions` so other hosted/proxied endpoints can inject required parameters.
+
+---
+
+### FH-0028: Custom model source via config and tunable API model parameters
+
+Status: Open  
+Area: `Omicron.Core/Models/`, `Omicron.Core/Config/`, `Omicron.CLI/Program.cs`  
+Priority: Medium.
+
+Current state:
+
+- Models are discovered automatically from provider catalog endpoints (e.g. OpenAI `/v1/models`).
+- There is no way to add a custom model entry via config (e.g. a self-hosted endpoint, a model-router deployment, or a provider not in the catalog).
+- Model parameters (`temperature`, `max_tokens`, `reasoning_effort`) are set globally or per-session but cannot be overridden per-model in config.
+
+Risk:
+
+- Users targeting custom endpoints (Azure model-router, local vLLM, Ollama, etc.) cannot add them without modifying the provider catalog.
+- Tuning parameters per-model (e.g. low temperature for code, high for creative writing) requires CLI workarounds.
+
+Potential follow-up:
+
+- Add a `Models` section to `AgentConfig` for user-defined model entries with `id`, `name`, `providerName`, `baseUrl`, `apiKey`, and `apiType`.
+- Allow per-model overrides in config: `temperature`, `maxTokens`, `reasoningEffort`, `storagePolicy`.
+- Merge user-defined models into the catalog at startup.
+- Expose parameters via `/model` or `/config` slash commands for runtime tuning.
 
 ---
 
