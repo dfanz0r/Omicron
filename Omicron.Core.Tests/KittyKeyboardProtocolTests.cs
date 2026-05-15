@@ -69,7 +69,7 @@ public class KittyKeyboardProtocolTests
     public void Parse_Shift1()
     {
         // CSI 49;2 u → Shift+1 (no shifted-key sub-parameter)
-        // ASCII shift fallback should map this to "!"
+        // Without report_alternates, ResolvedText is the unshifted key code.
         var buffer = Encoding.ASCII.GetBytes("\x1b[49;2u");
         int offset = 0;
         var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
@@ -79,8 +79,7 @@ public class KittyKeyboardProtocolTests
         Assert.Equal(Key.Character, ke.Key);
         Assert.Equal(KeyModifiers.Shift, ke.Modifiers);
         Assert.Equal(49, ke.KeyCode);
-        // ASCII shift fallback maps Shift+1 → "!"
-        Assert.Equal("!", ke.ResolvedText);
+        Assert.Equal("1", ke.ResolvedText);
     }
 
     [Fact]
@@ -447,74 +446,19 @@ public class KittyKeyboardProtocolTests
     }
 
     [Fact]
-    public void ResolveText_Shift1_WithoutShiftedKey_FallsBackToAscii()
+    public void ResolveText_Shift1_WithoutShiftedKey_ReturnsKeyCode()
     {
-        // Shift+1 with no shifted-key sub-parameter → ASCII shift map gives "!"
+        // Shift+1 with no shifted-key sub-parameter → returns unshifted key code "1"
         var result = SystemTerminalBackend.ResolveText(49, KeyModifiers.Shift, null, null);
-        Assert.Equal("!", result);
+        Assert.Equal("1", result);
     }
 
     [Fact]
-    public void ResolveText_ShiftA_WithoutShiftedKey_UpperCase()
+    public void ResolveText_ShiftA_WithoutShiftedKey_ReturnsKeyCode()
     {
-        // Shift+A with no shifted-key sub-parameter → ASCII shift map gives "A"
+        // Shift+A with no shifted-key sub-parameter → returns unshifted key code "a"
         var result = SystemTerminalBackend.ResolveText(97, KeyModifiers.Shift, null, null);
-        Assert.Equal("A", result);
-    }
-
-    [Fact]
-    public void ResolveText_Shift2_AtSign()
-    {
-        // Shift+2 → "@"
-        var result = SystemTerminalBackend.ResolveText(50, KeyModifiers.Shift, null, null);
-        Assert.Equal("@", result);
-    }
-
-    [Fact]
-    public void ResolveText_ShiftMinus_Underscore()
-    {
-        // Shift+- → "_"
-        var result = SystemTerminalBackend.ResolveText(45, KeyModifiers.Shift, null, null);
-        Assert.Equal("_", result);
-    }
-
-    [Fact]
-    public void ResolveText_ShiftPeriod_GreaterThan()
-    {
-        // Shift+. → ">"
-        var result = SystemTerminalBackend.ResolveText(46, KeyModifiers.Shift, null, null);
-        Assert.Equal(">", result);
-    }
-
-    [Fact]
-    public void AsciiShiftMap_AllMappings()
-    {
-        // Verify the complete ASCII shift map
-        Assert.Equal("!", SystemTerminalBackend.AsciiShiftMap('1'));
-        Assert.Equal("@", SystemTerminalBackend.AsciiShiftMap('2'));
-        Assert.Equal("#", SystemTerminalBackend.AsciiShiftMap('3'));
-        Assert.Equal("$", SystemTerminalBackend.AsciiShiftMap('4'));
-        Assert.Equal("%", SystemTerminalBackend.AsciiShiftMap('5'));
-        Assert.Equal("^", SystemTerminalBackend.AsciiShiftMap('6'));
-        Assert.Equal("&", SystemTerminalBackend.AsciiShiftMap('7'));
-        Assert.Equal("*", SystemTerminalBackend.AsciiShiftMap('8'));
-        Assert.Equal("(", SystemTerminalBackend.AsciiShiftMap('9'));
-        Assert.Equal(")", SystemTerminalBackend.AsciiShiftMap('0'));
-        Assert.Equal("_", SystemTerminalBackend.AsciiShiftMap('-'));
-        Assert.Equal("+", SystemTerminalBackend.AsciiShiftMap('='));
-        Assert.Equal("{", SystemTerminalBackend.AsciiShiftMap('['));
-        Assert.Equal("}", SystemTerminalBackend.AsciiShiftMap(']'));
-        Assert.Equal("|", SystemTerminalBackend.AsciiShiftMap('\\'));
-        Assert.Equal(":", SystemTerminalBackend.AsciiShiftMap(';'));
-        Assert.Equal("\"", SystemTerminalBackend.AsciiShiftMap('\''));
-        Assert.Equal("<", SystemTerminalBackend.AsciiShiftMap(','));
-        Assert.Equal(">", SystemTerminalBackend.AsciiShiftMap('.'));
-        Assert.Equal("?", SystemTerminalBackend.AsciiShiftMap('/'));
-        Assert.Equal("~", SystemTerminalBackend.AsciiShiftMap('`'));
-        Assert.Equal("A", SystemTerminalBackend.AsciiShiftMap('a'));
-        Assert.Equal("Z", SystemTerminalBackend.AsciiShiftMap('z'));
-        Assert.Null(SystemTerminalBackend.AsciiShiftMap(' '));
-        Assert.Null(SystemTerminalBackend.AsciiShiftMap((char)13));
+        Assert.Equal("a", result);
     }
 
     // ================================================================

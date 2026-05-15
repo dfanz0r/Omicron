@@ -27,10 +27,14 @@ public sealed class InputEditorWidget : ITuiWidget
     private int _historyIndex = -1; // -1 means current (new) input
 
     /// <summary>Maximum number of lines in the input editor.</summary>
-    public int MaxInputLines { get; set; } = 10;
+    public int MaxInputLines { get; set; } = 50;
 
     /// <summary>Maximum number of history entries to keep.</summary>
     public int MaxHistory { get; set; } = 100;
+
+    // ── Paste markers (pi-style large paste preview) ──
+    private readonly Dictionary<int, string> _pastes = new();
+    private int _pasteCounter;
 
     /// <summary>Add an entry to the input history.</summary>
     public void AddToHistory(string text)
@@ -84,6 +88,19 @@ public sealed class InputEditorWidget : ITuiWidget
         string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
         var parts = normalized.Split('\n');
 
+        // Large paste: store full text and insert a short marker instead
+        if (parts.Length > 10 || normalized.Length > 1000)
+        {
+            _pasteCounter++;
+            int pasteId = _pasteCounter;
+            _pastes[pasteId] = normalized;
+            var marker = parts.Length > 10
+                ? $"[paste #{pasteId} +{parts.Length} lines]"
+                : $"[paste #{pasteId} {normalized.Length} chars]";
+            InsertSingleLine(marker);
+            return;
+        }
+
         var currentLine = _lines[_cursorLine];
 
         // Insert first part at cursor position
@@ -104,20 +121,15 @@ public sealed class InputEditorWidget : ITuiWidget
             _cursorLine++;
             _cursorColumn = parts[i].Length;
             currentLine = _lines[_cursorLine];
-
-            // Enforce maximum input lines
-            if (_lines.Count > MaxInputLines)
-            {
-                // Remove oldest line
-                _lines.RemoveAt(0);
-                _cursorLine--;
-                if (_cursorLine < 0)
-                {
-                    _cursorLine = 0;
-                    _cursorColumn = 0;
-                }
-            }
         }
+    }
+
+    /// <summary>Insert text at cursor on the current line without splitting on newlines.</summary>
+    private void InsertSingleLine(string text)
+    {
+        var line = _lines[_cursorLine];
+        line.Insert(_cursorColumn, text);
+        _cursorColumn += text.Length;
     }
 
     /// <summary>Delete the character before the cursor, merging lines as needed.</summary>
@@ -218,15 +230,36 @@ public sealed class InputEditorWidget : ITuiWidget
         if (_lines.Count == 0 || (_lines.Count == 1 && _lines[0].Length == 0))
             return;
 
-        var text = Text;
+        var expanded = ExpandPasteMarkers(Text);
         _lines.Clear();
         _lines.Add(new StringBuilder());
         _cursorLine = 0;
         _cursorColumn = 0;
         _pendingCompletions = null;
         _completionAnchor = "";
-        AddToHistory(text);
-        OnSubmit?.Invoke(text);
+        _pastes.Clear();
+        _pasteCounter = 0;
+        AddToHistory(expanded);
+        OnSubmit?.Invoke(expanded);
+    }
+
+    private string ExpandPasteMarkers(string text)
+    {
+        foreach (var (pasteId, content) in _pastes)
+        {
+            var marker = $"[paste #{pasteId}";
+            int idx = text.IndexOf(marker, StringComparison.Ordinal);
+            if (idx >= 0)
+            {
+                // Find end of marker (at closing bracket)
+                int end = text.IndexOf(']', idx);
+                if (end >= 0)
+                {
+                    text = text[..idx] + content + text[(end + 1)..];
+                }
+            }
+        }
+        return text;
     }
 
     /// <summary>Clear the buffer without submitting.</summary>
@@ -634,7 +667,8 @@ public sealed class InputEditorWidget : ITuiWidget
             int visibleCount = Math.Min(_pendingCompletions.Count, MaxVisibleCompletions);
             ReservedPopupHeight = visibleCount + 1; // items + title bar
         }
-        int lineCount = Math.Min(_lines.Count, MaxInputLines);
+        // Grow up to half the terminal height, then let the rest overflow
+        int lineCount = Math.Min(_lines.Count, Math.Max(1, available.Height / 2));
         return new Size(available.Width, lineCount + ReservedPopupHeight);
     }
 
@@ -648,7 +682,7 @@ public sealed class InputEditorWidget : ITuiWidget
         var style = TextStyle.Default;
 
         // Input area occupies the bottom rows of our bounds
-        int visibleLineCount = Math.Min(_lines.Count, MaxInputLines);
+        int visibleLineCount = Math.Min(_lines.Count, _bounds.Height - ReservedPopupHeight);
         int inputStartRow = _bounds.Bottom - visibleLineCount;
 
         // If there are pending completions, draw popup above the input area
@@ -664,8 +698,9 @@ public sealed class InputEditorWidget : ITuiWidget
             Style = style,
         };
 
-        // Determine which slice of _lines to render (if more than MaxInputLines)
-        int lineOffset = _lines.Count > MaxInputLines ? _lines.Count - MaxInputLines : 0;
+        // Determine which slice of _lines to render (newest lines at bottom)
+        int lineOffset = _lines.Count - visibleLineCount;
+        if (lineOffset < 0) lineOffset = 0;
 
         // Draw each visible line
         for (int i = 0; i < visibleLineCount; i++)
