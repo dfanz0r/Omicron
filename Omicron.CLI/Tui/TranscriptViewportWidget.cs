@@ -147,6 +147,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
 
             case ToolInvocationStartedEvent tis:
                 FlushPending();
+                AppendSeparatorBeforeToolCallIfNeeded();
                 _store.AppendToolCall(tis.ToolName, tis.ToolCallId.Value);
                 RebuildLayout();
                 break;
@@ -157,37 +158,39 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 // Local function to find and update the matching ToolCallBlock
                 void UpdateWithSpan(ReadOnlySpan<byte> bytes, List<IContentBlock>? blocks)
                 {
-                    // Match by ToolCallId first (precise), then by ToolName + Running state
+                    // Match by ToolCallId (precise). The TranscriptStore's
+                    // UpdateToolCall handles idempotency internally, so
+                    // duplicate completions for the same block are a no-op.
                     for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                     {
                         if (_store.Blocks[i] is ToolCallBlock tcb &&
-                            tcb.ToolCallId == tic.ToolCallId.Value &&
-                            tcb.State is ToolCallState.Running or ToolCallState.Pending)
+                            tcb.ToolCallId == tic.ToolCallId.Value)
                         {
-                            _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, bytes, blocks);
+                            _store.UpdateToolCall(tcb.Id, tic.IsError ? ToolCallState.Failed : ToolCallState.Completed, bytes, blocks);
                             return;
                         }
                     }
 
-                    // Fallback: match by tool name + Running state
+                    // Fallback: match by tool name + Running/Pending (legacy/replay
+                    // safety for out-of-order events where the start hasn't arrived).
                     for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                     {
                         if (_store.Blocks[i] is ToolCallBlock tcb &&
                             tcb.ToolName == tic.ToolName &&
                             tcb.State is ToolCallState.Running or ToolCallState.Pending)
                         {
-                            _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, bytes, blocks);
+                            _store.UpdateToolCall(tcb.Id, tic.IsError ? ToolCallState.Failed : ToolCallState.Completed, bytes, blocks);
                             return;
                         }
                     }
 
-                    // Last resort: match any Running/Pending tool block
+                    // Last resort: match any Running/Pending tool block.
                     for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                     {
                         if (_store.Blocks[i] is ToolCallBlock tcb &&
                             tcb.State is ToolCallState.Running or ToolCallState.Pending)
                         {
-                            _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, bytes, blocks);
+                            _store.UpdateToolCall(tcb.Id, tic.IsError ? ToolCallState.Failed : ToolCallState.Completed, bytes, blocks);
                             return;
                         }
                     }
@@ -210,6 +213,14 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                     {
                         blockSb.Dispose();
                     }
+                }
+                else if (tic.ResultBytes.HasValue && !tic.IsError)
+                {
+                    // Prefer byte data to avoid string→UTF-8 roundtrip
+                    var bytes = new byte[tic.ResultBytes.Value.Length + 1];
+                    bytes[0] = (byte)'\n';
+                    tic.ResultBytes.Value.Span.CopyTo(bytes.AsSpan(1));
+                    UpdateWithSpan(bytes.AsSpan(), null);
                 }
                 else
                 {
@@ -265,6 +276,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 _store.AppendSeparator();
                 break;
             case MessageRole.ToolResult:
+                AppendSeparatorBeforeToolCallIfNeeded();
                 _store.AppendToolCall(msg.ToolName ?? "tool", msg.ToolCallId);
                 for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                 {
@@ -272,12 +284,21 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                         tcb.ToolCallId == msg.ToolCallId &&
                         tcb.State is ToolCallState.Running or ToolCallState.Pending)
                     {
-                        _store.UpdateToolCall(tcb.Id, msg.IsError ? ToolCallState.Failed : ToolCallState.Completed, Encoding.UTF8.GetBytes(msg.Text ?? string.Empty));
+                        var resultSpan = msg.Utf8Text.HasValue
+                            ? msg.Utf8Text.Value.Span
+                            : (ReadOnlySpan<byte>)Encoding.UTF8.GetBytes(msg.Text ?? string.Empty);
+                        _store.UpdateToolCall(tcb.Id, msg.IsError ? ToolCallState.Failed : ToolCallState.Completed, resultSpan);
                         break;
                     }
                 }
                 break;
         }
+    }
+
+    private void AppendSeparatorBeforeToolCallIfNeeded()
+    {
+        if (_store.Blocks.Count > 0 && _store.Blocks[^1] is not SeparatorBlock)
+            _store.AppendSeparator();
     }
 
     private void InvalidateLastBlock()

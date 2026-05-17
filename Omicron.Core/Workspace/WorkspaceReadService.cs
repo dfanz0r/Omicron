@@ -126,35 +126,15 @@ public sealed class WorkspaceReadService : IWorkspaceReadService
 
         var span = bytes.Span;
 
-        // First pass: count total lines and record byte offsets of each line start.
-        // Use a pooled list for line offsets to avoid allocating a string array.
+        // Single pass: record byte offset of each line start.
+        // Skip trailing \n so a file ending with \n does not produce an empty final line.
         var lineStarts = new List<int> { 0 };
-        for (int i = 0; i < span.Length; i++)
+        for (var i = 0; i < span.Length; i++)
         {
-            if (span[i] == (byte)'\n')
+            if (span[i] == (byte)'\n' && i + 1 < span.Length)
                 lineStarts.Add(i + 1);
         }
-
-        // If the last byte is not a newline, we still have a final line.
-        // lineStarts already accounts for this because each entry points to
-        // the start of a line; the total number of lines equals the number
-        // of line starts (the final entry points one past the last byte if
-        // the file ends with \n, or to the start of the final line).
-        // Correction: if the file doesn't end with \n, the final line is
-        // not counted by newline scanning. Let's recompute.
-        // Re-scan properly:
-        lineStarts.Clear();
-        int totalLines = 1; // at least one line even for empty-ish files
-        lineStarts.Add(0);
-        for (int i = 0; i < span.Length; i++)
-        {
-            if (span[i] == (byte)'\n')
-            {
-                lineStarts.Add(i + 1);
-                totalLines = lineStarts.Count;
-            }
-        }
-        totalLines = lineStarts.Count;
+        var totalLines = lineStarts.Count;
 
         // Chunk: find the 0-based line index that corresponds to chunk * DefaultChunkSizeBytes
         int chunkStartLine = 0;

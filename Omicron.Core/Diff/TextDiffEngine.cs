@@ -22,11 +22,38 @@ internal static class TextDiffEngine
     {
         options ??= TextDiffOptions.Default;
 
-        int N = oldLines.Count;
-        int M = newLines.Count;
+        var normalizer = new LineNormalizer(options);
+        var oldCodes = new int[oldLines.Count];
+        var newCodes = new int[newLines.Count];
+        for (var i = 0; i < oldLines.Count; i++) oldCodes[i] = normalizer.GetCode(oldLines[i]);
+        for (var i = 0; i < newLines.Count; i++) newCodes[i] = normalizer.GetCode(newLines[i]);
+
+        return DiffCodes(oldCodes, newCodes, options);
+    }
+
+    public static TextDiffResult DiffLines(
+        Utf8LineIndex oldLines,
+        Utf8LineIndex newLines,
+        TextDiffOptions? options = null)
+    {
+        options ??= TextDiffOptions.Default;
+
+        var normalizer = new Utf8LineNormalizer(options);
+        var oldCodes = new int[oldLines.Count];
+        var newCodes = new int[newLines.Count];
+        for (var i = 0; i < oldLines.Count; i++) oldCodes[i] = normalizer.GetCode(oldLines, i);
+        for (var i = 0; i < newLines.Count; i++) newCodes[i] = normalizer.GetCode(newLines, i);
+
+        return DiffCodes(oldCodes, newCodes, options);
+    }
+
+    private static TextDiffResult DiffCodes(int[] oldCodes, int[] newCodes, TextDiffOptions options)
+    {
+        var N = oldCodes.Length;
+        var M = newCodes.Length;
 
         // Apply caller's MaxLineCount if set (stricter than internal thresholds)
-        int maxLines = options.MaxLineCount > 0 ? options.MaxLineCount : MaxAnyExact;
+        var maxLines = options.MaxLineCount > 0 ? options.MaxLineCount : MaxAnyExact;
 
         if (N > maxLines || M > maxLines)
         {
@@ -35,14 +62,6 @@ internal static class TextDiffEngine
                 IsTruncated: true,
                 TruncationReason: $"Input exceeds MaxLineCount ({maxLines}). Old={N}, New={M}");
         }
-
-        // Normalize to integer codes (shared across strategies)
-        var normalizer = new LineNormalizer(options);
-
-        int[] oldCodes = new int[N];
-        int[] newCodes = new int[M];
-        for (int i = 0; i < N; i++) oldCodes[i] = normalizer.GetCode(oldLines[i]);
-        for (int i = 0; i < M; i++) newCodes[i] = normalizer.GetCode(newLines[i]);
 
         // Fast paths
         if (N == 0 && M == 0)
@@ -90,9 +109,21 @@ internal static class TextDiffEngine
 
         public int GetCode(string line)
         {
-            string key = _options.TrimWhitespace ? line.Trim() : line;
+            var key = Normalize(line, _options);
 
-            if (_options.IgnoreWhitespaceRuns)
+            if (!_codes.TryGetValue(key, out var code))
+            {
+                code = _nextCode++;
+                _codes[key] = code;
+            }
+            return code;
+        }
+
+        internal static string Normalize(string line, TextDiffOptions options)
+        {
+            string key = options.TrimWhitespace ? line.Trim() : line;
+
+            if (options.IgnoreWhitespaceRuns)
             {
                 var sb = new StringBuilder(key.Length);
                 bool inSpace = false;
@@ -115,14 +146,43 @@ internal static class TextDiffEngine
                 key = sb.ToString().Trim();
             }
 
-            if (_options.IgnoreCase) key = key.ToUpperInvariant();
+            if (options.IgnoreCase) key = key.ToUpperInvariant();
+            return key;
+        }
+    }
 
-            if (!_codes.TryGetValue(key, out var code))
+    /// <summary>Normalizes UTF-8 lines to integer codes without decoding in the default case.</summary>
+    internal sealed class Utf8LineNormalizer
+    {
+        private readonly TextDiffOptions _options;
+        private readonly Dictionary<Utf8LineKey, int> _utf8Codes = new();
+        private readonly Dictionary<string, int> _stringCodes = new(StringComparer.Ordinal);
+        private int _nextCode;
+
+        public Utf8LineNormalizer(TextDiffOptions options) => _options = options;
+
+        public int GetCode(Utf8LineIndex lines, int index)
+        {
+            if (!_options.TrimWhitespace && !_options.IgnoreWhitespaceRuns && !_options.IgnoreCase)
             {
-                code = _nextCode++;
-                _codes[key] = code;
+                var key = lines.GetKey(index);
+                if (!_utf8Codes.TryGetValue(key, out var code))
+                {
+                    code = _nextCode++;
+                    _utf8Codes[key] = code;
+                }
+                return code;
             }
-            return code;
+
+            // Non-default normalization is uncommon in workspace hot paths. Decode
+            // only the current line rather than materializing the whole file.
+            var normalized = LineNormalizer.Normalize(Encoding.UTF8.GetString(lines[index]), _options);
+            if (!_stringCodes.TryGetValue(normalized, out var stringCode))
+            {
+                stringCode = _nextCode++;
+                _stringCodes[normalized] = stringCode;
+            }
+            return stringCode;
         }
     }
 }

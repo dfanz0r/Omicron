@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using Cysharp.Text;
 
 namespace Omicron.Core.IO;
 
@@ -57,10 +58,17 @@ public sealed class HexDumpProcessor : IContentProcessor
             if (limit == 0)
             {
                 // Empty dump (header only)
-                var emptySb = new StringBuilder();
-                AppendHeader(emptySb, fileSize, 0, 0);
-                return ValueTask.FromResult(new ContentProcessorResult(
-                    emptySb.ToString().TrimEnd(), OutputModality.HexDump));
+                var emptyBuilder = ZString.CreateUtf8StringBuilder();
+                try
+                {
+                    AppendHeaderUtf8(ref emptyBuilder, fileSize, 0, 0);
+                    emptyBuilder.AppendLine();
+                    return ValueTask.FromResult(new ContentProcessorResult(
+                        emptyBuilder.ToString().TrimEnd(),
+                        OutputModality.HexDump,
+                        Utf8Data: emptyBuilder.AsSpan().ToArray()));
+                }
+                finally { emptyBuilder.Dispose(); }
             }
         }
         else
@@ -98,75 +106,84 @@ public sealed class HexDumpProcessor : IContentProcessor
         rowCount = Math.Min(rowCount, MaxRows);
         long actualEnd = Math.Min(startOffset + rowCount * BytesPerRow, fileSize);
 
-        var sb = new StringBuilder();
-
-        // Header
-        AppendHeader(sb, fileSize, startOffset, actualEnd);
-
-        // Separator
-        sb.AppendLine("--------  -------------------------------------------------  ----------------");
-
-        // Rows
-        for (int r = 0; r < rowCount; r++)
+        var builder = ZString.CreateUtf8StringBuilder();
+        try
         {
-            long rowStart = startOffset + r * BytesPerRow;
-            var rowSpan = bytes.Span.Slice((int)rowStart, (int)Math.Min(BytesPerRow, actualEnd - rowStart));
+            // Header
+            AppendHeaderUtf8(ref builder, fileSize, startOffset, actualEnd);
 
-            // Offset column
-            sb.Append($"{rowStart:X8}  ");
+            // Separator
+            builder.Append("--------  -------------------------------------------------  ----------------");
+            builder.AppendLine();
 
-            // Hex bytes — split into two groups of 8
-            for (int b = 0; b < BytesPerRow; b++)
+            // Rows
+            for (int r = 0; r < rowCount; r++)
             {
-                if (b < rowSpan.Length)
+                long rowStart = startOffset + r * BytesPerRow;
+                var rowSpan = bytes.Span.Slice((int)rowStart, (int)Math.Min(BytesPerRow, actualEnd - rowStart));
+
+                // Offset column
+                builder.Append($"{rowStart:X8}  ");
+
+                // Hex bytes — split into two groups of 8
+                for (int b = 0; b < BytesPerRow; b++)
                 {
-                    sb.Append($"{rowSpan[b]:X2} ");
-                }
-                else
-                {
-                    sb.Append("   "); // blank for missing bytes
+                    if (b < rowSpan.Length)
+                    {
+                        builder.Append($"{rowSpan[b]:X2} ");
+                    }
+                    else
+                    {
+                        builder.Append("   "); // blank for missing bytes
+                    }
+
+                    if (b == 7) builder.Append(' '); // extra space between groups
                 }
 
-                if (b == 7) sb.Append(' '); // extra space between groups
+                builder.Append(" |");
+
+                // ASCII column
+                for (int b = 0; b < BytesPerRow; b++)
+                {
+                    if (b < rowSpan.Length)
+                    {
+                        var val = rowSpan[b];
+                        builder.Append(val >= 0x20 && val <= 0x7E ? (char)val : '.');
+                    }
+                    // Missing bytes are left blank (not padded)
+                }
+
+                builder.Append("|");
+                builder.AppendLine();
             }
 
-            sb.Append(" |");
+            // Continuation hint
+            bool truncated = actualEnd < fileSize;
+            long nextOffset = actualEnd;
 
-            // ASCII column
-            for (int b = 0; b < BytesPerRow; b++)
+            if (truncated)
             {
-                if (b < rowSpan.Length)
-                {
-                    var val = rowSpan[b];
-                    sb.Append(val >= 0x20 && val <= 0x7E ? (char)val : '.');
-                }
-                // Missing bytes are left blank (not padded)
+                builder.AppendLine();
+                builder.Append(
+                    $"... (showing bytes 0x{startOffset:X}–0x{actualEnd:X} of 0x{fileSize:X} total). " +
+                    $"Use offset=0x{nextOffset:X} to continue.");
+                builder.AppendLine();
             }
 
-            sb.AppendLine("|");
+            var bytesOut = builder.AsSpan().ToArray();
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Encoding.UTF8.GetString(bytesOut).TrimEnd(),
+                OutputModality.HexDump,
+                Utf8Data: bytesOut,
+                IsTruncated: truncated,
+                NextOffset: truncated ? nextOffset : null));
         }
-
-        // Continuation hint
-        bool truncated = actualEnd < fileSize;
-        long nextOffset = actualEnd;
-
-        if (truncated)
-        {
-            sb.AppendLine();
-            sb.AppendLine(
-                $"... (showing bytes 0x{startOffset:X}–0x{actualEnd:X} of 0x{fileSize:X} total). " +
-                $"Use offset=0x{nextOffset:X} to continue.");
-        }
-
-        return ValueTask.FromResult(new ContentProcessorResult(
-            sb.ToString().TrimEnd(),
-            OutputModality.HexDump,
-            IsTruncated: truncated,
-            NextOffset: truncated ? nextOffset : null));
+        finally { builder.Dispose(); }
     }
 
-    private static void AppendHeader(StringBuilder sb, long fileSize, long startOffset, long endOffset)
+    private static void AppendHeaderUtf8(ref Utf8ValueStringBuilder builder, long fileSize, long startOffset, long endOffset)
     {
-        sb.AppendLine($"[HEX] bytes 0x{startOffset:X}–0x{endOffset:X} of 0x{fileSize:X} ({(int)fileSize} bytes)");
+        builder.Append($"[HEX] bytes 0x{startOffset:X}–0x{endOffset:X} of 0x{fileSize:X} ({(int)fileSize} bytes)");
+        builder.AppendLine();
     }
 }

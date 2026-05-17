@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json;
+using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
@@ -30,7 +32,37 @@ public sealed record ToolInvocationContext(
 /// <summary>
 /// Result returned by a tool after execution.
 /// </summary>
-public sealed record ToolResult(string Text, bool IsError = false, List<IContentBlock>? Blocks = null);
+/// <param name="Text">Error/small text output. Not set when <see cref="Utf8Data"/> is provided.</param>
+/// <param name="Utf8Data">Primary output as UTF-8 bytes. Preferred over <c>Text</c> for large responses.</param>
+/// <param name="IsError">Whether the tool execution failed.</param>
+/// <param name="Blocks">Rich content blocks with native UTF-8 data.</param>
+public sealed record ToolResult(
+    string? Text = null,
+    ReadOnlyMemory<byte>? Utf8Data = null,
+    bool IsError = false,
+    List<IContentBlock>? Blocks = null)
+{
+    /// <summary>Get the result as a string. Prefers <see cref="Blocks"/>, then <see cref="Utf8Data"/>, then <see cref="Text"/>.</summary>
+    public string GetText()
+    {
+        if (Blocks is { Count: > 0 })
+        {
+            var sb = new Utf8ValueStringBuilder();
+            try
+            {
+                ContentBlockTextRenderer.AppendAllUtf8To(ref sb, Blocks);
+                return sb.ToString();
+            }
+            finally
+            {
+                sb.Dispose();
+            }
+        }
+        if (Utf8Data.HasValue)
+            return Encoding.UTF8.GetString(Utf8Data.Value.Span);
+        return Text ?? string.Empty;
+    }
+}
 
 /// <summary>
 /// Registry of all tools available to the LLM agent.

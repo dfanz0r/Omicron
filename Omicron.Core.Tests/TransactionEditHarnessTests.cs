@@ -158,10 +158,25 @@ public class TransactionEditHarnessTests : IDisposable
         var result = await InvokeReadHashlines("test.txt");
 
         Assert.False(result.IsError);
-        Assert.Contains("1", result.Text);
-        Assert.Contains("2", result.Text);
-        Assert.Contains("3", result.Text);
-        Assert.Contains("|", result.Text); // anchor separator
+        Assert.Contains("1", result.GetText());
+        Assert.Contains("2", result.GetText());
+        Assert.Contains("3", result.GetText());
+        Assert.Contains("|", result.GetText()); // anchor separator
+    }
+
+    [Fact]
+    public async Task ReadHashlines_DoesNotRenderExtraAnchorForTrailingNewline()
+    {
+        WriteFile("test.txt", "line1\nline2\n");
+        var result = await InvokeReadHashlines("test.txt");
+
+        Assert.False(result.IsError);
+        var anchoredLines = result.GetText().Split('\n')
+            .Where(l => l.Contains('|') && char.IsDigit(l[0]))
+            .ToArray();
+        Assert.Equal(2, anchoredLines.Length);
+        Assert.StartsWith("1", anchoredLines[0]);
+        Assert.StartsWith("2", anchoredLines[1]);
     }
 
     [Fact]
@@ -172,7 +187,7 @@ public class TransactionEditHarnessTests : IDisposable
         File.WriteAllBytes(Path.Combine(_root, "image.png"), bytes);
         var result = await InvokeReadHashlines("image.png");
         Assert.True(result.IsError);
-        Assert.Contains("binary", result.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("binary", result.GetText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -180,7 +195,7 @@ public class TransactionEditHarnessTests : IDisposable
     {
         var result = await InvokeReadHashlines("nonexistent.txt");
         Assert.True(result.IsError);
-        Assert.Contains("not found", result.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not found", result.GetText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -188,7 +203,7 @@ public class TransactionEditHarnessTests : IDisposable
     {
         var result = await InvokeReadHashlines("../../outside.txt");
         Assert.True(result.IsError);
-        Assert.Contains("escapes", result.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("escapes", result.GetText(), StringComparison.OrdinalIgnoreCase);
     }
 
     // ============================================================
@@ -206,7 +221,7 @@ public class TransactionEditHarnessTests : IDisposable
 
         // Extract hash for line 2 from the output
         // Lines are formatted as: {line}{anchor}|{content}
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
         var line2Entry = lines.First(l => l.StartsWith("2") && l.Contains("|"));
         var hash2 = line2Entry.Substring(1, 2); // after "2", the anchor is 2 chars
 
@@ -223,7 +238,7 @@ public class TransactionEditHarnessTests : IDisposable
         };
 
         var editResult = await InvokeEditHashline("edit.txt", edits);
-        Assert.False(editResult.IsError, $"Edit failed: {editResult.Text}");
+        Assert.False(editResult.IsError, $"Edit failed: {editResult.GetText()}");
 
         // Verify host file was updated
         var content = ReadHostFile("edit.txt");
@@ -238,7 +253,7 @@ public class TransactionEditHarnessTests : IDisposable
         WriteFile("multi.txt", "a\nb\nc\nd\ne");
 
         var readResult = await InvokeReadHashlines("multi.txt");
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
 
         // Extract hashes for lines 1, 3, 5
         var hash1 = lines.First(l => l.StartsWith("1") && l.Contains("|")).Substring(1, 2);
@@ -253,7 +268,7 @@ public class TransactionEditHarnessTests : IDisposable
         };
 
         var editResult = await InvokeEditHashline("multi.txt", edits);
-        Assert.False(editResult.IsError, $"Edit failed: {editResult.Text}");
+        Assert.False(editResult.IsError, $"Edit failed: {editResult.GetText()}");
 
         var content = ReadHostFile("multi.txt");
         Assert.Equal("A\nb\nC\nd\nE", content);
@@ -266,7 +281,7 @@ public class TransactionEditHarnessTests : IDisposable
 
         // Read to get valid hashes
         var readResult = await InvokeReadHashlines("stale.txt");
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
         var line1Entry = lines.First(l => l.StartsWith("1") && l.Contains("|"));
         var validHash = line1Entry.Substring(1, 2);
 
@@ -281,7 +296,7 @@ public class TransactionEditHarnessTests : IDisposable
 
         var editResult = await InvokeEditHashline("stale.txt", edits);
         Assert.True(editResult.IsError);
-        Assert.Contains("mismatch", editResult.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mismatch", editResult.GetText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -290,7 +305,7 @@ public class TransactionEditHarnessTests : IDisposable
         WriteFile("mismatch.txt", "the quick brown fox");
 
         var readResult = await InvokeReadHashlines("mismatch.txt");
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
         var line1Entry = lines.First(l => l.StartsWith("1") && l.Contains("|"));
         var hash = line1Entry.Substring(1, 2);
 
@@ -302,7 +317,7 @@ public class TransactionEditHarnessTests : IDisposable
 
         var editResult = await InvokeEditHashline("mismatch.txt", edits);
         Assert.True(editResult.IsError);
-        Assert.Contains("old_text mismatch", editResult.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("old_text mismatch", editResult.GetText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -311,7 +326,7 @@ public class TransactionEditHarnessTests : IDisposable
         WriteFile("overlap.txt", "line1\nline2\nline3\nline4");
 
         var readResult = await InvokeReadHashlines("overlap.txt");
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
         var hash1 = lines.First(l => l.StartsWith("1") && l.Contains("|")).Substring(1, 2);
         var hash2 = lines.First(l => l.StartsWith("2") && l.Contains("|")).Substring(1, 2);
 
@@ -324,7 +339,7 @@ public class TransactionEditHarnessTests : IDisposable
 
         var editResult = await InvokeEditHashline("overlap.txt", edits);
         Assert.True(editResult.IsError);
-        Assert.Contains("overlap", editResult.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("overlap", editResult.GetText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -340,7 +355,7 @@ public class TransactionEditHarnessTests : IDisposable
 
         var result = await InvokeEditHashline("data.bin", edits);
         Assert.True(result.IsError);
-        Assert.Contains("binary", result.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("binary", result.GetText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -349,7 +364,7 @@ public class TransactionEditHarnessTests : IDisposable
         WriteFile("safe.txt", "original content");
 
         var readResult = await InvokeReadHashlines("safe.txt");
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
         var line1Entry = lines.First(l => l.StartsWith("1") && l.Contains("|"));
         var hash = line1Entry.Substring(1, 2);
 
@@ -372,7 +387,7 @@ public class TransactionEditHarnessTests : IDisposable
         WriteFile("diff_test.txt", "before\nmiddle\nafter");
 
         var readResult = await InvokeReadHashlines("diff_test.txt");
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
         var hash2 = lines.First(l => l.StartsWith("2") && l.Contains("|")).Substring(1, 2);
 
         var edits = new List<Dictionary<string, object?>>
@@ -384,13 +399,13 @@ public class TransactionEditHarnessTests : IDisposable
         Assert.False(editResult.IsError);
 
         // Should contain unified diff markers and no error
-        Assert.DoesNotContain("Error", editResult.Text);
-        Assert.Contains("---", editResult.Text);
-        Assert.Contains("+++", editResult.Text);
-        Assert.Contains("@@", editResult.Text);
-        Assert.Contains("-middle", editResult.Text);
-        Assert.Contains("+replaced", editResult.Text);
-        Assert.Contains("read_file_hashlines", editResult.Text);
+        Assert.DoesNotContain("Error", editResult.GetText());
+        Assert.Contains("---", editResult.GetText());
+        Assert.Contains("+++", editResult.GetText());
+        Assert.Contains("@@", editResult.GetText());
+        Assert.Contains("-middle", editResult.GetText());
+        Assert.Contains("+replaced", editResult.GetText());
+        Assert.Contains("read_file_hashlines", editResult.GetText());
     }
 
     [Fact]
@@ -403,7 +418,7 @@ public class TransactionEditHarnessTests : IDisposable
 
         var result = await InvokeEditHashline("nonexistent.txt", edits);
         Assert.True(result.IsError);
-        Assert.Contains("not found", result.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not found", result.GetText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -416,7 +431,7 @@ public class TransactionEditHarnessTests : IDisposable
 
         var result = await InvokeEditHashline("../../outside.txt", edits);
         Assert.True(result.IsError);
-        Assert.Contains("escapes", result.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("escapes", result.GetText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -425,7 +440,7 @@ public class TransactionEditHarnessTests : IDisposable
         WriteFile("multiline.txt", "keep\nline1\nline2\nline3\nkeep2");
 
         var readResult = await InvokeReadHashlines("multiline.txt");
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
         var hash2 = lines.First(l => l.StartsWith("2") && l.Contains("|")).Substring(1, 2);
 
         // Replace 3 lines starting at line 2
@@ -441,7 +456,7 @@ public class TransactionEditHarnessTests : IDisposable
         };
 
         var editResult = await InvokeEditHashline("multiline.txt", edits);
-        Assert.False(editResult.IsError, $"Edit failed: {editResult.Text}");
+        Assert.False(editResult.IsError, $"Edit failed: {editResult.GetText()}");
 
         var content = ReadHostFile("multiline.txt");
         Assert.Equal("keep\nreplacement1\nreplacement2\nkeep2", content);
@@ -457,7 +472,7 @@ public class TransactionEditHarnessTests : IDisposable
         WriteFile("shift.txt", "a\nb\nc\nd\ne");
 
         var readResult = await InvokeReadHashlines("shift.txt");
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
         var hashA = lines.First(l => l.StartsWith("1") && l.Contains("|")).Substring(1, 2);
         var hashE = lines.First(l => l.StartsWith("5") && l.Contains("|")).Substring(1, 2);
 
@@ -468,7 +483,7 @@ public class TransactionEditHarnessTests : IDisposable
         };
 
         var editResult = await InvokeEditHashline("shift.txt", edits);
-        Assert.False(editResult.IsError, $"Edit failed: {editResult.Text}");
+        Assert.False(editResult.IsError, $"Edit failed: {editResult.GetText()}");
 
         // Bottom-up: edit 5 ("e" → "E") applied first, then edit 1 ("a" → "X\nY\nZ")
         var content = ReadHostFile("shift.txt");
@@ -483,7 +498,7 @@ public class TransactionEditHarnessTests : IDisposable
         WriteFile("two_edits.txt", "start\nmiddle\nend");
 
         var readResult = await InvokeReadHashlines("two_edits.txt");
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
         var hashStart = lines.First(l => l.StartsWith("1") && l.Contains("|")).Substring(1, 2);
         var hashEnd = lines.First(l => l.StartsWith("3") && l.Contains("|")).Substring(1, 2);
 
@@ -494,7 +509,7 @@ public class TransactionEditHarnessTests : IDisposable
         };
 
         var editResult = await InvokeEditHashline("two_edits.txt", edits);
-        Assert.False(editResult.IsError, $"Edit failed: {editResult.Text}");
+        Assert.False(editResult.IsError, $"Edit failed: {editResult.GetText()}");
 
         var content = ReadHostFile("two_edits.txt");
         Assert.Equal("begin\nmiddle\nfinish", content);
@@ -506,7 +521,7 @@ public class TransactionEditHarnessTests : IDisposable
         WriteFile("rebase.txt", "a\nb\nc\nd\ne");
 
         var readResult = await InvokeReadHashlines("rebase.txt");
-        var lines = readResult.Text.Split('\n');
+        var lines = readResult.GetText().Split('\n');
         var hashE = lines.First(l => l.StartsWith("5") && l.Contains("|")).Substring(1, 2);
 
         // Add 2 lines before, shifting line 5 to line 7
@@ -520,7 +535,7 @@ public class TransactionEditHarnessTests : IDisposable
         };
 
         var editResult = await InvokeEditHashline("rebase.txt", edits);
-        Assert.False(editResult.IsError, $"Rebase edit failed: {editResult.Text}");
+        Assert.False(editResult.IsError, $"Rebase edit failed: {editResult.GetText()}");
 
         // Verify the correct line was edited
         var content = ReadHostFile("rebase.txt");

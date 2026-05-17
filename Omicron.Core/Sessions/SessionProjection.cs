@@ -1,4 +1,5 @@
 using System.Text;
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Providers;
@@ -68,8 +69,8 @@ public sealed class SessionProjector : ISessionProjector
         DateTimeOffset? lastTimestamp = null;
 
         // Accumulator state for assistant text deltas
-        var accumText = new StringBuilder();
-        var accumReasoning = new StringBuilder();
+        using var accumText = new Utf8TextAccumulator();
+        using var accumReasoning = new Utf8TextAccumulator();
 
         // Tool-call run tracking
         var pendingToolCalls = new List<ToolCallContent>();
@@ -214,7 +215,8 @@ public sealed class SessionProjector : ISessionProjector
                     bufferedToolResults.Add(new Message
                     {
                         Role = MessageRole.ToolResult,
-                        Text = tic.Result,
+                        Text = tic.ResultBytes.HasValue ? null : tic.Result,
+                        Utf8Text = tic.ResultBytes,
                         ToolCallId = tic.ToolCallId.Value,
                         ToolName = tic.ToolName,
                         IsError = tic.IsError,

@@ -1,4 +1,5 @@
 using System.Text;
+using Cysharp.Text;
 
 namespace Omicron.Core.IO;
 
@@ -51,34 +52,53 @@ public sealed class TextProcessor : IContentProcessor
         bool isUtf8Compatible = encoding is UTF8Encoding || encoding.WebName == "utf-8" ||
                                 encoding.CodePage == 65001 || encoding.CodePage == 20127;
 
-        var sb = new StringBuilder();
-        if (isBinary)
-        {
-            sb.AppendLine($"[WARNING: binary file] {context.RelativePath}");
-        }
-
         if (isUtf8Compatible)
         {
             // UTF-8/ASCII: scan raw bytes for line boundaries without allocating a full-file string.
-            // We only decode lines we actually output within the offset/limit window.
-            BuildTextOutputUtf8(context, span, sb, isBinary);
+            var builder = ZString.CreateUtf8StringBuilder();
+            try
+            {
+                if (isBinary)
+                {
+                    builder.Append($"[WARNING: binary file] {context.RelativePath}");
+                    builder.AppendLine();
+                }
+                BuildTextOutputUtf8(context, span, ref builder, isBinary);
+                var bytesOut = builder.AsSpan().ToArray();
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Encoding.UTF8.GetString(bytesOut).TrimEnd(),
+                    OutputModality.Text,
+                    Utf8Data: bytesOut));
+            }
+            finally { builder.Dispose(); }
         }
         else
         {
             // Non-UTF-8 encoding (e.g. UTF-16, UTF-32): decode the whole file, then split.
             // Byte scanning for \n is not safe here because \n is multi-byte.
-            BuildTextOutputFallback(context, span, encoding, sb, isBinary);
+            var builder = ZString.CreateUtf8StringBuilder();
+            try
+            {
+                if (isBinary)
+                {
+                    builder.Append($"[WARNING: binary file] {context.RelativePath}");
+                    builder.AppendLine();
+                }
+                BuildTextOutputFallback(context, span, encoding, ref builder, isBinary);
+                var bytesOut = builder.AsSpan().ToArray();
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Encoding.UTF8.GetString(bytesOut).TrimEnd(),
+                    OutputModality.Text,
+                    Utf8Data: bytesOut));
+            }
+            finally { builder.Dispose(); }
         }
-
-        return ValueTask.FromResult(new ContentProcessorResult(
-            sb.ToString().TrimEnd(),
-            OutputModality.Text));
     }
 
     private static void BuildTextOutputUtf8(
         ContentProcessorContext context,
         ReadOnlySpan<byte> span,
-        StringBuilder sb,
+        ref Utf8ValueStringBuilder builder,
         bool isBinary)
     {
         var lineStarts = new List<int> { 0 };
@@ -90,7 +110,10 @@ public sealed class TextProcessor : IContentProcessor
         var totalLines = lineStarts.Count;
 
         if (!isBinary)
-            sb.AppendLine($"[FILE] {context.RelativePath}  ({totalLines} lines)");
+        {
+            builder.Append($"[FILE] {context.RelativePath}  ({totalLines} lines)");
+            builder.AppendLine();
+        }
 
         const int maxOutputLines = 2000;
         const int maxOutputBytes = 50 * 1024;
@@ -120,7 +143,8 @@ public sealed class TextProcessor : IContentProcessor
             if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\r')
                 lineLength--;
 
-            int lineBytes = lineLength + 1; // +1 for newline in output
+            // Rendered format: "     6| <line content>\n" — 8 bytes prefix + line + newline
+            int lineBytes = 8 + lineLength + 1;
 
             if (writtenLines >= maxOutputLines ||
                 (writtenBytes > 0 && writtenBytes + lineBytes > maxOutputBytes))
@@ -129,15 +153,19 @@ public sealed class TextProcessor : IContentProcessor
                 break;
             }
 
-            var lineText = Encoding.UTF8.GetString(span.Slice(lineByteStart, lineLength));
-            sb.AppendLine($"{(i + 1),6}| {lineText}");
+            // Format: "     6| <line content>"
+            var prefix = $"{i + 1,6}| ";
+            builder.Append(prefix);
+            builder.AppendLiteral(span.Slice(lineByteStart, lineLength));
+            builder.AppendLine();
             writtenLines++;
             writtenBytes += lineBytes;
         }
 
         if (truncated)
         {
-            sb.AppendLine($"... output truncated ({totalLines} total lines, showing {writtenLines})");
+            builder.Append($"... output truncated ({totalLines} total lines, showing {writtenLines})");
+            builder.AppendLine();
         }
     }
 
@@ -145,7 +173,7 @@ public sealed class TextProcessor : IContentProcessor
         ContentProcessorContext context,
         ReadOnlySpan<byte> span,
         Encoding encoding,
-        StringBuilder sb,
+        ref Utf8ValueStringBuilder builder,
         bool isBinary)
     {
         string text;
@@ -163,7 +191,10 @@ public sealed class TextProcessor : IContentProcessor
         var totalLines = lines.Length;
 
         if (!isBinary)
-            sb.AppendLine($"[FILE] {context.RelativePath}  ({totalLines} lines)");
+        {
+            builder.Append($"[FILE] {context.RelativePath}  ({totalLines} lines)");
+            builder.AppendLine();
+        }
 
         const int maxOutputLines = 2000;
         const int maxOutputBytes = 50 * 1024;
@@ -184,7 +215,8 @@ public sealed class TextProcessor : IContentProcessor
         for (int i = startLine; i < endLine; i++)
         {
             var lineText = lines[i];
-            var lineBytes = Encoding.UTF8.GetByteCount(lineText) + 1; // +1 for newline
+            // Rendered format: "     6| <line>\n" — 8 bytes prefix + line + newline
+            var lineBytes = 8 + Encoding.UTF8.GetByteCount(lineText) + 1;
 
             if (writtenLines >= maxOutputLines ||
                 (writtenBytes > 0 && writtenBytes + lineBytes > maxOutputBytes))
@@ -193,14 +225,18 @@ public sealed class TextProcessor : IContentProcessor
                 break;
             }
 
-            sb.AppendLine($"{(i + 1),6}| {lineText}");
+            var prefix = $"{i + 1,6}| ";
+            builder.Append(prefix);
+            builder.Append(lineText);
+            builder.AppendLine();
             writtenLines++;
             writtenBytes += lineBytes;
         }
 
         if (truncated)
         {
-            sb.AppendLine($"... output truncated ({totalLines} total lines, showing {writtenLines})");
+            builder.Append($"... output truncated ({totalLines} total lines, showing {writtenLines})");
+            builder.AppendLine();
         }
     }
 }

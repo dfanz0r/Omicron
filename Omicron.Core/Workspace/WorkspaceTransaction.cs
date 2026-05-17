@@ -169,10 +169,9 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
                     else
                     {
                         var oldBytes = await _host.ReadFileAsync(wsPath, ct);
-                        var oldText = Encoding.UTF8.GetString(oldBytes.Span);
-                        var oldLines = TextLineSplitter.SplitLines(oldText);
-                        var diff = TextDiffEngine.DiffLines(oldLines, Array.Empty<string>());
-                        var textDiff = UnifiedDiffRenderer.Render(pathStr, "/dev/null", oldLines, [], diff);
+                        var oldLines = TextLineSplitter.CreateUtf8LineIndex(oldBytes);
+                        var diff = TextDiffEngine.DiffLines(oldLines, Utf8LineIndex.Empty);
+                        var textDiff = UnifiedDiffRenderer.Render(pathStr, "/dev/null", oldLines, Utf8LineIndex.Empty, diff);
                         fileDiffs.Add(new WorkspaceFileDiff(wsPath, WorkspaceChangeKind.Deleted, pathStr, textDiff, false, false));
                     }
                     break;
@@ -192,12 +191,10 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
                     else
                     {
                         var oldBytes = await _host.ReadFileAsync(fromWsPath, ct);
-                        var oldText = Encoding.UTF8.GetString(oldBytes.Span);
                         var newContent = entry.Content.IsEmpty ? oldBytes : entry.Content;
-                        var newText = Encoding.UTF8.GetString(newContent.Span);
 
-                        var oldLines = TextLineSplitter.SplitLines(oldText);
-                        var newLines = TextLineSplitter.SplitLines(newText);
+                        var oldLines = TextLineSplitter.CreateUtf8LineIndex(oldBytes);
+                        var newLines = TextLineSplitter.CreateUtf8LineIndex(newContent);
                         var diff = TextDiffEngine.DiffLines(oldLines, newLines);
                         var textDiff = diff.HasChanges
                             ? UnifiedDiffRenderer.Render(fromPath, pathStr, oldLines, newLines, diff)
@@ -339,10 +336,9 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
             if (isBinary)
                 return new WorkspaceFileDiff(path, WorkspaceChangeKind.Added, null, null, true, false);
 
-            var addText = Encoding.UTF8.GetString(content.Span);
-            var addLines = TextLineSplitter.SplitLines(addText);
-            var addDiff = TextDiffEngine.DiffLines(Array.Empty<string>(), addLines);
-            var addRendered = UnifiedDiffRenderer.Render("/dev/null", path.Value, [], addLines, addDiff);
+            var addLines = TextLineSplitter.CreateUtf8LineIndex(content);
+            var addDiff = TextDiffEngine.DiffLines(Utf8LineIndex.Empty, addLines);
+            var addRendered = UnifiedDiffRenderer.Render("/dev/null", path.Value, Utf8LineIndex.Empty, addLines, addDiff);
             return new WorkspaceFileDiff(path, WorkspaceChangeKind.Added, null, addRendered, false, false);
         }
 
@@ -350,18 +346,38 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
             return new WorkspaceFileDiff(path, WorkspaceChangeKind.Modified, path.Value, null, true, false);
 
         var oldBytes = await _host.ReadFileAsync(path, ct);
-        var oldText = Encoding.UTF8.GetString(oldBytes.Span);
-        var newText = Encoding.UTF8.GetString(content.Span);
 
-        var oldLines = TextLineSplitter.SplitLines(oldText);
-        var newLines = TextLineSplitter.SplitLines(newText);
+        var oldLines = TextLineSplitter.CreateUtf8LineIndex(oldBytes);
+        var newLines = TextLineSplitter.CreateUtf8LineIndex(content);
         var diff = TextDiffEngine.DiffLines(oldLines, newLines);
 
-        if (!diff.HasChanges)
+        if (!diff.HasChanges && !diff.IsTruncated)
             return null;
 
         var textDiff = UnifiedDiffRenderer.Render(path.Value, path.Value, oldLines, newLines, diff);
         return new WorkspaceFileDiff(path, WorkspaceChangeKind.Modified, path.Value, textDiff, false, false);
+    }
+
+    /// <summary>Count lines in UTF-8 bytes without decoding to a string.</summary>
+    internal static int CountLinesUtf8(ReadOnlySpan<byte> span)
+    {
+        if (span.Length == 0)
+            return 0;
+
+        int count = 1; // at least one line even with no newline
+        for (int i = 0; i < span.Length; i++)
+        {
+            if (span[i] == (byte)'\n')
+            {
+                count++;
+            }
+        }
+
+        // If the file ends with \n, the final newline does not start a new line.
+        if (span[^1] == (byte)'\n')
+            count--;
+
+        return count;
     }
 
     private static bool IsBinaryContent(ReadOnlyMemory<byte> content)
@@ -510,8 +526,8 @@ internal sealed class TransactionFileSystem : IWorkspaceFileSystem
                     {
                         try
                         {
-                            var text = Encoding.UTF8.GetString(entry.Content.Span);
-                            lineCount = text.Replace("\r\n", "\n").Split('\n').Length;
+                            // Count lines from raw bytes without decoding the whole file to a string
+                            lineCount = WorkspaceTransaction.CountLinesUtf8(entry.Content.Span);
                         }
                         catch { }
                     }

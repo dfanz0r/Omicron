@@ -281,12 +281,7 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
     public JsonlSessionStore(string storeDir)
     {
         _storeDir = storeDir;
-        _jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-            WriteIndented = false
-        };
-        _jsonOptions.Converters.Add(new Content.ContentBlockJsonConverter());
+        _jsonOptions = OmicronEventJson.CreateOptions();
         Directory.CreateDirectory(_storeDir);
         LoadIndex();
     }
@@ -566,11 +561,7 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
         return node.ToJsonString(_jsonOptions);
     }
 
-    private static readonly JsonSerializerOptions _eventJsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-        Converters = { new Content.ContentBlockJsonConverter() }
-    };
+    private static readonly JsonSerializerOptions _eventJsonOptions = OmicronEventJson.CreateOptions();
 
     /// <summary>Deserialize a JSON line to an OmicronEvent using the $type discriminator.</summary>
     private static OmicronEvent? DeserializeEvent(string line)

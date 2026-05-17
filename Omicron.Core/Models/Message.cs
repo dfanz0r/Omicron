@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace Omicron.Core.Models;
 
 public enum MessageRole
@@ -26,6 +28,7 @@ public sealed record Message
 {
     public MessageRole Role { get; init; }
     public string? Text { get; init; }
+    public ReadOnlyMemory<byte>? Utf8Text { get; init; }
     public IReadOnlyList<ImageContent>? Images { get; init; }
     public ToolCallContent? ToolCall { get; init; }
     public IReadOnlyList<ToolCallContent>? ToolCalls { get; init; }
@@ -34,6 +37,10 @@ public sealed record Message
     public bool IsError { get; init; }
     public DateTime Timestamp { get; init; } = DateTime.UtcNow;
     public string? Reasoning { get; init; }
+
+    public string EffectiveText => Utf8Text.HasValue
+        ? Encoding.UTF8.GetString(Utf8Text.Value.Span)
+        : Text ?? string.Empty;
 
     public static Message UserMessage(string text, IReadOnlyList<ImageContent>? images = null) =>
         new() { Role = MessageRole.User, Text = text, Images = images };
@@ -49,6 +56,9 @@ public sealed record Message
 
     public static Message ToolResultMessage(string toolCallId, string toolName, string text, bool isError = false) =>
         new() { Role = MessageRole.ToolResult, ToolCallId = toolCallId, ToolName = toolName, Text = text, IsError = isError };
+
+    public static Message ToolResultMessageUtf8(string toolCallId, string toolName, ReadOnlyMemory<byte> utf8Text, bool isError = false) =>
+        new() { Role = MessageRole.ToolResult, ToolCallId = toolCallId, ToolName = toolName, Utf8Text = utf8Text, IsError = isError };
 }
 
 public sealed record UsageInfo(

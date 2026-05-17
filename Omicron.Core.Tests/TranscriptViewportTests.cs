@@ -1,6 +1,7 @@
 using System.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Events;
+using Omicron.Core.Providers;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
 using Omicron.Core.Rendering.Transcript;
@@ -107,6 +108,83 @@ public class TranscriptViewportTests
     }
 
     [Fact]
+    public void TranscriptStore_UpdateToolCall_PutsOutputOnSeparateLine()
+    {
+        var store = new TranscriptStore();
+        var block = store.AppendToolCall("read_file_hashlines");
+
+        store.UpdateToolCall(block.Id, ToolCallState.Completed, "[FILE] test.cs"u8);
+
+        var updated = (ToolCallBlock)store.Blocks[^1];
+        var rendered = Encoding.UTF8.GetString(store.Text.Slice(updated.Position.GlobalByteOffset, updated.ByteLength).Span);
+        Assert.Equal("[tool: read_file_hashlines]\n[FILE] test.cs", rendered);
+    }
+
+    [Fact]
+    public void TranscriptStore_UpdateToolCall_DoesNotDoublePrefixExistingNewline()
+    {
+        var store = new TranscriptStore();
+        var block = store.AppendToolCall("read_file_hashlines");
+
+        store.UpdateToolCall(block.Id, ToolCallState.Completed, "\n[FILE] test.cs"u8);
+
+        var updated = (ToolCallBlock)store.Blocks[^1];
+        var rendered = Encoding.UTF8.GetString(store.Text.Slice(updated.Position.GlobalByteOffset, updated.ByteLength).Span);
+        Assert.Equal("[tool: read_file_hashlines]\n[FILE] test.cs", rendered);
+    }
+
+    [Fact]
+    public void TranscriptViewport_DuplicateToolCompletion_DoesNotDuplicateHashlineOutput()
+    {
+        var widget = new Omicron.CLI.Tui.TranscriptViewportWidget();
+        widget.Arrange(new Rect(0, 0, 120, 20));
+        var sessionId = new SessionId(Guid.NewGuid());
+        var callId = new ToolCallId("call-hashlines");
+        const string result = "[FILE] test.cs  (1 lines, hashline anchors)\n\n1ab|class C {}";
+
+        widget.UpdateFromEvent(new ToolInvocationStartedEvent(
+            EventEnvelope.ForSession(sessionId), callId, "read_file_hashlines",
+            new Dictionary<string, object?> { ["path"] = "test.cs" }));
+        widget.UpdateFromEvent(new ToolInvocationCompletedEvent(
+            EventEnvelope.ForSession(sessionId), callId, "read_file_hashlines", result, false));
+        widget.UpdateFromEvent(new ToolInvocationCompletedEvent(
+            EventEnvelope.ForSession(sessionId), callId, "read_file_hashlines", result, false));
+
+        var rendered = Encoding.UTF8.GetString(widget.Store.Text.ToArray());
+        Assert.Equal(1, CountOccurrences(rendered, "[FILE] test.cs"));
+        Assert.Equal(1, CountOccurrences(rendered, "1ab|class C {}"));
+    }
+
+    [Fact]
+    public void TranscriptViewport_StaleDuplicateCompletion_DoesNotAttachToLaterSameNamedToolCall()
+    {
+        var widget = new Omicron.CLI.Tui.TranscriptViewportWidget();
+        widget.Arrange(new Rect(0, 0, 120, 20));
+        var sessionId = new SessionId(Guid.NewGuid());
+        var firstCallId = new ToolCallId("call-read-1");
+        var secondCallId = new ToolCallId("call-read-2");
+        const string firstResult = "[FILE] a.txt  (1 lines)\n\n     1| first";
+
+        widget.UpdateFromEvent(new ToolInvocationStartedEvent(
+            EventEnvelope.ForSession(sessionId), firstCallId, "read_path",
+            new Dictionary<string, object?> { ["path"] = "a.txt" }));
+        widget.UpdateFromEvent(new ToolInvocationCompletedEvent(
+            EventEnvelope.ForSession(sessionId), firstCallId, "read_path", firstResult, false));
+        widget.UpdateFromEvent(new ToolInvocationStartedEvent(
+            EventEnvelope.ForSession(sessionId), secondCallId, "read_path",
+            new Dictionary<string, object?> { ["path"] = "b.txt" }));
+
+        // A duplicated completion for the first call must not be matched by
+        // tool name and appended to the still-running second read_path call.
+        widget.UpdateFromEvent(new ToolInvocationCompletedEvent(
+            EventEnvelope.ForSession(sessionId), firstCallId, "read_path", firstResult, false));
+
+        var rendered = Encoding.UTF8.GetString(widget.Store.Text.ToArray());
+        Assert.Equal(1, CountOccurrences(rendered, "[FILE] a.txt"));
+        Assert.Equal(1, CountOccurrences(rendered, "     1| first"));
+    }
+
+    [Fact]
     public void TranscriptStore_Clear_DoesNotDisposeOrMutateBorrowedContentBlocks()
     {
         var store = new TranscriptStore();
@@ -118,6 +196,18 @@ public class TranscriptViewportTests
 
         Assert.Single(blocks);
         Assert.Equal("hello", blocks[0].Text);
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var index = 0;
+        while ((index = text.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+        return count;
     }
 
     // ============================================================

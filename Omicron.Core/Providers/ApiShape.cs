@@ -361,18 +361,13 @@ public class OpenAiChatShape : IApiShape
             // Finish reason
             if (finishReason is not null && finishReason != "null")
             {
-                foreach (var (_, acc) in toolCallAccumulators)
+                if (toolCallAccumulators.Count > 0)
                 {
-                    var argsJson = acc.Args.Length > 0
-                        ? JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString())
-                        : new Dictionary<string, object?>();
-                    return new StreamEvent
-                    {
-                        Type = StreamEventType.ToolCallEnd,
-                        ToolCall = new ToolCallContent(acc.Id ?? Guid.NewGuid().ToString("N")[..12], acc.Name, argsJson)
-                    };
+                    var first = toolCallAccumulators.First();
+                    var acc = first.Value;
+                    toolCallAccumulators.Remove(first.Key);
+                    return BuildToolCallEndEvent(acc);
                 }
-                toolCallAccumulators.Clear();
 
                 UsageInfo? usage = null;
                 if (root.TryGetProperty("usage", out var usageEl))
@@ -399,7 +394,7 @@ public class OpenAiChatShape : IApiShape
         if (msg.Images is { Count: > 0 })
         {
             var content = new JsonArray();
-            content.Add(new JsonObject { ["type"] = "text", ["text"] = msg.Text ?? "" });
+            content.Add(new JsonObject { ["type"] = "text", ["text"] = msg.EffectiveText });
             foreach (var img in msg.Images)
                 content.Add(new JsonObject
                 {
@@ -408,7 +403,7 @@ public class OpenAiChatShape : IApiShape
                 });
             return new JsonObject { ["role"] = "user", ["content"] = content };
         }
-        return new JsonObject { ["role"] = "user", ["content"] = msg.Text ?? "" };
+        return new JsonObject { ["role"] = "user", ["content"] = msg.EffectiveText };
     }
 
     private static JsonObject BuildAssistantMessage(Message msg)
@@ -440,7 +435,7 @@ public class OpenAiChatShape : IApiShape
         }
         else
         {
-            obj["content"] = msg.Text ?? "";
+            obj["content"] = msg.EffectiveText;
         }
         return obj;
     }
@@ -450,7 +445,7 @@ public class OpenAiChatShape : IApiShape
         {
             ["role"] = "tool",
             ["tool_call_id"] = msg.ToolCallId ?? "",
-            ["content"] = msg.Text ?? ""
+            ["content"] = msg.EffectiveText
         };
 
     private static JsonObject BuildToolDef(Tool tool)
@@ -492,6 +487,22 @@ public class OpenAiChatShape : IApiShape
 
     private static StreamEvent ErrorEvent(string msg) =>
         new() { Type = StreamEventType.Error, ErrorMessage = msg };
+
+    /// <summary>Build a ToolCallEnd event from an accumulator.</summary>
+    internal static StreamEvent BuildToolCallEndEvent(ToolCallAccumulator acc)
+    {
+        var argsJson = acc.Args.Length > 0
+            ? JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString())
+            : new Dictionary<string, object?>();
+        return new StreamEvent
+        {
+            Type = StreamEventType.ToolCallEnd,
+            ToolCall = new ToolCallContent(
+                acc.Id ?? Guid.NewGuid().ToString("N")[..12],
+                acc.Name,
+                argsJson ?? new())
+        };
+    }
 }
 
 // ============================================================
@@ -642,7 +653,7 @@ public class OpenAiResponsesShape : IApiShape
                         contentArray.Add(new JsonObject
                         {
                             ["type"] = "input_text",
-                            ["text"] = msg.Text ?? ""
+                            ["text"] = msg.EffectiveText
                         });
                         foreach (var img in msg.Images)
                         {
@@ -656,7 +667,7 @@ public class OpenAiResponsesShape : IApiShape
                     }
                     else
                     {
-                        item["content"] = msg.Text ?? "";
+                        item["content"] = msg.EffectiveText;
                     }
                     items.Add(item);
                     break;
@@ -674,7 +685,7 @@ public class OpenAiResponsesShape : IApiShape
                     if (allToolCalls is { Count: > 0 })
                     {
                         // Emit text as a separate assistant message item only if there is text
-                        if (!string.IsNullOrEmpty(msg.Text))
+                        if (!string.IsNullOrEmpty(msg.EffectiveText))
                         {
                             var textItem = new JsonObject
                             {
@@ -685,7 +696,7 @@ public class OpenAiResponsesShape : IApiShape
                                     new JsonObject
                                     {
                                         ["type"] = "output_text",
-                                        ["text"] = msg.Text
+                                        ["text"] = msg.EffectiveText
                                     }
                                 }
                             };
@@ -716,12 +727,12 @@ public class OpenAiResponsesShape : IApiShape
                         };
                         var contentArray = new JsonArray();
 
-                        if (!string.IsNullOrEmpty(msg.Text))
+                        if (!string.IsNullOrEmpty(msg.EffectiveText))
                         {
                             contentArray.Add(new JsonObject
                             {
                                 ["type"] = "output_text",
-                                ["text"] = msg.Text
+                                ["text"] = msg.EffectiveText
                             });
                         }
 
@@ -732,8 +743,8 @@ public class OpenAiResponsesShape : IApiShape
 
                         if (contentArray.Count > 0)
                             item["content"] = contentArray;
-                        else if (!string.IsNullOrEmpty(msg.Text))
-                            item["content"] = msg.Text;
+                        else if (!string.IsNullOrEmpty(msg.EffectiveText))
+                            item["content"] = msg.EffectiveText;
 
                         items.Add(item);
                     }
@@ -749,7 +760,7 @@ public class OpenAiResponsesShape : IApiShape
                     {
                         ["type"] = "function_call_output",
                         ["call_id"] = msg.ToolCallId ?? "",
-                        ["output"] = msg.Text ?? ""
+                        ["output"] = msg.EffectiveText
                     };
                     items.Add(item);
                     break;
@@ -1072,9 +1083,9 @@ public class AnthropicMessagesShape : IApiShape
         {
             msgArray.Add(msg.Role switch
             {
-                MessageRole.User => new JsonObject { ["role"] = "user", ["content"] = msg.Text ?? "" },
+                MessageRole.User => new JsonObject { ["role"] = "user", ["content"] = msg.EffectiveText },
                 MessageRole.Assistant when msg.ToolCalls is { Count: > 0 } || msg.ToolCall is not null => BuildAnthropicToolCalls(msg),
-                MessageRole.Assistant => new JsonObject { ["role"] = "assistant", ["content"] = msg.Text ?? "" },
+                MessageRole.Assistant => new JsonObject { ["role"] = "assistant", ["content"] = msg.EffectiveText },
                 MessageRole.ToolResult => new JsonObject
                 {
                     ["role"] = "user",
@@ -1084,7 +1095,7 @@ public class AnthropicMessagesShape : IApiShape
                         {
                             ["type"] = "tool_result",
                             ["tool_use_id"] = msg.ToolCallId ?? "",
-                            ["content"] = msg.Text ?? ""
+                            ["content"] = msg.EffectiveText
                         }
                     }
                 },

@@ -48,13 +48,21 @@ public sealed record ContentProcessorContext(
 /// Carries the actual output modality used (which may differ from
 /// the processor's declared capabilities).
 /// </summary>
+/// <param name="Text">Formatted output as a string (fallback).</param>
+/// <param name="Utf8Data">Formatted output as UTF-8 bytes (preferred).</param>
+/// <param name="ActualModality">What was actually emitted.</param>
+/// <param name="MimeType">e.g., "image/png".</param>
+/// <param name="Warning">e.g., "PDF text extracted locally".</param>
+/// <param name="IsTruncated">True if output was cut short.</param>
+/// <param name="NextOffset">For continuation (hex or text).</param>
 public sealed record ContentProcessorResult(
-    string Text,                     // formatted output for the model
-    OutputModality ActualModality,   // what was actually emitted
-    string? MimeType = null,        // e.g., "image/png"
-    string? Warning = null,         // e.g., "PDF text extracted locally"
-    bool IsTruncated = false,       // true if output was cut short
-    long? NextOffset = null);       // for continuation (hex or text)
+    string Text,
+    OutputModality ActualModality,
+    ReadOnlyMemory<byte>? Utf8Data = null,
+    string? MimeType = null,
+    string? Warning = null,
+    bool IsTruncated = false,
+    long? NextOffset = null);
 
 /// <summary>
 /// A format handler that can read and process a specific file type.

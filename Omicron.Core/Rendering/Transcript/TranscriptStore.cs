@@ -101,12 +101,26 @@ public sealed class TranscriptStore
                 if (tcb.State == newState)
                     return tcb;
 
-                // Append output text
-                Text.Append(outputText);
+                // Append output text. Keep tool output on its own line so the
+                // placeholder header ("[tool: ...]") doesn't run into the
+                // first result line during live rendering or session replay.
+                var bytesAppended = 0;
+                if (!outputText.IsEmpty)
+                {
+                    if (tcb.ByteLength > 0 && outputText[0] is not (byte)'\n' and not (byte)'\r')
+                    {
+                        Text.Append("\n"u8);
+                        bytesAppended++;
+                    }
+
+                    Text.Append(outputText);
+                    bytesAppended += outputText.Length;
+                }
+
                 var updated = tcb with
                 {
                     State = newState,
-                    ByteLength = tcb.ByteLength + outputText.Length,
+                    ByteLength = tcb.ByteLength + bytesAppended,
                     ContentBlocks = contentBlocks ?? tcb.ContentBlocks
                 };
                 _blocks[i] = updated;

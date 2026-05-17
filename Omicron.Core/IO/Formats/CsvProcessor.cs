@@ -1,4 +1,6 @@
+using System.Buffers;
 using System.Text;
+using Cysharp.Text;
 
 namespace Omicron.Core.IO;
 
@@ -12,6 +14,9 @@ public sealed class CsvProcessor : IContentProcessor
     public IReadOnlySet<DetectedFileType> SupportedTypes { get; }
         = new HashSet<DetectedFileType> { DetectedFileType.Csv };
     public OutputModality OutputModality => OutputModality.Text;
+
+    private const int MaxOutputBytes = 50 * 1024;
+    private const int MaxPreviewRows = 50;
 
     public ValueTask<ContentProcessorResult> ProcessAsync(
         ContentProcessorContext context,
@@ -29,7 +34,7 @@ public sealed class CsvProcessor : IContentProcessor
                 $"[FILE] {context.RelativePath}  (empty)", OutputModality.Text));
         }
 
-        var sb = new StringBuilder();
+        using var output = ZString.CreateUtf8StringBuilder();
 
         // Try CsvHelper first for robust parsing
         try
@@ -47,71 +52,155 @@ public sealed class CsvProcessor : IContentProcessor
             csv.Read();
             csv.ReadHeader();
             var headers = csv.HeaderRecord ?? [];
-            sb.AppendLine($"[FILE] {context.RelativePath}  (CSV, {delimiter}-delimited)");
-            sb.AppendLine();
-            sb.AppendLine($"Columns ({headers.Length}): {string.Join(", ", headers)}");
-            sb.AppendLine();
+            output.Append($"[FILE] {context.RelativePath}  (CSV, {delimiter}-delimited)");
+            output.AppendLine();
+            output.AppendLine();
+            output.Append($"Columns ({headers.Length}): ");
+            output.Append(string.Join(", ", headers));
+            output.AppendLine();
+            output.AppendLine();
 
             int rowCount = 0;
-            const int maxRows = 50;
-            while (csv.Read() && rowCount < maxRows)
+            int byteBudget = MaxOutputBytes - output.Length;
+            bool stoppedDueToOutputLimit = false;
+            bool hasMoreRows = false;
+
+            while (rowCount < MaxPreviewRows && byteBudget > 0)
             {
-                var rowSb = new StringBuilder();
+                if (!csv.Read())
+                    break;
+
+                using var rowBuilder = ZString.CreateUtf8StringBuilder();
                 for (int i = 0; i < csv.ColumnCount; i++)
                 {
-                    if (i > 0) rowSb.Append(delimiter);
-                    rowSb.Append(csv.GetField(i) ?? "");
+                    if (i > 0) rowBuilder.Append(delimiter);
+                    rowBuilder.Append(csv.GetField(i) ?? "");
                 }
-                if (Encoding.UTF8.GetByteCount(sb.ToString() + rowSb + "\n") > 50 * 1024)
+                rowBuilder.AppendLine();
+
+                var rowBytes = rowBuilder.Length;
+                var rowPrefix = $"{rowCount + 1,6}| ";
+                var prefixBytes = Encoding.UTF8.GetByteCount(rowPrefix);
+                var totalBytes = prefixBytes + rowBytes;
+
+                if (totalBytes > byteBudget)
                 {
-                    sb.AppendLine($"... (output truncated)");
+                    output.Append("... (output truncated)");
+                    output.AppendLine();
+                    stoppedDueToOutputLimit = true;
+                    hasMoreRows = true; // current row exists but was not emitted
                     break;
                 }
-                sb.AppendLine($"{rowCount + 1,6}| {rowSb}");
+
+                output.Append(rowPrefix);
+                output.AppendLiteral(rowBuilder.AsSpan());
+                byteBudget -= totalBytes;
                 rowCount++;
             }
 
-            if (csv.Read()) // more rows exist
-                sb.AppendLine($"... ({rowCount}+ total rows)");
+            if (!stoppedDueToOutputLimit && rowCount >= MaxPreviewRows)
+                hasMoreRows = csv.Read();
+
+            if (hasMoreRows)
+            {
+                output.Append("... (");
+                output.Append(rowCount);
+                output.Append("+ total rows)");
+                output.AppendLine();
+            }
 
             return ValueTask.FromResult(new ContentProcessorResult(
-                sb.ToString().TrimEnd(), OutputModality.Text));
+                output.ToString().TrimEnd(), OutputModality.Text,
+                Utf8Data: output.AsSpan().ToArray()));
         }
         catch
         {
             // CsvHelper failed — fall back to manual splitting
         }
 
-        // Fallback: manual line splitting
-        var text = Encoding.UTF8.GetString(bytes.Span).Replace("\r\n", "\n");
-        var lines = text.Split('\n');
-
-        sb.AppendLine($"[FILE] {context.RelativePath}  ({lines.Length} rows, {delimiter}-delimited)");
-        sb.AppendLine();
-
-        if (lines.Length > 0)
+        // Fallback: scan raw bytes for line boundaries without allocating a full string.
+        // Also pre-compute line start positions so we can track the byte budget accurately.
+        var span = bytes.Span;
+        var lineStarts = new List<int> { 0 };
+        for (int i = 0; i < span.Length; i++)
         {
-            var columns = lines[0].Split(delimiter);
-            sb.AppendLine($"Columns ({columns.Length}): {string.Join(", ", columns)}");
-            sb.AppendLine();
+            if (span[i] == (byte)'\n' && i + 1 < span.Length)
+                lineStarts.Add(i + 1);
         }
 
-        int showRows = Math.Min(lines.Length - 1, 50);
+        var totalLines = lineStarts.Count;
+
+        output.Append($"[FILE] {context.RelativePath}  ({totalLines} rows, {delimiter}-delimited)");
+        output.AppendLine();
+        output.AppendLine();
+
+        // Decode header line to extract column names
+        if (totalLines > 0)
+        {
+            int headerStart = lineStarts[0];
+            int headerEnd = totalLines > 1 ? lineStarts[1] : span.Length;
+            int headerLen = headerEnd - headerStart;
+            // Strip trailing newline characters from header
+            if (headerLen > 0 && span[headerStart + headerLen - 1] == (byte)'\n') headerLen--;
+            if (headerLen > 0 && span[headerStart + headerLen - 1] == (byte)'\r') headerLen--;
+
+            var headerText = Encoding.UTF8.GetString(span.Slice(headerStart, headerLen));
+            var columns = headerText.Split(delimiter);
+            output.Append($"Columns ({columns.Length}): ");
+            output.Append(string.Join(", ", columns));
+            output.AppendLine();
+            output.AppendLine();
+        }
+
+        int remainingByteBudget = MaxOutputBytes - output.Length;
+        int showRows = Math.Min(totalLines - 1, MaxPreviewRows);
+        int shownRows = 0;
+        bool truncatedByBudget = false;
         for (int i = 1; i <= showRows; i++)
         {
-            var rowText = lines[i];
-            if (Encoding.UTF8.GetByteCount(sb.ToString() + rowText + "\n") > 50 * 1024)
+            int lineStart = lineStarts[i];
+            int lineEnd = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : span.Length;
+            int lineLen = lineEnd - lineStart;
+            // Strip trailing newline
+            if (lineLen > 0 && span[lineStart + lineLen - 1] == (byte)'\n') lineLen--;
+            if (lineLen > 0 && span[lineStart + lineLen - 1] == (byte)'\r') lineLen--;
+
+            var rowText = Encoding.UTF8.GetString(span.Slice(lineStart, lineLen));
+            var rowPrefix = $"{i,6}| ";
+            var prefixBytes = Encoding.UTF8.GetByteCount(rowPrefix);
+            var rowBytes = lineLen + 1; // +1 for newline we'll append
+
+            if (prefixBytes + rowBytes > remainingByteBudget)
             {
-                sb.AppendLine($"... ({lines.Length - 1} total rows, showing {i - 1})");
+                output.Append("... (");
+                output.Append(totalLines - 1);
+                output.Append(" total rows, showing ");
+                output.Append(shownRows);
+                output.Append(")");
+                output.AppendLine();
+                truncatedByBudget = true;
                 break;
             }
-            sb.AppendLine($"{i,6}| {rowText}");
+
+            output.Append(rowPrefix);
+            output.Append(rowText);
+            output.AppendLine();
+            remainingByteBudget -= prefixBytes + rowBytes;
+            shownRows++;
         }
 
-        if (showRows < lines.Length - 1)
-            sb.AppendLine($"... ({lines.Length - 1} total rows, showing {showRows})");
+        if (!truncatedByBudget && shownRows < totalLines - 1)
+        {
+            output.Append("... (");
+            output.Append(totalLines - 1);
+            output.Append(" total rows, showing ");
+            output.Append(shownRows);
+            output.Append(")");
+            output.AppendLine();
+        }
 
         return ValueTask.FromResult(new ContentProcessorResult(
-            sb.ToString().TrimEnd(), OutputModality.Text));
+            output.ToString().TrimEnd(), OutputModality.Text,
+            Utf8Data: output.AsSpan().ToArray()));
     }
 }

@@ -85,7 +85,8 @@ public sealed record ToolInvocationCompletedEvent(
     string ToolName,
     string Result,
     bool IsError,
-    List<IContentBlock>? Blocks = null) : OmicronEvent(Envelope);
+    List<IContentBlock>? Blocks = null,
+    ReadOnlyMemory<byte>? ResultBytes = null) : OmicronEvent(Envelope);
 
 // ============================================================
 // Permission events

@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Omicron.Core.Content;
 using Omicron.Core.Models;
 using Omicron.Core.Sessions;
 
@@ -116,7 +117,7 @@ public interface IChatProvider
         IReadOnlyList<Tool>? tools,
         ChatOptions options)
     {
-        var text = new StringBuilder();
+        using var text = new Utf8TextAccumulator();
         var toolCalls = new List<ToolCallContent>();
         StopReason stopReason = StopReason.Stop;
         string? errorMessage = null;
@@ -267,6 +268,34 @@ public abstract class ShapeBasedProvider : IChatProvider
             yield return parsed;
             if (parsed.Type == StreamEventType.Error)
                 yield break;
+        }
+
+        // Drain remaining tool call accumulators not emitted by the final
+        // finish_reason chunk. OpenAI Chat sends a single finish chunk for
+        // all tools, but ParseSseChunk only emits one ToolCallEnd per call.
+        // Anthropic already removes each accumulator on content_block_stop
+        // so this is typically a no-op for non-OpenAI shapes.
+        foreach (var (_, acc) in toolCallAccumulators)
+        {
+            Dictionary<string, object?>? args = null;
+            try
+            {
+                args = acc.Args.Length > 0
+                    ? JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString())
+                    : new Dictionary<string, object?>();
+            }
+            catch
+            {
+                args = new();
+            }
+            yield return new StreamEvent
+            {
+                Type = StreamEventType.ToolCallEnd,
+                ToolCall = new ToolCallContent(
+                    acc.Id ?? Guid.NewGuid().ToString("N")[..12],
+                    acc.Name,
+                    args ?? new())
+            };
         }
     }
 

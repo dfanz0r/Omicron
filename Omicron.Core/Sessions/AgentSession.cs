@@ -266,8 +266,8 @@ public sealed class AgentSession
                     .ToList()
                 : null;
 
-            var responseText = new StringBuilder();
-            var reasoningText = new StringBuilder();
+            using var responseText = new Utf8TextAccumulator();
+            using var reasoningText = new Utf8TextAccumulator();
             var toolCalls = new List<ToolCallContent>();
             StopReason stopReason = StopReason.Stop;
             string? errorMessage = null;
@@ -386,9 +386,10 @@ public sealed class AgentSession
                         toolCall.Arguments ?? new Dictionary<string, object?>()));
 
                     var toolDef = _toolRegistry.GetTool(toolCall.Name);
-                    string resultText;
+                    string resultText = null!;
                     bool isError = false;
                     List<IContentBlock>? resultBlocks = null;
+                    ReadOnlyMemory<byte>? resultUtf8Data = null;
 
                     if (toolDef is null)
                     {
@@ -433,18 +434,32 @@ public sealed class AgentSession
                                 resultText = invokeResult.Text;
                                 isError = invokeResult.IsError;
                                 resultBlocks = invokeResult.Blocks;
+                                resultUtf8Data = invokeResult.Utf8Data;
 
                                 // Multimodal bridge: if read_path returned base64 content,
                                 // inject a user message with actual image/audio/video/PDF content
                                 // so provider shapes can serialize it as image_url/input_image.
-                                if (!isError && toolCall.Name == "read_path" && resultText is not null)
+                                if (!isError && toolCall.Name == "read_path")
                                 {
-                                    var bridgeImages = TryExtractBase64Content(resultText);
-                                    if (bridgeImages.Count > 0)
+                                    if (resultUtf8Data.HasValue)
                                     {
-                                        var bridgeMsg = Message.UserMessage(
-                                            $"read_path returned base64 content for the tool result below", bridgeImages);
-                                        _messages.Add(bridgeMsg);
+                                        var bridgeImages = TryExtractBase64ContentUtf8(resultUtf8Data.Value.Span);
+                                        if (bridgeImages.Count > 0)
+                                        {
+                                            var bridgeMsg = Message.UserMessage(
+                                                $"read_path returned base64 content for the tool result below", bridgeImages);
+                                            _messages.Add(bridgeMsg);
+                                        }
+                                    }
+                                    else if (resultText is not null)
+                                    {
+                                        var bridgeImages = TryExtractBase64Content(resultText);
+                                        if (bridgeImages.Count > 0)
+                                        {
+                                            var bridgeMsg = Message.UserMessage(
+                                                $"read_path returned base64 content for the tool result below", bridgeImages);
+                                            _messages.Add(bridgeMsg);
+                                        }
                                     }
                                 }
                             }
@@ -456,12 +471,25 @@ public sealed class AgentSession
                         }
                     }
 
-                    _messages.Add(Message.ToolResultMessage(
-                        toolCall.Id, toolCall.Name, resultText ?? "", isError));
+                    if (resultUtf8Data.HasValue)
+                    {
+                        _messages.Add(Message.ToolResultMessageUtf8(
+                            toolCall.Id, toolCall.Name, resultUtf8Data.Value, isError));
 
-                    yield return Emit(new ToolInvocationCompletedEvent(
-                        _writer.Envelope(),
-                        toolCallId, toolCall.Name, resultText ?? "", isError, resultBlocks));
+                        yield return Emit(new ToolInvocationCompletedEvent(
+                            _writer.Envelope(),
+                            toolCallId, toolCall.Name, resultText ?? "", isError, resultBlocks,
+                            ResultBytes: resultUtf8Data));
+                    }
+                    else
+                    {
+                        _messages.Add(Message.ToolResultMessage(
+                            toolCall.Id, toolCall.Name, resultText ?? "", isError));
+
+                        yield return Emit(new ToolInvocationCompletedEvent(
+                            _writer.Envelope(),
+                            toolCallId, toolCall.Name, resultText ?? "", isError, resultBlocks));
+                    }
                 }
 
                 continue;
@@ -522,16 +550,19 @@ public sealed class AgentSession
     /// along with the MIME type from the header line.
     /// Returns an empty list if no base64 content is found.
     /// </summary>
-
-
     private static IReadOnlyList<ImageContent> TryExtractBase64Content(string resultText)
     {
-        var lines = resultText.Replace("\r\n", "\n").Split('\n');
         string? mimeType = null;
         string? base64Data = null;
 
-        foreach (var line in lines)
+        // Iterate lines via StringReader to avoid allocating a string array.
+        using var reader = new StringReader(resultText);
+        while (mimeType is null || base64Data is null)
         {
+            var line = reader.ReadLine();
+            if (line is null)
+                break;
+
             if (mimeType is null && line.Contains("[FILE]") && !line.Contains("Data:"))
             {
                 var mimeStart = line.LastIndexOf('(');
@@ -546,8 +577,71 @@ public sealed class AgentSession
                 }
             }
 
-            if (line.StartsWith("Data: "))
+            if (base64Data is null && line.StartsWith("Data: "))
                 base64Data = line.Substring(6).Trim();
+        }
+
+        if (base64Data is not null && mimeType is not null)
+            return new[] { new ImageContent(base64Data, mimeType) };
+
+        return Array.Empty<ImageContent>();
+    }
+
+    /// <summary>
+    /// UTF-8 byte variant of <see cref="TryExtractBase64Content"/>.
+    /// Scans raw bytes for <c>[FILE]</c> and <c>Data: </c> markers
+    /// without decoding the entire buffer to a string.
+    /// </summary>
+    private static IReadOnlyList<ImageContent> TryExtractBase64ContentUtf8(ReadOnlySpan<byte> utf8Bytes)
+    {
+        string? mimeType = null;
+        string? base64Data = null;
+        int index = 0;
+
+        while ((mimeType is null || base64Data is null) &&
+               Omicron.Core.Diff.TextLineSplitter.TryReadNextLine(utf8Bytes, ref index, out var line))
+        {
+            if (mimeType is null)
+            {
+                // Look for "[FILE]" without "Data:" in the ASCII range
+                var hasFileMarker = false;
+                var hasDataMarker = false;
+                int parenStart = -1, parenEnd = -1;
+                for (int i = 0; i < line.Length; i++)
+                {
+                    // Check for [FILE] (4+5 = 9 byte match from current position)
+                    if (!hasFileMarker && i + 5 < line.Length &&
+                        line[i] == (byte)'[' && line[i + 1] == (byte)'F' &&
+                        line[i + 2] == (byte)'I' && line[i + 3] == (byte)'L' &&
+                        line[i + 4] == (byte)'E' && line[i + 5] == (byte)']')
+                        hasFileMarker = true;
+                    if (!hasDataMarker && i + 5 < line.Length &&
+                        line[i] == (byte)'D' && line[i + 1] == (byte)'a' &&
+                        line[i + 2] == (byte)'t' && line[i + 3] == (byte)'a' &&
+                        line[i + 4] == (byte)':')
+                        hasDataMarker = true;
+                    if (line[i] == (byte)'(') parenStart = i;
+                    if (line[i] == (byte)')') parenEnd = i;
+                }
+
+                if (hasFileMarker && !hasDataMarker && parenStart >= 0 && parenEnd > parenStart)
+                {
+                    var inner = Encoding.UTF8.GetString(line.Slice(parenStart + 1, parenEnd - parenStart - 1));
+                    var comma = inner.LastIndexOf(',');
+                    var candidate = comma >= 0 ? inner.Substring(comma + 1).Trim() : inner.Trim();
+                    if (candidate.Contains('/'))
+                        mimeType = candidate;
+                }
+            }
+
+            if (base64Data is null && line.Length >= 6 &&
+                line[0] == (byte)'D' && line[1] == (byte)'a' &&
+                line[2] == (byte)'t' && line[3] == (byte)'a' &&
+                line[4] == (byte)' ' && line[5] == (byte)':')
+            {
+                var valueSlice = line.Slice(6);
+                base64Data = Encoding.UTF8.GetString(valueSlice).Trim();
+            }
         }
 
         if (base64Data is not null && mimeType is not null)

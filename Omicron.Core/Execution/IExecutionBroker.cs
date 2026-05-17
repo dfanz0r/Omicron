@@ -255,10 +255,20 @@ public sealed class LocalExecutionBroker : IExecutionBroker
         {
             sb.AppendLine();
             sb.AppendLine("--- stderr ---");
-            var errLines = error.Replace("\r\n", "\n").Split('\n');
-            sb.Append(string.Join("\n", errLines.Take(50)));
-            if (errLines.Length > 50)
-                sb.AppendLine($"\n... and {errLines.Length - 50} more stderr lines");
+            int stderrLineCount = 0;
+            using var stderrReader = new StringReader(error);
+            string? stderrLine;
+            while ((stderrLine = stderrReader.ReadLine()) is not null)
+            {
+                stderrLineCount++;
+                if (stderrLineCount <= 50)
+                {
+                    sb.Append(stderrLine);
+                    sb.Append('\n');
+                }
+            }
+            if (stderrLineCount > 50)
+                sb.Append($"... and {stderrLineCount - 50} more stderr lines\n");
         }
 
         // Status line
@@ -283,7 +293,29 @@ public sealed class LocalExecutionBroker : IExecutionBroker
 
     private static string EscapeCommand(string command)
     {
-        return command.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        // Single-pass escaping: backslash first, then double-quote.
+        // Use StringBuilder sized to input length to avoid reallocation.
+        int backslashCount = 0;
+        for (int i = 0; i < command.Length; i++)
+        {
+            if (command[i] == '\\') backslashCount++;
+        }
+        int quoteCount = 0;
+        for (int i = 0; i < command.Length; i++)
+        {
+            if (command[i] == '"') quoteCount++;
+        }
+        if (backslashCount == 0 && quoteCount == 0)
+            return command;
+
+        var sb = new StringBuilder(command.Length + backslashCount + quoteCount);
+        foreach (var c in command)
+        {
+            if (c == '\\') sb.Append("\\\\");
+            else if (c == '"') sb.Append("\\\"");
+            else sb.Append(c);
+        }
+        return sb.ToString();
     }
 
     private static string? FindExe(string name)

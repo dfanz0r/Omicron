@@ -156,7 +156,7 @@ public sealed class Utf8ContentBuffer : IDisposable, IEquatable<Utf8ContentBuffe
         _builder.Dispose();
     }
 
-    private void ThrowIfDisposed()
+    internal void ThrowIfDisposed()
     {
         if (_disposed)
             throw new ObjectDisposedException(nameof(Utf8ContentBuffer));

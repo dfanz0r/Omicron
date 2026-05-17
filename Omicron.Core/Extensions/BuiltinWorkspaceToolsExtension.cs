@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Diff;
 using Omicron.Core.Events;
@@ -145,7 +146,10 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                             }
                         }
 
-                        return new ToolResult(b64Result.Text, IsError: false);
+                        return new ToolResult(
+                            Text: b64Result.Utf8Data.HasValue ? null : b64Result.Text,
+                            Utf8Data: b64Result.Utf8Data,
+                            IsError: false);
                     }
                     else if (effectiveFormat == "text")
                     {
@@ -190,7 +194,10 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         }
                     }
 
-                    return new ToolResult(result.Text, IsError: false);
+                    return new ToolResult(
+                        Text: result.Utf8Data.HasValue ? null : result.Text,
+                        Utf8Data: result.Utf8Data,
+                        IsError: false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -252,18 +259,24 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     var lineStarts = new List<int> { 0 };
                     for (int i = 0; i < span.Length; i++)
                     {
-                        if (span[i] == (byte)'\n')
+                        // A trailing LF terminates the final content line; don't
+                        // render an extra empty hashline anchor after it.
+                        if (span[i] == (byte)'\n' && i + 1 < span.Length)
                             lineStarts.Add(i + 1);
                     }
                     var totalLines = lineStarts.Count;
 
-                    var sb = new StringBuilder();
-                    sb.AppendLine($"[FILE] {path}  ({totalLines} lines, hashline anchors)");
+                    var output = ZString.CreateUtf8StringBuilder();
+                    try
+                    {
+                        output.Append($"[FILE] {path}  ({totalLines} lines, hashline anchors)");
+                    output.AppendLine();
+                    output.AppendLine();
 
                     const int maxOutputLines = 2000;
                     const int maxOutputBytes = 50 * 1024;
                     int writtenLines = 0;
-                    int writtenBytes = 0;
+                    int writtenBytes = output.Length;
                     bool truncated = false;
 
                     for (int i = 0; i < totalLines; i++)
@@ -277,10 +290,11 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\r')
                             lineLength--;
 
-                        var lineText = Encoding.UTF8.GetString(span.Slice(lineByteStart, lineLength));
-                        var anchor = LineHash.ComputeAnchor(lineText);
-                        var formatted = LineHash.FormatLine(i + 1, anchor, lineText);
-                        var lineBytes = Encoding.UTF8.GetByteCount(formatted) + 1; // +1 for newline
+                        var lineUtf8 = span.Slice(lineByteStart, lineLength);
+                        var anchor = LineHash.ComputeAnchorUtf8(lineUtf8);
+                        // Estimate byte cost: line number digits + anchor(2) + '|' + line + newline
+                        var lineNumDigits = i < 9 ? 1 : i < 99 ? 2 : i < 999 ? 3 : i < 9999 ? 4 : 5;
+                        var lineBytes = lineNumDigits + 2 + 1 + lineLength + 1;
 
                         if (writtenLines >= maxOutputLines ||
                             (writtenBytes > 0 && writtenBytes + lineBytes > maxOutputBytes))
@@ -289,15 +303,24 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                             break;
                         }
 
-                        sb.AppendLine(formatted);
+                        LineHash.FormatLineUtf8(ref output, i + 1, anchor, lineUtf8);
                         writtenLines++;
                         writtenBytes += lineBytes;
                     }
 
                     if (truncated)
-                        sb.AppendLine($"... output truncated ({totalLines} total lines, showing {writtenLines})");
+                    {
+                        output.Append($"... output truncated ({totalLines} total lines, showing {writtenLines})");
+                        output.AppendLine();
+                    }
 
-                    return new ToolResult(sb.ToString().TrimEnd());
+                        return new ToolResult(
+                            Utf8Data: output.AsSpan().ToArray());
+                    }
+                    finally
+                    {
+                        output.Dispose();
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -535,26 +558,37 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
 
                     // ---------- format result ----------
 
-                    var resultSb = new StringBuilder();
-                    resultSb.AppendLine($"Edit committed: {path}");
-
-                    if (diff.HasChanges)
+                    var resultOutput = ZString.CreateUtf8StringBuilder();
+                    try
                     {
-                        resultSb.AppendLine();
-                        var fileDiff = diff.FileDiffs[0];
-                        if (fileDiff.IsBinary)
-                            resultSb.AppendLine("(binary file diff omitted)");
-                        else if (!string.IsNullOrEmpty(fileDiff.TextDiff))
-                            resultSb.AppendLine(fileDiff.TextDiff);
-                        else
-                            resultSb.AppendLine("(no textual changes)");
+                        resultOutput.Append($"Edit committed: {path}");
+                        resultOutput.AppendLine();
+
+                        if (diff.HasChanges)
+                        {
+                            resultOutput.AppendLine();
+                            var fileDiff = diff.FileDiffs[0];
+                            if (fileDiff.IsBinary)
+                                resultOutput.Append("(binary file diff omitted)");
+                            else if (!string.IsNullOrEmpty(fileDiff.TextDiff))
+                                resultOutput.Append(fileDiff.TextDiff);
+                            else
+                                resultOutput.Append("(no textual changes)");
+                            resultOutput.AppendLine();
+                        }
+
+                        // Remind the model to call read_file_hashlines for fresh anchors
+                        resultOutput.AppendLine();
+                        resultOutput.Append("Call read_file_hashlines to get fresh line anchors if you need to make further edits.");
+                        resultOutput.AppendLine();
+
+                        return new ToolResult(
+                            Utf8Data: resultOutput.AsSpan().ToArray());
                     }
-
-                    // Remind the model to call read_file_hashlines for fresh anchors
-                    resultSb.AppendLine();
-                    resultSb.AppendLine("Call read_file_hashlines to get fresh line anchors if you need to make further edits.");
-
-                    return new ToolResult(resultSb.ToString().TrimEnd());
+                    finally
+                    {
+                        resultOutput.Dispose();
+                    }
                 }
                 catch (OperationCanceledException)
                 {

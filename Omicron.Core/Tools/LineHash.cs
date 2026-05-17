@@ -1,4 +1,5 @@
 using System.Text;
+using Cysharp.Text;
 
 namespace Omicron.Core.Tools;
 
@@ -16,18 +17,24 @@ internal static class LineHash
     private const uint FnvOffsetBasis = 2166136261;
 
     /// <summary>
-    /// Compute the 32-bit FNV-1a hash of a normalized line (no \r\n).
+    /// Compute the 32-bit FNV-1a hash of a string line.
     /// </summary>
     public static uint ComputeHash(string line)
     {
-        // Normalize: use UTF-8 bytes. Lines passed in are already
-        // split with \r\n normalized to \n, so we just hash the text.
         var bytes = Encoding.UTF8.GetBytes(line);
+        return ComputeHash(bytes.AsSpan());
+    }
 
+    /// <summary>
+    /// Compute the 32-bit FNV-1a hash of raw UTF-8 bytes directly,
+    /// avoiding a string allocation.
+    /// </summary>
+    public static uint ComputeHash(ReadOnlySpan<byte> utf8Bytes)
+    {
         uint hash = FnvOffsetBasis;
-        for (int i = 0; i < bytes.Length; i++)
+        for (int i = 0; i < utf8Bytes.Length; i++)
         {
-            hash ^= bytes[i];
+            hash ^= utf8Bytes[i];
             hash *= FnvPrime;
         }
         return hash;
@@ -56,12 +63,32 @@ internal static class LineHash
     }
 
     /// <summary>
+    /// Compute anchor directly from UTF-8 bytes without a string allocation.
+    /// </summary>
+    public static string ComputeAnchorUtf8(ReadOnlySpan<byte> utf8Bytes)
+    {
+        return ToAnchor(ComputeHash(utf8Bytes));
+    }
+
+    /// <summary>
     /// Format a line with its anchor for display: "{line}{anchor}|{text}".
     /// Example: "42sr|    return a + b;"
     /// </summary>
     public static string FormatLine(int lineNumber, string anchor, string text)
     {
         return $"{lineNumber}{anchor}|{text}";
+    }
+
+    /// <summary>
+    /// Append a formatted hashline directly to a UTF-8 builder.
+    /// </summary>
+    public static void FormatLineUtf8(ref Utf8ValueStringBuilder builder, int lineNumber, string anchor, ReadOnlySpan<byte> utf8Text)
+    {
+        builder.Append(lineNumber);
+        builder.Append(anchor);
+        builder.Append('|');
+        builder.AppendLiteral(utf8Text);
+        builder.AppendLine();
     }
 
     /// <summary>

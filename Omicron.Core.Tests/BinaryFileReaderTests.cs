@@ -665,6 +665,23 @@ public class BinaryFileReaderTests
         Assert.Contains("Alice", result.Text);
     }
 
+    [Fact]
+    public async Task CsvProcessor_ReportsRowsBeyondPreviewLimit()
+    {
+        var proc = new CsvProcessor();
+        var csv = "name\n" + string.Join('\n', Enumerable.Range(1, 51).Select(i => $"row{i}"));
+        var bytes = Encoding.UTF8.GetBytes(csv);
+        var ctx = new ContentProcessorContext(
+            "/test/data.csv", "data.csv", bytes.AsMemory(), bytes.Length,
+            new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
+
+        var result = await proc.ProcessAsync(ctx);
+
+        Assert.Contains("row50", result.Text);
+        Assert.DoesNotContain("row51", result.Text);
+        Assert.Contains("... (50+ total rows)", result.Text);
+    }
+
     // ============================================================
     // EmailProcessor tests
     // ============================================================

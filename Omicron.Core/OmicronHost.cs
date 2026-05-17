@@ -420,7 +420,7 @@ public sealed class OmicronHost : IDisposable
                 case MessageRole.User:
                     replayEvents.Add(new UserMessageEvent(
                         EventEnvelope.ForSession(session.Id),
-                        msg.Text ?? ""));
+                        msg.EffectiveText));
                     break;
 
                 case MessageRole.Assistant:
@@ -439,7 +439,7 @@ public sealed class OmicronHost : IDisposable
 
                     replayEvents.Add(new AssistantResponseCompleteEvent(
                         EventEnvelope.ForSession(session.Id),
-                        msg.Text ?? "", msg.Reasoning, new TokenUsage(0, 0)));
+                        msg.EffectiveText, msg.Reasoning, new TokenUsage(0, 0)));
                     break;
                 }
 
@@ -448,7 +448,7 @@ public sealed class OmicronHost : IDisposable
                         EventEnvelope.ForSession(session.Id),
                         new ToolCallId(msg.ToolCallId ?? ""),
                         msg.ToolName ?? "",
-                        msg.Text ?? "", msg.IsError));
+                        msg.EffectiveText, msg.IsError));
                     break;
             }
         }

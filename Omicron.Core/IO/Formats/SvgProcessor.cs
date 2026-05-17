@@ -1,4 +1,5 @@
 using System.Text;
+using Cysharp.Text;
 using Omicron.Core.Content;
 
 namespace Omicron.Core.IO;
@@ -15,6 +16,7 @@ public sealed class SvgProcessor : IContentProcessor
     public OutputModality OutputModality => OutputModality.Text;
 
     private const long MaxSvgBytes = 1 * 1024 * 1024; // 1 MB
+    private const int MaxPreviewLines = 2000;
 
     public ValueTask<ContentProcessorResult> ProcessAsync(
         ContentProcessorContext context,
@@ -30,37 +32,67 @@ public sealed class SvgProcessor : IContentProcessor
                 $"[FILE] {context.RelativePath}  (empty SVG)", OutputModality.Text));
         }
 
-        if (bytes.Length > MaxSvgBytes)
+        // Truncate to max size before scanning
+        var slice = bytes.Length > MaxSvgBytes
+            ? bytes[..(int)MaxSvgBytes]
+            : bytes;
+        bool isTruncated = bytes.Length > MaxSvgBytes;
+
+        var span = slice.Span;
+
+        // Scan bytes for line boundaries
+        var lineStarts = new List<int> { 0 };
+        for (int i = 0; i < span.Length; i++)
         {
-            return ValueTask.FromResult(new ContentProcessorResult(
-                $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, SVG — file too large, showing first {FormatSize.Format(MaxSvgBytes)})\n" +
-                                Encoding.UTF8.GetString(bytes[..(int)MaxSvgBytes].Span),
-                OutputModality.Text,
-                IsTruncated: true));
+            if (span[i] == (byte)'\n' && i + 1 < span.Length)
+                lineStarts.Add(i + 1);
         }
+        var totalLines = lineStarts.Count;
 
-        var text = Encoding.UTF8.GetString(bytes.Span);
-        var lines = text.Replace("\r\n", "\n").Split('\n');
+        using var output = ZString.CreateUtf8StringBuilder();
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"[FILE] {context.RelativePath}  ({lines.Length} lines, SVG)");
-        sb.AppendLine();
+        if (isTruncated)
+        {
+            output.Append($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, SVG — file too large, showing first {FormatSize.Format(MaxSvgBytes)})");
+        }
+        else
+        {
+            output.Append($"[FILE] {context.RelativePath}  ({totalLines} lines, SVG)");
+        }
+        output.AppendLine();
+        output.AppendLine();
 
-        // Show up to 2000 lines
-        int showLines = Math.Min(lines.Length, 2000);
+        // Show up to MaxPreviewLines lines
+        int showLines = Math.Min(totalLines, MaxPreviewLines);
         for (int i = 0; i < showLines; i++)
         {
-            sb.AppendLine($"{(i + 1),6}| {lines[i]}");
+            int lineStart = lineStarts[i];
+            int lineEnd = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : span.Length;
+            int lineLen = lineEnd - lineStart;
+            // Strip trailing newline
+            if (lineLen > 0 && span[lineStart + lineLen - 1] == (byte)'\n') lineLen--;
+            if (lineLen > 0 && span[lineStart + lineLen - 1] == (byte)'\r') lineLen--;
+
+            // Format: "     1| <line>"
+            var prefix = $"{i + 1,6}| ";
+            output.Append(prefix);
+            output.AppendLiteral(span.Slice(lineStart, lineLen));
+            output.AppendLine();
         }
 
-        if (showLines < lines.Length)
+        if (showLines < totalLines)
         {
-            sb.AppendLine($"... ({lines.Length} total lines, showing {showLines})");
+            output.Append("... (");
+            output.Append(totalLines);
+            output.Append(" total lines, showing ");
+            output.Append(showLines);
+            output.Append(")");
+            output.AppendLine();
         }
 
         return ValueTask.FromResult(new ContentProcessorResult(
-            sb.ToString().TrimEnd(), OutputModality.Text));
+            output.ToString().TrimEnd(), OutputModality.Text,
+            Utf8Data: output.AsSpan().ToArray(),
+            IsTruncated: isTruncated || showLines < totalLines));
     }
-
-
 }
