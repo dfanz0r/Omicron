@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using Omicron.Core.Content;
 
 namespace Omicron.Core.IO;
 
@@ -31,7 +32,7 @@ public sealed class EbookProcessor : IContentProcessor
         }
 
         var sb = new StringBuilder();
-        sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, EPUB)");
+        sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, EPUB)");
         sb.AppendLine();
 
         // Try to extract text from EPUB (ZIP with .opf and .xhtml)
@@ -240,10 +241,5 @@ public sealed class EbookProcessor : IContentProcessor
         return HtmlWhitespaceRegex.Replace(result, " ").Trim();
     }
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
+
 }

@@ -1,5 +1,7 @@
 using System;
 using System.Text;
+using Cysharp.Text;
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Rendering;
@@ -150,23 +152,23 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 break;
 
             case ToolInvocationCompletedEvent tic:
-                var resultBytes = Encoding.UTF8.GetBytes(
-                    tic.IsError ? $"\n[Error: {tic.Result}]" : $"\n{tic.Result}");
-                // Match by ToolCallId first (precise), then by ToolName + Running state
-                bool updated = false;
-                for (int i = _store.Blocks.Count - 1; i >= 0; i--)
+                List<IContentBlock>? ticBlocks = tic.Blocks;
+
+                // Local function to find and update the matching ToolCallBlock
+                void UpdateWithSpan(ReadOnlySpan<byte> bytes, List<IContentBlock>? blocks)
                 {
-                    if (_store.Blocks[i] is ToolCallBlock tcb &&
-                        tcb.ToolCallId == tic.ToolCallId.Value &&
-                        tcb.State is ToolCallState.Running or ToolCallState.Pending)
+                    // Match by ToolCallId first (precise), then by ToolName + Running state
+                    for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                     {
-                        _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, resultBytes);
-                        updated = true;
-                        break;
+                        if (_store.Blocks[i] is ToolCallBlock tcb &&
+                            tcb.ToolCallId == tic.ToolCallId.Value &&
+                            tcb.State is ToolCallState.Running or ToolCallState.Pending)
+                        {
+                            _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, bytes, blocks);
+                            return;
+                        }
                     }
-                }
-                if (!updated)
-                {
+
                     // Fallback: match by tool name + Running state
                     for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                     {
@@ -174,25 +176,48 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                             tcb.ToolName == tic.ToolName &&
                             tcb.State is ToolCallState.Running or ToolCallState.Pending)
                         {
-                            _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, resultBytes);
-                            updated = true;
-                            break;
+                            _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, bytes, blocks);
+                            return;
                         }
                     }
-                }
-                if (!updated)
-                {
+
                     // Last resort: match any Running/Pending tool block
                     for (int i = _store.Blocks.Count - 1; i >= 0; i--)
                     {
                         if (_store.Blocks[i] is ToolCallBlock tcb &&
                             tcb.State is ToolCallState.Running or ToolCallState.Pending)
                         {
-                            _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, resultBytes);
-                            break;
+                            _store.UpdateToolCall(tcb.Id, ToolCallState.Completed, bytes, blocks);
+                            return;
                         }
                     }
                 }
+
+                // When blocks are available, build bytes directly from block
+                // buffers avoiding the string → UTF-8 roundtrip.
+                if (ticBlocks is { Count: > 0 })
+                {
+                    var blockSb = ZString.CreateUtf8StringBuilder();
+                    try
+                    {
+                        blockSb.AppendLine();
+                        ContentBlockTextRenderer.AppendAllUtf8To(ref blockSb, ticBlocks);
+
+                        // Consume the span while the builder is alive
+                        UpdateWithSpan(blockSb.AsSpan(), ticBlocks);
+                    }
+                    finally
+                    {
+                        blockSb.Dispose();
+                    }
+                }
+                else
+                {
+                    var str = tic.IsError ? $"\n[Error: {tic.Result}]" : $"\n{tic.Result}";
+                    var bytes = System.Text.Encoding.UTF8.GetBytes(str);
+                    UpdateWithSpan(bytes.AsSpan(), null);
+                }
+
                 RebuildLayout();
                 break;
 
@@ -566,6 +591,18 @@ public sealed class TranscriptViewportWidget : ITuiWidget
     {
         if (_blockById.TryGetValue(blockId, out var block))
         {
+            // If this is a tool call with content blocks, render based on type
+            if (block is ToolCallBlock tcb && tcb.ContentBlocks is { Count: > 0 })
+            {
+                return tcb.ContentBlocks[0] switch
+                {
+                    FilePreviewContentBlock f when f.IsBinary => new TextStyle(150, 135, 100, 40, 25, 15, false, false, false),
+                    FilePreviewContentBlock => new TextStyle(150, 155, 120, 0, 0, 0, false, false, false),
+                    ErrorContentBlock => TextStyle.ForegroundOnly(255, 120, 100),
+                    _ => TextStyle.ForegroundOnly(150, 135, 100),
+                };
+            }
+
             return block switch
             {
                 UserMessageBlock => TextStyle.ForegroundOnly(235, 195, 80),

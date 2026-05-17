@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
@@ -28,7 +29,7 @@ public sealed class TuiApiKeyPrompt : ITuiWidget
     public bool IsCancelled => _cancelled;
 
     /// <summary>The entered API key (empty if cancelled).</summary>
-    public string ApiKey => _input.ToString();
+    public string ApiKey => _input.ToString().Trim();
 
     /// <summary>Reset the prompt for a new provider.</summary>
     public void Reset(string providerName)
@@ -37,6 +38,20 @@ public sealed class TuiApiKeyPrompt : ITuiWidget
         _input.Clear();
         _completed = false;
         _cancelled = false;
+        _showKey = false;
+    }
+
+    /// <summary>Insert pasted or typed text into the API-key buffer.</summary>
+    public void Insert(string text)
+    {
+        if (_completed || string.IsNullOrEmpty(text)) return;
+
+        foreach (var rune in text.EnumerateRunes())
+        {
+            // API keys are single-line; ignore paste newlines and other controls.
+            if (rune.Value >= 32 && rune.Value != 127)
+                _input.Append(rune.ToString());
+        }
     }
 
     /// <summary>Handle a key event. Returns true if consumed.</summary>
@@ -46,11 +61,15 @@ public sealed class TuiApiKeyPrompt : ITuiWidget
 
         switch (ke.Key)
         {
+            case Key.Character when ke.Text.HasValue && ke.Text.Value.Value == '\u0013': // Ctrl+S → toggle show key
+                _showKey = !_showKey;
+                return true;
+
             case Key.Character when ke.Text.HasValue:
-                char c = (char)ke.Text.Value.Value;
-                if (c >= 32 && c != 127)
+                var rune = ke.Text.Value;
+                if (rune.Value >= 32 && rune.Value != 127)
                 {
-                    _input.Append(c);
+                    _input.Append(rune.ToString());
                     return true;
                 }
                 return false;
@@ -58,14 +77,10 @@ public sealed class TuiApiKeyPrompt : ITuiWidget
             case Key.Backspace:
                 if (_input.Length > 0)
                 {
-                    _input.Length--;
+                    RemoveLastRune();
                     return true;
                 }
                 return false;
-
-            case Key.Character when ke.Text.HasValue && (char)ke.Text.Value.Value == '\u0013': // Ctrl+S → toggle show key
-                _showKey = !_showKey;
-                return true;
 
             case Key.Enter:
                 _completed = true;
@@ -147,6 +162,21 @@ public sealed class TuiApiKeyPrompt : ITuiWidget
         context.DrawText(dialogX + 1, dialogY + 3,
             Encoding.UTF8.GetBytes(hint),
             TextStyle.ForegroundOnly(150, 150, 150));
+    }
+
+    private void RemoveLastRune()
+    {
+        if (_input.Length == 0) return;
+
+        var span = _input.ToString().AsSpan();
+        if (Rune.DecodeLastFromUtf16(span, out _, out int charsConsumed) == OperationStatus.Done && charsConsumed > 0)
+        {
+            _input.Length -= charsConsumed;
+            return;
+        }
+
+        // Fallback for malformed data
+        _input.Length--;
     }
 
     private static int GetDisplayWidth(string text)

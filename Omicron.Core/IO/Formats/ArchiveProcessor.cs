@@ -1,4 +1,5 @@
 using System.Text;
+using Omicron.Core.Content;
 using SharpCompress.Archives;
 using SharpCompress.Readers;
 
@@ -37,7 +38,7 @@ public sealed class ArchiveProcessor : IContentProcessor
         };
 
         var sb = new StringBuilder();
-        sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, {formatName})");
+        sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {formatName})");
         sb.AppendLine();
 
         // Try to list contents from archive (SharpCompress handles ZIP, RAR, 7z, TAR, GZip, BZip2, XZ)
@@ -78,7 +79,7 @@ public sealed class ArchiveProcessor : IContentProcessor
                 if (entry.IsDirectory)
                     entries.Add($"[DIR]  {entry.Key}");
                 else
-                    entries.Add($"       {entry.Key}  ({FormatSize(entry.Size)})");
+                    entries.Add($"       {entry.Key}  ({FormatSize.Format(entry.Size)})");
             }
             return entries;
         }
@@ -103,7 +104,7 @@ public sealed class ArchiveProcessor : IContentProcessor
                 if (name.EndsWith("/"))
                     entries.Add($"[DIR]  {name}");
                 else
-                    entries.Add($"       {name}  ({FormatSize(entry.Length)})");
+                    entries.Add($"       {name}  ({FormatSize.Format(entry.Length)})");
             }
             return entries;
         }
@@ -113,10 +114,5 @@ public sealed class ArchiveProcessor : IContentProcessor
         }
     }
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
+
 }

@@ -128,7 +128,7 @@ public class QueueSPSCTests
     }
 
     [Fact]
-    public void PushBlocking_WaitsUntilSpace()
+    public async Task PushBlocking_WaitsUntilSpace()
     {
         var q = new QueueSPSC<int>(2);
         q.Push(1);
@@ -147,13 +147,13 @@ public class QueueSPSCTests
             Assert.True(q.TryPop(out var _));
         });
 
-        popTask.Wait(500);
-        unblockTask.Wait(500);
+        await popTask.WaitAsync(TimeSpan.FromMilliseconds(500));
+        await unblockTask.WaitAsync(TimeSpan.FromMilliseconds(500));
         Assert.Equal(1, popped);
     }
 
     [Fact]
-    public void PopBlocking_WaitsUntilItem()
+    public async Task PopBlocking_WaitsUntilItem()
     {
         var q = new QueueSPSC<int>(4);
 
@@ -163,12 +163,12 @@ public class QueueSPSCTests
         Thread.Sleep(50);
         Assert.True(q.TryPush(123));
 
-        popTask.Wait(500);
+        await popTask.WaitAsync(TimeSpan.FromMilliseconds(500));
         Assert.Equal(123, popped);
     }
 
     [Fact]
-    public void Concurrent_SingleProducerSingleConsumer_100kItems()
+    public async Task Concurrent_SingleProducerSingleConsumer_100kItems()
     {
         const int count = 100_000;
         var q = new QueueSPSC<int>(1024);
@@ -192,14 +192,14 @@ public class QueueSPSCTests
             }
         });
 
-        Task.WaitAll(producer, consumer);
+        await Task.WhenAll(producer, consumer);
 
         Assert.Equal(count, consumed.Count);
         Assert.Equal(Enumerable.Range(0, count), consumed);
     }
 
     [Fact]
-    public void Concurrent_HeavyContention_RoundRobin()
+    public async Task Concurrent_HeavyContention_RoundRobin()
     {
         const int rounds = 50_000;
         var q = new QueueSPSC<int>(8);
@@ -219,7 +219,7 @@ public class QueueSPSCTests
             }
         });
 
-        Task.WaitAll(producer, consumer);
+        await Task.WhenAll(producer, consumer);
     }
 
     [Fact]
@@ -276,7 +276,7 @@ public class QueueSPSCTests
     }
 
     [Fact]
-    public void StressTest_ByteStream_SPSC()
+    public async Task StressTest_ByteStream_SPSC()
     {
         // Simulate terminal input: producer pushes raw bytes,
         // consumer pops them and verifies ordering.
@@ -298,6 +298,6 @@ public class QueueSPSCTests
             }
         });
 
-        Task.WaitAll(producer, consumer);
+        await Task.WhenAll(producer, consumer);
     }
 }

@@ -25,6 +25,9 @@ public sealed class VirtualTerminalBackend : ITerminalBackend
 
     public IBufferWriter<byte> Output => _writer;
 
+    /// <summary>No platform initialization needed for virtual backend.</summary>
+    public void Initialize() { }
+
     public VirtualTerminalBackend()
     {
         _writer = new ByteBufferWriter(_capturedOutput);

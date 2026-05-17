@@ -82,6 +82,28 @@ public class TuiSessionIntegrationTests
         picker.Render(ctx); // Should not throw with empty list
     }
 
+    [Fact]
+    public void TuiModelPicker_ArrangedRender_ShowsTitleAndModelRows()
+    {
+        var picker = new Omicron.CLI.Tui.TuiModelPicker();
+        picker.SetModels(new List<Model>
+        {
+            new() { Id = "gpt-4", Name = "GPT-4", ProviderName = "openai" },
+            new() { Id = "claude-3", Name = "Claude 3", ProviderName = "anthropic" },
+        }, lastModelKey: null);
+
+        var frame = new TerminalFrame(80, 24);
+        var bounds = new Rect(0, 0, 80, 24);
+        picker.Measure(new Size(80, 24));
+        picker.Arrange(bounds);
+        var ctx = new RenderContext(frame, bounds, TextStyle.Default);
+        picker.Render(ctx);
+
+        var text = ExtractAsciiFrameText(frame);
+        Assert.Contains("Select a model", text);
+        Assert.Contains("GPT-4", text);
+    }
+
     // ============================================================
     // TuiApiKeyPrompt
     // ============================================================
@@ -127,6 +149,18 @@ public class TuiSessionIntegrationTests
         Assert.True(prompt.IsCancelled);
         // When cancelled, the caller should check IsCancelled and discard ApiKey
         // The buffer still contains 'x' but the cancelled flag takes precedence
+    }
+
+    [Fact]
+    public void TuiApiKeyPrompt_Insert_PasteText_IgnoresNewlines()
+    {
+        var prompt = new Omicron.CLI.Tui.TuiApiKeyPrompt();
+        prompt.Reset("openrouter");
+
+        prompt.Insert("sk-or-v1-test\r\n");
+
+        Assert.Equal("sk-or-v1-test", prompt.ApiKey);
+        Assert.False(prompt.IsCompleted);
     }
 
     [Fact]
@@ -457,6 +491,23 @@ public class TuiSessionIntegrationTests
         Assert.Equal((byte)'[', written[1]);
         Assert.Equal((byte)'0', written[2]);
         Assert.Equal((byte)'m', written[3]);
+    }
+
+    private static string ExtractAsciiFrameText(TerminalFrame frame)
+    {
+        var sb = new StringBuilder(frame.Width * frame.Height);
+        for (int row = 0; row < frame.Height; row++)
+        {
+            for (int col = 0; col < frame.Width; col++)
+            {
+                var cell = frame.Cells[row * frame.Width + col];
+                if (cell.Width == 0)
+                    continue;
+                sb.Append(cell.Glyph.IsAscii ? (char)cell.Glyph.AsciiValue : '?');
+            }
+            sb.Append('\n');
+        }
+        return sb.ToString();
     }
 
     private static bool IsHelpCommand(string input)

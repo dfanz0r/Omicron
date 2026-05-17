@@ -431,28 +431,28 @@ public class WorkspaceTransactionTests : IDisposable
     // ============================================================
 
     [Fact]
-    public void TransactionEvent_LazyStart_EmitsStartedOnce()
+    public async Task TransactionEvent_LazyStart_EmitsStartedOnce()
     {
         var sink = new InMemoryEventSink();
         var tx = new WorkspaceTransaction(_host, sink);
 
-        tx.Files.WriteFileAsync(Resolve("a.txt"), "hello"u8.ToArray()).GetAwaiter().GetResult();
+        await tx.Files.WriteFileAsync(Resolve("a.txt"), "hello"u8.ToArray());
 
         var events = sink.GetAllEvents();
         Assert.Single(events.OfType<TransactionStartedEvent>());
         Assert.Single(events.OfType<TransactionStagedEvent>());
 
-        tx.DisposeAsync().GetAwaiter().GetResult();
+        await tx.DisposeAsync();
     }
 
     [Fact]
-    public void TransactionEvent_PerOperation_EmitsStagedEvents()
+    public async Task TransactionEvent_PerOperation_EmitsStagedEvents()
     {
         var sink = new InMemoryEventSink();
         var tx = new WorkspaceTransaction(_host, sink);
 
-        tx.Files.WriteFileAsync(Resolve("a.txt"), "content a"u8.ToArray()).GetAwaiter().GetResult();
-        tx.Files.WriteFileAsync(Resolve("b.txt"), "content b"u8.ToArray()).GetAwaiter().GetResult();
+        await tx.Files.WriteFileAsync(Resolve("a.txt"), "content a"u8.ToArray());
+        await tx.Files.WriteFileAsync(Resolve("b.txt"), "content b"u8.ToArray());
 
         var events = sink.GetAllEvents();
         var staged = events.OfType<TransactionStagedEvent>().ToList();
@@ -461,7 +461,7 @@ public class WorkspaceTransactionTests : IDisposable
         Assert.Contains(staged, s => s.Path.EndsWith("a.txt"));
         Assert.Contains(staged, s => s.Path.EndsWith("b.txt"));
 
-        tx.DisposeAsync().GetAwaiter().GetResult();
+        await tx.DisposeAsync();
     }
 
     [Fact]
@@ -470,7 +470,7 @@ public class WorkspaceTransactionTests : IDisposable
         var sink = new InMemoryEventSink();
         var tx = new WorkspaceTransaction(_host, sink);
 
-        tx.Files.WriteFileAsync(Resolve("c.txt"), "data"u8.ToArray()).GetAwaiter().GetResult();
+        await tx.Files.WriteFileAsync(Resolve("c.txt"), "data"u8.ToArray());
         await tx.CommitAsync();
 
         var events = sink.GetAllEvents();
@@ -486,7 +486,7 @@ public class WorkspaceTransactionTests : IDisposable
         var sink = new InMemoryEventSink();
         var tx = new WorkspaceTransaction(_host, sink);
 
-        tx.Files.WriteFileAsync(Resolve("d.txt"), "data"u8.ToArray()).GetAwaiter().GetResult();
+        await tx.Files.WriteFileAsync(Resolve("d.txt"), "data"u8.ToArray());
         await tx.RollbackAsync();
 
         var events = sink.GetAllEvents();
@@ -502,7 +502,7 @@ public class WorkspaceTransactionTests : IDisposable
         var sink = new InMemoryEventSink();
         var tx = new WorkspaceTransaction(_host, sink);
 
-        tx.Files.WriteFileAsync(Resolve("e.txt"), "data"u8.ToArray()).GetAwaiter().GetResult();
+        await tx.Files.WriteFileAsync(Resolve("e.txt"), "data"u8.ToArray());
         await tx.DisposeAsync();
 
         var events = sink.GetAllEvents();
@@ -567,9 +567,9 @@ public class WorkspaceTransactionTests : IDisposable
             var tx = new WorkspaceTransaction(failingHost, sink);
 
             // Stage 3 writes; the 2nd host write will throw (failAfter: 1)
-            tx.Files.WriteFileAsync(new WorkspacePath("f1.txt"), "file1"u8.ToArray()).GetAwaiter().GetResult();
-            tx.Files.WriteFileAsync(new WorkspacePath("f2.txt"), "file2"u8.ToArray()).GetAwaiter().GetResult();
-            tx.Files.WriteFileAsync(new WorkspacePath("f3.txt"), "file3"u8.ToArray()).GetAwaiter().GetResult();
+            await tx.Files.WriteFileAsync(new WorkspacePath("f1.txt"), "file1"u8.ToArray());
+            await tx.Files.WriteFileAsync(new WorkspacePath("f2.txt"), "file2"u8.ToArray());
+            await tx.Files.WriteFileAsync(new WorkspacePath("f3.txt"), "file3"u8.ToArray());
 
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => tx.CommitAsync().AsTask());
             Assert.Contains("rolled back", ex.Message);
@@ -610,8 +610,8 @@ public class WorkspaceTransactionTests : IDisposable
             var tx = new WorkspaceTransaction(failingHost, sink);
 
             // Stage a move + a write; the write will throw (failAfter: 0, first write fails)
-            tx.Files.MoveAsync(new WorkspacePath("source.txt"), new WorkspacePath("dest.txt")).GetAwaiter().GetResult();
-            tx.Files.WriteFileAsync(new WorkspacePath("other.txt"), "data"u8.ToArray()).GetAwaiter().GetResult();
+            await tx.Files.MoveAsync(new WorkspacePath("source.txt"), new WorkspacePath("dest.txt"));
+            await tx.Files.WriteFileAsync(new WorkspacePath("other.txt"), "data"u8.ToArray());
 
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => tx.CommitAsync().AsTask());
             Assert.Contains("rolled back", ex.Message);

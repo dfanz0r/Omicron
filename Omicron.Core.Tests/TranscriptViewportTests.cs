@@ -1,4 +1,5 @@
 using System.Text;
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
@@ -103,6 +104,20 @@ public class TranscriptViewportTests
         // Get the updated block
         var updated = (ToolCallBlock)store.Blocks[^1];
         Assert.Equal(ToolCallState.Completed, updated.State);
+    }
+
+    [Fact]
+    public void TranscriptStore_Clear_DoesNotDisposeOrMutateBorrowedContentBlocks()
+    {
+        var store = new TranscriptStore();
+        var block = store.AppendToolCall("read_path", "call-1");
+        var blocks = new List<IContentBlock> { new PlainTextContentBlock("hello") };
+
+        store.UpdateToolCall(block.Id, ToolCallState.Completed, "hello"u8, blocks);
+        store.Clear();
+
+        Assert.Single(blocks);
+        Assert.Equal("hello", blocks[0].Text);
     }
 
     // ============================================================

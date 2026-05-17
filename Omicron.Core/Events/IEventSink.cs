@@ -1,3 +1,5 @@
+using Omicron.Core.Content;
+
 namespace Omicron.Core.Events;
 
 /// <summary>
@@ -115,12 +117,17 @@ public sealed class InMemoryEventSink : IEventSink
     }
 
     /// <summary>
-    /// Clear all events (useful for testing).
+    /// Clear all events (useful for testing). Disposes any owned content blocks.
     /// </summary>
     public void Clear()
     {
         lock (_lock)
         {
+            foreach (var evt in _events)
+            {
+                if (evt is ToolInvocationCompletedEvent tic && tic.Blocks is { Count: > 0 })
+                    ContentBlockHelper.DisposeBlocks(tic.Blocks);
+            }
             _events.Clear();
         }
     }

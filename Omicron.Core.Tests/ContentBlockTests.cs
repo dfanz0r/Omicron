@@ -18,6 +18,17 @@ public class ContentBlockTests
     }
 
     [Fact]
+    public void Utf8ContentBuffer_AccessAfterDispose_Throws()
+    {
+        var block = new PlainTextContentBlock("hello");
+        block.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => block.Text);
+        Assert.Throws<ObjectDisposedException>(() => block.TextBuffer.Length);
+        Assert.Throws<ObjectDisposedException>(() => block.TextBuffer.AsSpan().Length);
+    }
+
+    [Fact]
     public void PlainTextContentBlock_Equality()
     {
         var a = new PlainTextContentBlock("x");
@@ -29,7 +40,7 @@ public class ContentBlockTests
     public void CodeContentBlock_StoresAllFields()
     {
         var block = new CodeContentBlock("int x = 1;", Language: "csharp", Path: "src/Foo.cs");
-        Assert.Equal("int x = 1;", block.Code);
+        Assert.Equal("int x = 1;", block.Text);
         Assert.Equal("csharp", block.Language);
         Assert.Equal("src/Foo.cs", block.Path);
     }
@@ -39,7 +50,7 @@ public class ContentBlockTests
     {
         var diff = "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new";
         var block = new DiffContentBlock(diff, Path: "file.cs");
-        Assert.Equal(diff, block.UnifiedDiff);
+        Assert.Equal(diff, block.Text);
         Assert.Equal("file.cs", block.Path);
     }
 
@@ -53,7 +64,7 @@ public class ContentBlockTests
             LineCount: 2,
             IsBinary: false);
         Assert.Equal("readme.txt", block.Path);
-        Assert.Equal("line1\nline2", block.Preview);
+        Assert.Equal("line1\nline2", block.Text);
         Assert.Equal(1024, block.Size);
         Assert.Equal(2, block.LineCount);
         Assert.False(block.IsBinary);
@@ -63,14 +74,14 @@ public class ContentBlockTests
     public void ErrorContentBlock_StoresMessage()
     {
         var block = new ErrorContentBlock("not found");
-        Assert.Equal("not found", block.Message);
+        Assert.Equal("not found", block.Text);
     }
 
     [Fact]
     public void ErrorContentBlock_WithDetails()
     {
         var block = new ErrorContentBlock("parse failed", Details: "line 42");
-        Assert.Equal("parse failed", block.Message);
+        Assert.Equal("parse failed", block.Text);
         Assert.Equal("line 42", block.Details);
     }
 
@@ -87,8 +98,8 @@ public class ContentBlockTests
     [Fact]
     public void ContentBlock_Hierarchy_BaseType()
     {
-        ContentBlock block = new PlainTextContentBlock("test");
-        Assert.IsAssignableFrom<ContentBlock>(block);
+        IContentBlock block = new PlainTextContentBlock("test");
+        Assert.IsAssignableFrom<IContentBlock>(block);
     }
 
     // ============================================================
@@ -171,23 +182,22 @@ public class ContentBlockTests
     [Fact]
     public void Render_ToolCall()
     {
-        var args = new Dictionary<string, object?> { ["path"] = "test.txt" };
-        var result = ContentBlockTextRenderer.Render(new ToolCallContentBlock("c1", "read_path", args));
-        Assert.Contains("Calling read_path(", result);
-        Assert.Contains("test.txt", result);
+        // ToolCallContentBlock is not an IContentBlock; it is used in the
+        // transcript pipeline. Tool call rendering is handled by the
+        // transcript viewport, not by ContentBlockTextRenderer.
     }
 
     [Fact]
     public void RenderAll_SingleBlock()
     {
-        var result = ContentBlockTextRenderer.RenderAll(new ContentBlock[] { new PlainTextContentBlock("hello") });
+        var result = ContentBlockTextRenderer.RenderAll([new PlainTextContentBlock("hello")]);
         Assert.Equal("hello", result);
     }
 
     [Fact]
     public void RenderAll_MultipleBlocks()
     {
-        var blocks = new ContentBlock[]
+        var blocks = new List<IContentBlock>
         {
             new PlainTextContentBlock("first"),
             new PlainTextContentBlock("second")
@@ -201,12 +211,12 @@ public class ContentBlockTests
     [Fact]
     public void RenderAll_Empty()
     {
-        var result = ContentBlockTextRenderer.RenderAll(Array.Empty<ContentBlock>());
+        var result = ContentBlockTextRenderer.RenderAll([]);
         Assert.Equal("", result);
     }
 
     // ============================================================
-    // Phase 3: WorkspaceReadContent → ContentBlock conversion
+    // Phase 3: WorkspaceReadContent → IContentBlock conversion
     // ============================================================
 
     [Fact]
@@ -261,11 +271,10 @@ public class ContentBlockTests
         };
 
         var blocks = WorkspaceLlmTextRenderer.ToContentBlocks(dir);
-        var preview = Assert.Single(blocks);
-        var fileBlock = Assert.IsType<FilePreviewContentBlock>(preview);
-        Assert.Equal("src/", fileBlock.Path);
-        Assert.Contains("file.txt", fileBlock.Preview);
-        Assert.Contains("sub/", fileBlock.Preview);
+        var block = Assert.Single(blocks);
+        var textBlock = Assert.IsType<PlainTextContentBlock>(block);
+        Assert.Contains("file.txt", textBlock.Text);
+        Assert.Contains("sub/", textBlock.Text);
     }
 
     [Fact]
@@ -281,7 +290,7 @@ public class ContentBlockTests
         var blocks = WorkspaceLlmTextRenderer.ToContentBlocks(error);
         var errBlock = Assert.Single(blocks);
         var typed = Assert.IsType<ErrorContentBlock>(errBlock);
-        Assert.Equal("Path not found", typed.Message);
+        Assert.Equal("Path not found", typed.Text);
     }
 
     [Fact]

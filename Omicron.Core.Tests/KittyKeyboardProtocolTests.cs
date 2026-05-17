@@ -7,7 +7,7 @@ namespace Omicron.Core.Tests;
 /// <summary>
 /// Unit tests for kitty keyboard protocol parsing and text resolution.
 /// Tests are written against the internal static methods of
-/// <see cref="SystemTerminalBackend"/> to validate protocol conformance.
+/// <see cref="TerminalInputParser"/> to validate protocol conformance.
 /// </summary>
 public class KittyKeyboardProtocolTests
 {
@@ -21,7 +21,7 @@ public class KittyKeyboardProtocolTests
         // CSI 13 u → Enter with no modifiers
         var buffer = Encoding.ASCII.GetBytes("\x1b[13u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         Assert.NotNull(evt);
@@ -40,7 +40,7 @@ public class KittyKeyboardProtocolTests
         // CSI 13;2 u → Shift+Enter
         var buffer = Encoding.ASCII.GetBytes("\x1b[13;2u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -55,7 +55,7 @@ public class KittyKeyboardProtocolTests
         // CSI 4;5 u → Ctrl+D
         var buffer = Encoding.ASCII.GetBytes("\x1b[4;5u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -72,7 +72,7 @@ public class KittyKeyboardProtocolTests
         // Without report_alternates, ResolvedText is the unshifted key code.
         var buffer = Encoding.ASCII.GetBytes("\x1b[49;2u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -88,7 +88,7 @@ public class KittyKeyboardProtocolTests
         // CSI 49:33;2 u → Shift+1 with shifted-key sub-parameter (33 = '!')
         var buffer = Encoding.ASCII.GetBytes("\x1b[49:33;2u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -104,7 +104,7 @@ public class KittyKeyboardProtocolTests
         // CSI 127 u → Backspace (DEL)
         var buffer = Encoding.ASCII.GetBytes("\x1b[127u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -119,7 +119,7 @@ public class KittyKeyboardProtocolTests
         // CSI 9 u → Tab
         var buffer = Encoding.ASCII.GetBytes("\x1b[9u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -133,7 +133,7 @@ public class KittyKeyboardProtocolTests
         // CSI 27 u → Escape
         var buffer = Encoding.ASCII.GetBytes("\x1b[27u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -151,7 +151,7 @@ public class KittyKeyboardProtocolTests
         // CSI 13;1:2 u → Enter, no modifiers (xterm modifier 1 = no mods), repeat event
         var buffer = Encoding.ASCII.GetBytes("\x1b[13;1:2u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -166,7 +166,7 @@ public class KittyKeyboardProtocolTests
         // CSI 13;1:3 u → Enter, no modifiers, release event
         var buffer = Encoding.ASCII.GetBytes("\x1b[13;1:3u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -184,7 +184,7 @@ public class KittyKeyboardProtocolTests
         // CSI 120;3 u → Alt+X (x = 120)
         var buffer = Encoding.ASCII.GetBytes("\x1b[120;3u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -200,7 +200,7 @@ public class KittyKeyboardProtocolTests
         // CSI 97;8 u → Shift+Alt+Ctrl+A (value 8 = 1+7, decMod = 7 → shift+alt+ctrl)
         var buffer = Encoding.ASCII.GetBytes("\x1b[97;8u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -219,7 +219,7 @@ public class KittyKeyboardProtocolTests
         // CSI 49;2;33 u → Shift+1 with explicit text-as-codepoints "33" = '!'
         var buffer = Encoding.ASCII.GetBytes("\x1b[49;2;33u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -234,7 +234,7 @@ public class KittyKeyboardProtocolTests
         // CSI 97;2;65:66 u → Shift+A with text "AB" (65='A', 66='B')
         var buffer = Encoding.ASCII.GetBytes("\x1b[97;2;65:66u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -251,7 +251,7 @@ public class KittyKeyboardProtocolTests
         // CSI 61441;2 u → Shift+Down (PUA 0xF001 = Down, with shift modifier)
         var buffer = Encoding.ASCII.GetBytes("\x1b[61441;2u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -265,7 +265,7 @@ public class KittyKeyboardProtocolTests
         // CSI 61456 u → F1 (PUA 0xF010)
         var buffer = Encoding.ASCII.GetBytes("\x1b[61456u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -278,7 +278,7 @@ public class KittyKeyboardProtocolTests
         // CSI 61467 u → F12 (PUA 0xF01B)
         var buffer = Encoding.ASCII.GetBytes("\x1b[61467u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         var ke = Assert.IsType<KeyEvent>(evt);
@@ -295,11 +295,23 @@ public class KittyKeyboardProtocolTests
         // CSI A (cursor up) — not a kitty sequence
         var buffer = Encoding.ASCII.GetBytes("\x1b[A");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.False(result);
         Assert.Null(evt);
         Assert.Equal(0, offset); // offset unchanged
+    }
+
+    [Fact]
+    public void Parse_LegacySs3ApplicationCursorDown()
+    {
+        var buffer = Encoding.ASCII.GetBytes("\x1bOB");
+        var (result, offset, evt) = InvokeLegacyEscapeParser(buffer);
+
+        Assert.True(result);
+        Assert.Equal(buffer.Length, offset);
+        var ke = Assert.IsType<KeyEvent>(evt);
+        Assert.Equal(Key.Down, ke.Key);
     }
 
     [Fact]
@@ -308,7 +320,7 @@ public class KittyKeyboardProtocolTests
         // CSI ?1 u → kitty query response
         var buffer = Encoding.ASCII.GetBytes("\x1b[?1u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         Assert.Null(evt); // Consumed but no event emitted
@@ -321,7 +333,7 @@ public class KittyKeyboardProtocolTests
         // CSI >1 u → kitty push response
         var buffer = Encoding.ASCII.GetBytes("\x1b[>1u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         Assert.Null(evt);
@@ -333,7 +345,7 @@ public class KittyKeyboardProtocolTests
         // CSI <1 u → kitty pop response
         var buffer = Encoding.ASCII.GetBytes("\x1b[<1u");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(result);
         Assert.Null(evt);
@@ -349,7 +361,7 @@ public class KittyKeyboardProtocolTests
         // Just ESC[ without final byte
         var buffer = Encoding.ASCII.GetBytes("\x1b[");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.False(result);
         Assert.Null(evt);
@@ -362,7 +374,7 @@ public class KittyKeyboardProtocolTests
         // ESC[13 without 'u'
         var buffer = Encoding.ASCII.GetBytes("\x1b[13");
         int offset = 0;
-        var result = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var result = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.False(result);
         Assert.Equal(0, offset);
@@ -376,7 +388,7 @@ public class KittyKeyboardProtocolTests
     public void ResolveText_CtrlA()
     {
         // Ctrl+A → "\x01"
-        var result = SystemTerminalBackend.ResolveText(1, KeyModifiers.Control, null, null);
+        var result = TerminalInputParser.ResolveText(1, KeyModifiers.Control, null, null);
         Assert.Equal("\x01", result);
     }
 
@@ -384,7 +396,7 @@ public class KittyKeyboardProtocolTests
     public void ResolveText_CtrlD()
     {
         // Ctrl+D → "\x04"
-        var result = SystemTerminalBackend.ResolveText(4, KeyModifiers.Control, null, null);
+        var result = TerminalInputParser.ResolveText(4, KeyModifiers.Control, null, null);
         Assert.Equal("\x04", result);
     }
 
@@ -392,7 +404,7 @@ public class KittyKeyboardProtocolTests
     public void ResolveText_CtrlShiftA()
     {
         // Ctrl+Shift+A → "\x01" (same as Ctrl+A, shift doesn't change control chars)
-        var result = SystemTerminalBackend.ResolveText(1, KeyModifiers.Control | KeyModifiers.Shift, null, null);
+        var result = TerminalInputParser.ResolveText(1, KeyModifiers.Control | KeyModifiers.Shift, null, null);
         Assert.Equal("\x01", result);
     }
 
@@ -400,7 +412,7 @@ public class KittyKeyboardProtocolTests
     public void ResolveText_PrintableChar()
     {
         // Just 'a' → "a"
-        var result = SystemTerminalBackend.ResolveText(97, KeyModifiers.None, null, null);
+        var result = TerminalInputParser.ResolveText(97, KeyModifiers.None, null, null);
         Assert.Equal("a", result);
     }
 
@@ -408,7 +420,7 @@ public class KittyKeyboardProtocolTests
     public void ResolveText_WithShiftedKey()
     {
         // keyCode=49 ('1'), shiftedKey=33 ('!'), shift active → "!"
-        var result = SystemTerminalBackend.ResolveText(49, KeyModifiers.Shift, 33, null);
+        var result = TerminalInputParser.ResolveText(49, KeyModifiers.Shift, 33, null);
         Assert.Equal("!", result);
     }
 
@@ -417,7 +429,7 @@ public class KittyKeyboardProtocolTests
     {
         // keyCode=49 ('1'), shiftedKey=33 ('!'), NO shift → should return the unshifted key
         // shiftedKey is only used when shift is active
-        var result = SystemTerminalBackend.ResolveText(49, KeyModifiers.None, 33, null);
+        var result = TerminalInputParser.ResolveText(49, KeyModifiers.None, 33, null);
         Assert.Equal("1", result);
     }
 
@@ -425,7 +437,7 @@ public class KittyKeyboardProtocolTests
     public void ResolveText_TextAsCodepointsPreferred()
     {
         // textAsCodepoints takes precedence over other resolution
-        var result = SystemTerminalBackend.ResolveText(49, KeyModifiers.Shift, 33, "65");
+        var result = TerminalInputParser.ResolveText(49, KeyModifiers.Shift, 33, "65");
         Assert.Equal("A", result); // From text-as-codepoints, not shiftedKey
     }
 
@@ -433,7 +445,7 @@ public class KittyKeyboardProtocolTests
     public void ResolveText_NonPrintable()
     {
         // keyCode=13 (Enter) → null (not a printable character)
-        var result = SystemTerminalBackend.ResolveText(13, KeyModifiers.None, null, null);
+        var result = TerminalInputParser.ResolveText(13, KeyModifiers.None, null, null);
         Assert.Null(result);
     }
 
@@ -441,7 +453,7 @@ public class KittyKeyboardProtocolTests
     public void ResolveText_Backspace()
     {
         // keyCode=127 (DEL) → not printable (excluded from printable range), returns null
-        var result = SystemTerminalBackend.ResolveText(127, KeyModifiers.None, null, null);
+        var result = TerminalInputParser.ResolveText(127, KeyModifiers.None, null, null);
         Assert.Null(result);
     }
 
@@ -449,7 +461,7 @@ public class KittyKeyboardProtocolTests
     public void ResolveText_Shift1_WithoutShiftedKey_ReturnsKeyCode()
     {
         // Shift+1 with no shifted-key sub-parameter → returns unshifted key code "1"
-        var result = SystemTerminalBackend.ResolveText(49, KeyModifiers.Shift, null, null);
+        var result = TerminalInputParser.ResolveText(49, KeyModifiers.Shift, null, null);
         Assert.Equal("1", result);
     }
 
@@ -457,8 +469,21 @@ public class KittyKeyboardProtocolTests
     public void ResolveText_ShiftA_WithoutShiftedKey_ReturnsKeyCode()
     {
         // Shift+A with no shifted-key sub-parameter → returns unshifted key code "a"
-        var result = SystemTerminalBackend.ResolveText(97, KeyModifiers.Shift, null, null);
+        var result = TerminalInputParser.ResolveText(97, KeyModifiers.Shift, null, null);
         Assert.Equal("a", result);
+    }
+
+    private static (bool Result, int Offset, TerminalEvent? Event) InvokeLegacyEscapeParser(byte[] buffer)
+    {
+        var parser = new TerminalInputParser();
+        var method = typeof(TerminalInputParser).GetMethod(
+            "TryParseEscapeSequence",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        object?[] args = [buffer, 0, buffer.Length, null];
+        var result = (bool)method.Invoke(parser, args)!;
+        return (result, (int)args[1]!, (TerminalEvent?)args[3]);
     }
 
     // ================================================================
@@ -473,7 +498,7 @@ public class KittyKeyboardProtocolTests
         // the legacy MapCsiSequence (which no longer has 0x75 entries).
         var buffer = Encoding.ASCII.GetBytes("\x1b[13u");
         int offset = 0;
-        var kittyResult = SystemTerminalBackend.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
+        var kittyResult = TerminalInputParser.TryParseKittyKeySequence(buffer, ref offset, buffer.Length, out var evt);
 
         Assert.True(kittyResult);
         var ke = Assert.IsType<KeyEvent>(evt);

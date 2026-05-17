@@ -1,3 +1,5 @@
+using Omicron.Core.Content;
+
 namespace Omicron.Core.IO;
 
 /// <summary>
@@ -21,7 +23,7 @@ public sealed class Base64Processor
         var mimeType = GuessMimeType(context.RelativePath, context.Bytes.Span);
         var b64 = Convert.ToBase64String(context.Bytes.Span);
 
-        var text = $"[FILE] {context.RelativePath}  ({mimeType}, {FormatSize(context.Bytes.Length)})\nData: {b64}";
+        var text = $"[FILE] {context.RelativePath}  ({mimeType}, {FormatSize.Format(context.Bytes.Length)})\nData: {b64}";
 
         // Determine appropriate modality based on MIME type
         var modality = mimeType switch
@@ -95,10 +97,5 @@ public sealed class Base64Processor
         return "application/octet-stream";
     }
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
+
 }

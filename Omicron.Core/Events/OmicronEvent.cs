@@ -3,6 +3,8 @@ using Omicron.Core.Providers;
 using Omicron.Core.Sessions;
 using Omicron.Core.Workspace;
 
+using Omicron.Core.Content;
+
 namespace Omicron.Core.Events;
 
 /// <summary>
@@ -82,7 +84,8 @@ public sealed record ToolInvocationCompletedEvent(
     ToolCallId ToolCallId,
     string ToolName,
     string Result,
-    bool IsError) : OmicronEvent(Envelope);
+    bool IsError,
+    List<IContentBlock>? Blocks = null) : OmicronEvent(Envelope);
 
 // ============================================================
 // Permission events

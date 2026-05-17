@@ -12,6 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="CsvHelper" Version="33.1.0" />
+    <PackageReference Include="ZString" Version="2.6.0" />
     <PackageReference Include="DocSharp.Binary.Doc" Version="0.18.1" />
     <PackageReference Include="DocSharp.Binary.Ppt" Version="0.18.1" />
     <PackageReference Include="DocSharp.Binary.Xls" Version="0.18.1" />

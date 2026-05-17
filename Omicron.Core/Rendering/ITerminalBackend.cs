@@ -12,6 +12,12 @@ public interface ITerminalBackend : IDisposable
     TerminalSize Size { get; }
 
     /// <summary>
+    /// Initialize platform-specific terminal state (raw mode, VT processing, etc.).
+    /// Must be called before entering TUI mode. Safe to call multiple times (idempotent).
+    /// </summary>
+    void Initialize();
+
+    /// <summary>
     /// Read terminal events as an async stream. Blocks when no input is available.
     /// Yields <see cref="KeyEvent"/>, <see cref="MouseEvent"/>, and <see cref="ResizeEvent"/>.
     /// </summary>

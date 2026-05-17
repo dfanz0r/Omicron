@@ -35,38 +35,63 @@ public sealed class TextProcessor : IContentProcessor
             isBinary = true;
         }
 
-        string text;
+        // Detect encoding without decoding the whole file
+        Encoding encoding;
         try
         {
-            // Try strict UTF-8 first (use cached encoder from TextEncodingDetector)
-            var (encoding, _) = TextEncodingDetector.DetectEncoding(bytes.Span);
-            text = encoding.GetString(bytes.Span);
+            (encoding, _) = TextEncodingDetector.DetectEncoding(bytes.Span);
         }
-        catch (DecoderFallbackException)
+        catch
         {
-            // Fall back to lenient UTF-8
-            var utf8Lenient = new UTF8Encoding(false, false);
-            text = utf8Lenient.GetString(bytes.Span);
+            encoding = new UTF8Encoding(false, false);
             isBinary = true;
         }
 
-        // Normalize line endings
-        text = text.Replace("\r\n", "\n");
-
-        var lines = text.Split('\n');
-        var totalLines = lines.Length;
+        var span = bytes.Span;
+        bool isUtf8Compatible = encoding is UTF8Encoding || encoding.WebName == "utf-8" ||
+                                encoding.CodePage == 65001 || encoding.CodePage == 20127;
 
         var sb = new StringBuilder();
         if (isBinary)
         {
             sb.AppendLine($"[WARNING: binary file] {context.RelativePath}");
         }
+
+        if (isUtf8Compatible)
+        {
+            // UTF-8/ASCII: scan raw bytes for line boundaries without allocating a full-file string.
+            // We only decode lines we actually output within the offset/limit window.
+            BuildTextOutputUtf8(context, span, sb, isBinary);
+        }
         else
         {
-            sb.AppendLine($"[FILE] {context.RelativePath}  ({totalLines} lines)");
+            // Non-UTF-8 encoding (e.g. UTF-16, UTF-32): decode the whole file, then split.
+            // Byte scanning for \n is not safe here because \n is multi-byte.
+            BuildTextOutputFallback(context, span, encoding, sb, isBinary);
         }
 
-        // Apply offset/limit for text mode (same as existing read_path behavior)
+        return ValueTask.FromResult(new ContentProcessorResult(
+            sb.ToString().TrimEnd(),
+            OutputModality.Text));
+    }
+
+    private static void BuildTextOutputUtf8(
+        ContentProcessorContext context,
+        ReadOnlySpan<byte> span,
+        StringBuilder sb,
+        bool isBinary)
+    {
+        var lineStarts = new List<int> { 0 };
+        for (int i = 0; i < span.Length; i++)
+        {
+            if (span[i] == (byte)'\n')
+                lineStarts.Add(i + 1);
+        }
+        var totalLines = lineStarts.Count;
+
+        if (!isBinary)
+            sb.AppendLine($"[FILE] {context.RelativePath}  ({totalLines} lines)");
+
         const int maxOutputLines = 2000;
         const int maxOutputBytes = 50 * 1024;
 
@@ -77,7 +102,7 @@ public sealed class TextProcessor : IContentProcessor
         int limit = context.Limit ?? int.MaxValue;
         if (limit <= 0) limit = int.MaxValue;
 
-        int endLine = Math.Min(startLine + limit, lines.Length);
+        int endLine = Math.Min(startLine + limit, totalLines);
 
         int writtenLines = 0;
         int writtenBytes = 0;
@@ -85,17 +110,27 @@ public sealed class TextProcessor : IContentProcessor
 
         for (int i = startLine; i < endLine; i++)
         {
-            var line = lines[i];
-            var lineBytes = Encoding.UTF8.GetByteCount(line) + 1;
+            int lineByteStart = lineStarts[i];
+            int lineByteEnd = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : span.Length;
+
+            // Strip trailing \r and \n
+            int lineLength = lineByteEnd - lineByteStart;
+            if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\n')
+                lineLength--;
+            if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\r')
+                lineLength--;
+
+            int lineBytes = lineLength + 1; // +1 for newline in output
 
             if (writtenLines >= maxOutputLines ||
                 (writtenBytes > 0 && writtenBytes + lineBytes > maxOutputBytes))
             {
-                truncated = i < lines.Length - 1;
+                truncated = i < totalLines - 1;
                 break;
             }
 
-            sb.AppendLine($"{(i + 1),6}| {line}");
+            var lineText = Encoding.UTF8.GetString(span.Slice(lineByteStart, lineLength));
+            sb.AppendLine($"{(i + 1),6}| {lineText}");
             writtenLines++;
             writtenBytes += lineBytes;
         }
@@ -104,9 +139,68 @@ public sealed class TextProcessor : IContentProcessor
         {
             sb.AppendLine($"... output truncated ({totalLines} total lines, showing {writtenLines})");
         }
+    }
 
-        return ValueTask.FromResult(new ContentProcessorResult(
-            sb.ToString().TrimEnd(),
-            OutputModality.Text));
+    private static void BuildTextOutputFallback(
+        ContentProcessorContext context,
+        ReadOnlySpan<byte> span,
+        Encoding encoding,
+        StringBuilder sb,
+        bool isBinary)
+    {
+        string text;
+        try
+        {
+            text = encoding.GetString(span);
+        }
+        catch (DecoderFallbackException)
+        {
+            // Invalid bytes for the detected encoding — fall back to lenient UTF-8
+            text = Encoding.UTF8.GetString(span);
+        }
+
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        var totalLines = lines.Length;
+
+        if (!isBinary)
+            sb.AppendLine($"[FILE] {context.RelativePath}  ({totalLines} lines)");
+
+        const int maxOutputLines = 2000;
+        const int maxOutputBytes = 50 * 1024;
+
+        int startLine = 0;
+        if (context.Offset.HasValue && context.Offset.Value > 0)
+            startLine = context.Offset.Value - 1;
+
+        int limit = context.Limit ?? int.MaxValue;
+        if (limit <= 0) limit = int.MaxValue;
+
+        int endLine = Math.Min(startLine + limit, totalLines);
+
+        int writtenLines = 0;
+        int writtenBytes = 0;
+        bool truncated = false;
+
+        for (int i = startLine; i < endLine; i++)
+        {
+            var lineText = lines[i];
+            var lineBytes = Encoding.UTF8.GetByteCount(lineText) + 1; // +1 for newline
+
+            if (writtenLines >= maxOutputLines ||
+                (writtenBytes > 0 && writtenBytes + lineBytes > maxOutputBytes))
+            {
+                truncated = i < totalLines - 1;
+                break;
+            }
+
+            sb.AppendLine($"{(i + 1),6}| {lineText}");
+            writtenLines++;
+            writtenBytes += lineBytes;
+        }
+
+        if (truncated)
+        {
+            sb.AppendLine($"... output truncated ({totalLines} total lines, showing {writtenLines})");
+        }
     }
 }

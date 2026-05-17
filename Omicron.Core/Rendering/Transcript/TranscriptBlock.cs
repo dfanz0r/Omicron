@@ -1,3 +1,4 @@
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Text;
 
@@ -39,7 +40,8 @@ public sealed record ToolCallBlock(
     int ByteLength,
     string ToolName,
     string? ToolCallId,
-    ToolCallState State) : TranscriptBlock(Id);
+    ToolCallState State,
+    List<IContentBlock>? ContentBlocks = null) : TranscriptBlock(Id);
 
 /// <summary>A system notice (errors, status messages).</summary>
 public sealed record SystemNoticeBlock(

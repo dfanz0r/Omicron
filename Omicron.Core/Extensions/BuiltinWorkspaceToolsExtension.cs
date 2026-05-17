@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Omicron.Core.Content;
 using Omicron.Core.Diff;
 using Omicron.Core.Events;
 using Omicron.Core.IO;
@@ -90,34 +91,11 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     if (stat is null)
                         return new ToolResult($"Error: path not found: {path}", IsError: true);
 
-                    // --- Directory listing (restored with binary indicator and sizes) ---
+                    // --- Directory listing via workspace renderer ---
                     if (stat.IsDirectory)
                     {
-                        var allEntries = await _vfs.ReadDirectoryAsync(wsPath.Value, ctx.CancellationToken);
-                        var sorted = allEntries
-                            .OrderBy(e => e.IsDirectory ? 0 : 1)
-                            .ThenBy(e => e.Name, StringComparer.Ordinal)
-                            .ToList();
-                        var shown = sorted.Take(200).ToList();
-
-                        var sb = new StringBuilder();
-                        sb.AppendLine($"[DIR] {path}/  ({sorted.Count(e => !e.IsDirectory)} files, {sorted.Count(e => e.IsDirectory)} dirs)");
-                        sb.AppendLine();
-                        foreach (var entry in shown)
-                        {
-                            if (entry.IsDirectory)
-                                sb.AppendLine($"  [DIR]  {entry.Name}");
-                            else if (entry.LineCount.HasValue)
-                                sb.AppendLine($"  [FILE] {entry.Name}  {FormatSize(entry.Size)}  ({entry.LineCount} lines)");
-                            else
-                                sb.AppendLine($"  [FILE] {entry.Name}  {FormatSize(entry.Size)}  (binary)");
-                        }
-                        if (sorted.Count > 200)
-                            sb.AppendLine($"... ({sorted.Count} total entries)");
-                        sb.AppendLine();
-                        sb.AppendLine($"{sorted.Count(e => !e.IsDirectory)} files, {sorted.Count(e => e.IsDirectory)} dirs");
-
-                        return new ToolResult(sb.ToString().TrimEnd());
+                        var readResult = await _workspace.ReadPathAsync(path, null, ctx.CancellationToken);
+                        return new ToolResult(readResult.Content, IsError: false, Blocks: readResult.Blocks?.Value);
                     }
 
                     // --- Read file bytes ---
@@ -269,9 +247,15 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     if (!TextEncodingDetector.IsText(bytes.Span))
                         return new ToolResult($"Error: binary file: {path}", IsError: true);
 
-                    var text = Encoding.UTF8.GetString(bytes.Span);
-                    var allLines = text.Replace("\r\n", "\n").Split('\n');
-                    var totalLines = allLines.Length;
+                    // Scan line boundaries without full-file string allocation
+                    var span = bytes.Span;
+                    var lineStarts = new List<int> { 0 };
+                    for (int i = 0; i < span.Length; i++)
+                    {
+                        if (span[i] == (byte)'\n')
+                            lineStarts.Add(i + 1);
+                    }
+                    var totalLines = lineStarts.Count;
 
                     var sb = new StringBuilder();
                     sb.AppendLine($"[FILE] {path}  ({totalLines} lines, hashline anchors)");
@@ -282,9 +266,18 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     int writtenBytes = 0;
                     bool truncated = false;
 
-                    for (int i = 0; i < allLines.Length; i++)
+                    for (int i = 0; i < totalLines; i++)
                     {
-                        var lineText = allLines[i];
+                        int lineByteStart = lineStarts[i];
+                        int lineByteEnd = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : span.Length;
+
+                        int lineLength = lineByteEnd - lineByteStart;
+                        if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\n')
+                            lineLength--;
+                        if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\r')
+                            lineLength--;
+
+                        var lineText = Encoding.UTF8.GetString(span.Slice(lineByteStart, lineLength));
                         var anchor = LineHash.ComputeAnchor(lineText);
                         var formatted = LineHash.FormatLine(i + 1, anchor, lineText);
                         var lineBytes = Encoding.UTF8.GetByteCount(formatted) + 1; // +1 for newline
@@ -292,7 +285,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         if (writtenLines >= maxOutputLines ||
                             (writtenBytes > 0 && writtenBytes + lineBytes > maxOutputBytes))
                         {
-                            truncated = i < allLines.Length - 1;
+                            truncated = i < totalLines - 1;
                             break;
                         }
 
@@ -379,9 +372,29 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     if (!TextEncodingDetector.IsText(bytes.Span))
                         return new ToolResult($"Error: binary file cannot be edited: {path}", IsError: true);
 
-                    var currentText = Encoding.UTF8.GetString(bytes.Span);
+                    // Scan line boundaries without full-file string allocation
+                    var editSpan = bytes.Span;
+                    var editLineStarts = new List<int> { 0 };
+                    for (int i = 0; i < editSpan.Length; i++)
+                    {
+                        if (editSpan[i] == (byte)'\n')
+                            editLineStarts.Add(i + 1);
+                    }
 
-                    var currentLines = currentText.Replace("\r\n", "\n").Split('\n');
+                    var currentLines = new string[editLineStarts.Count];
+                    for (int i = 0; i < editLineStarts.Count; i++)
+                    {
+                        int lineByteStart = editLineStarts[i];
+                        int lineByteEnd = (i + 1 < editLineStarts.Count) ? editLineStarts[i + 1] : editSpan.Length;
+
+                        int lineLength = lineByteEnd - lineByteStart;
+                        if (lineLength > 0 && editSpan[lineByteStart + lineLength - 1] == (byte)'\n')
+                            lineLength--;
+                        if (lineLength > 0 && editSpan[lineByteStart + lineLength - 1] == (byte)'\r')
+                            lineLength--;
+
+                        currentLines[i] = Encoding.UTF8.GetString(editSpan.Slice(lineByteStart, lineLength));
+                    }
 
                     // ---------- parse edits ----------
 
@@ -592,9 +605,9 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     // VFS creates parent directories automatically
                     await _vfs.WriteFileAsync(wsPath.Value, bytes.AsMemory(), ctx.CancellationToken);
 
-                    var lines = content.Replace("\r\n", "\n").Split('\n').Length;
+                    var lineCount = content.AsSpan().Count('\n') + 1;
                     return new ToolResult(
-                        $"Wrote {path} ({FormatSize(bytes.Length)}, {lines} lines).",
+                        $"Wrote {path} ({FormatSize.Format(bytes.Length)}, {lineCount} lines).",
                         IsError: false);
                 }
                 catch (OperationCanceledException)
@@ -636,13 +649,6 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
     /// <summary>
     /// Build a ContentProcessorContext from tool invocation context and file info.
     /// </summary>
-    /// <summary>Format file size for human-readable display.</summary>
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F0} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
 
     private ContentProcessorContext BuildContext(
         ToolInvocationContext ctx,

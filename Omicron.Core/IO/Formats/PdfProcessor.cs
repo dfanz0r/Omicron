@@ -1,3 +1,4 @@
+using Omicron.Core.Content;
 using Omicron.Core.Models;
 
 namespace Omicron.Core.IO;
@@ -27,7 +28,7 @@ public sealed class PdfProcessor : IContentProcessor
         {
             // Return base64 for models that natively handle PDF
             var b64 = Convert.ToBase64String(bytes.Span);
-            var text = $"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, application/pdf)\n";
+            var text = $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, application/pdf)\n";
             text += $"Data: {b64}";
 
             return new ContentProcessorResult(
@@ -41,8 +42,8 @@ public sealed class PdfProcessor : IContentProcessor
         if (extracted is not null)
         {
             return new ContentProcessorResult(
-                $"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, PDF text extracted locally)\n\n{extracted}",
-                OutputModality.Text,
+                $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, PDF text extracted locally)\n\n{extracted}",
+                                OutputModality.Text,
                 Warning: "PDF text extracted locally.");
         }
 
@@ -56,8 +57,8 @@ public sealed class PdfProcessor : IContentProcessor
         var hexResult = await hexDumper.ProcessAsync(hexContext, ct);
 
         return new ContentProcessorResult(
-            $"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, PDF — text extraction unavailable, showing hex dump)\n{hexResult.Text}",
-            OutputModality.HexDump,
+            $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, PDF — text extraction unavailable, showing hex dump)\n{hexResult.Text}",
+                        OutputModality.HexDump,
             Warning: "PDF text extraction unavailable.");
     }
 
@@ -152,10 +153,5 @@ public sealed class PdfProcessor : IContentProcessor
         }
     }
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
+
 }

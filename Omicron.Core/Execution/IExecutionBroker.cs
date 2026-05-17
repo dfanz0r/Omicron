@@ -204,30 +204,38 @@ public sealed class LocalExecutionBroker : IExecutionBroker
             error = "";
         }
 
-        // Truncate
+        // Truncate — use StringReader to avoid Replace+Split allocations
         var truncated = false;
-        var lines = output.Replace("\r\n", "\n").Split('\n').ToList();
+        var outputReader = new StringReader(output);
+        var lines = new List<string>();
+        string? lineStr;
+        while ((lineStr = outputReader.ReadLine()) is not null)
+            lines.Add(lineStr);
         var totalLines = lines.Count;
 
         if (totalLines > MaxOutputLines)
         {
-            lines = lines.Take(MaxOutputLines).ToList();
+            lines = lines.GetRange(0, MaxOutputLines);
             truncated = true;
         }
 
         var joined = string.Join("\n", lines);
-        if (Encoding.UTF8.GetByteCount(joined) > MaxOutputBytes)
+        var joinedByteCount = Encoding.UTF8.GetByteCount(joined);
+        if (joinedByteCount > MaxOutputBytes)
         {
             var trimmed = new StringBuilder();
+            int trimmedBytes = 0;
             foreach (var line in lines)
             {
-                var withNewline = line + "\n";
-                if (Encoding.UTF8.GetByteCount(trimmed.ToString() + withNewline) > MaxOutputBytes)
+                var lineBytes = Encoding.UTF8.GetByteCount(line) + 1; // +1 for newline
+                if (trimmedBytes + lineBytes > MaxOutputBytes)
                 {
                     truncated = true;
                     break;
                 }
-                trimmed.Append(withNewline);
+                trimmed.Append(line);
+                trimmed.Append('\n');
+                trimmedBytes += lineBytes;
             }
             joined = trimmed.ToString().TrimEnd();
         }

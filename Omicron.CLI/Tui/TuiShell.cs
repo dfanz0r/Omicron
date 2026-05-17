@@ -77,7 +77,7 @@ public sealed class TuiShell : IDisposable
 
         // Enter alternate screen, hide cursor, enable mouse tracking, bracketed paste
         // Kitty keyboard protocol is negotiated during backend initialization
-        // (see SystemTerminalBackend.ProbeKittyProtocol), not as a terminal scope.
+        // during backend initialization, not as a terminal scope.
         using var altScreen = TerminalScope.UseAlternateScreen(_backend);
         using var hideCursor = TerminalScope.HideCursor(_backend);
         using var mouseScope = TerminalScope.UseMouse(_backend);
@@ -93,7 +93,15 @@ public sealed class TuiShell : IDisposable
             _currentFrame.Resize(actualSize.Width, actualSize.Height);
         }
 
-        RequestRender(); // Trigger initial render
+        // Render the first frame before starting the input stream. Some native
+        // backends perform synchronous polling before their first async
+        // suspension point; if we start MoveNextAsync first, the alternate
+        // screen can be entered while the initial render signal is starved,
+        // presenting as a black screen until input arrives.
+        await onRender(_currentFrame);
+        _renderer.Render(_currentFrame, _backend.Output);
+        _lastRenderTicks = Stopwatch.GetTimestamp();
+        _backend.Flush();
 
         var eventStream = _backend.ReadEvents(_cts.Token).GetAsyncEnumerator(_cts.Token);
 

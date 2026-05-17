@@ -198,12 +198,12 @@ public class BinaryFileReaderTests
     }
 
     [Fact]
-    public void HexDump_NegativeOffset_ReturnsError()
+    public async Task HexDump_NegativeOffset_ReturnsError()
     {
         var processor = new HexDumpProcessor();
         var ctx = MakeHexContext(new byte[] { 0x01 }, offset: -1);
-        var result = processor.ProcessAsync(ctx).GetAwaiter().GetResult();
-        Assert.True(result.Text.Contains("non-negative"));
+        var result = await processor.ProcessAsync(ctx);
+        Assert.Contains("non-negative", result.Text);
     }
 
     [Fact]
@@ -286,7 +286,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void ImageProcessor_VisionModel_ReturnsImageBase64()
+    public async Task ImageProcessor_VisionModel_ReturnsImageBase64()
     {
         var proc = new ImageProcessor();
         var meta = new ModelMetadata("test-model", "test", Modalities: new HashSet<string> { "text", "image" });
@@ -295,14 +295,14 @@ public class BinaryFileReaderTests
             "/test/img.png", "img.png", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), meta, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Equal(OutputModality.ImageBase64, result.ActualModality);
         Assert.Contains("Data: ", result.Text);
         Assert.Contains("image/png", result.Text);
     }
 
     [Fact]
-    public void ImageProcessor_TextOnlyModel_ReturnsHexDump()
+    public async Task ImageProcessor_TextOnlyModel_ReturnsHexDump()
     {
         var proc = new ImageProcessor();
         var meta = new ModelMetadata("test-model", "test", Modalities: new HashSet<string> { "text" });
@@ -311,14 +311,14 @@ public class BinaryFileReaderTests
             "/test/img.png", "img.png", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), meta, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         // Should be HexDump, not ImageBase64
         Assert.Equal(OutputModality.HexDump, result.ActualModality);
         Assert.Contains("[HEX]", result.Text);
     }
 
     [Fact]
-    public void ImageProcessor_NullMetadata_UsesSafeDefaults()
+    public async Task ImageProcessor_NullMetadata_UsesSafeDefaults()
     {
         var proc = new ImageProcessor();
         var bytes = new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
@@ -326,7 +326,7 @@ public class BinaryFileReaderTests
             "/test/img.png", "img.png", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         // Null metadata → safe default (no base64)
         Assert.Equal(OutputModality.HexDump, result.ActualModality);
     }
@@ -336,7 +336,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void PdfProcessor_PdfCapableModel_ReturnsPdfBase64()
+    public async Task PdfProcessor_PdfCapableModel_ReturnsPdfBase64()
     {
         var proc = new PdfProcessor();
         var meta = new ModelMetadata("test-model", "test", Modalities: new HashSet<string> { "text", "pdf" });
@@ -345,13 +345,13 @@ public class BinaryFileReaderTests
             "/test/doc.pdf", "doc.pdf", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), meta, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Equal(OutputModality.PdfBase64, result.ActualModality);
         Assert.Contains("Data: ", result.Text);
     }
 
     [Fact]
-    public void PdfProcessor_TextOnlyModel_ReturnsText()
+    public async Task PdfProcessor_TextOnlyModel_ReturnsText()
     {
         var proc = new PdfProcessor();
         var meta = new ModelMetadata("test-model", "test", Modalities: new HashSet<string> { "text" });
@@ -360,7 +360,7 @@ public class BinaryFileReaderTests
             "/test/doc.pdf", "doc.pdf", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), meta, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         // For text-only model, should extract text (or fall back to hex dump)
         Assert.NotEqual(OutputModality.PdfBase64, result.ActualModality);
     }
@@ -370,7 +370,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void TextProcessor_ReadsUtf8()
+    public async Task TextProcessor_ReadsUtf8()
     {
         var proc = new TextProcessor();
         var bytes = "hello\nworld"u8.ToArray();
@@ -378,14 +378,14 @@ public class BinaryFileReaderTests
             "/test/file.txt", "file.txt", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("hello", result.Text);
         Assert.Contains("world", result.Text);
         Assert.Equal(OutputModality.Text, result.ActualModality);
     }
 
     [Fact]
-    public void TextProcessor_EmptyFile()
+    public async Task TextProcessor_EmptyFile()
     {
         var proc = new TextProcessor();
         var bytes = Array.Empty<byte>();
@@ -393,12 +393,12 @@ public class BinaryFileReaderTests
             "/test/empty.txt", "empty.txt", bytes.AsMemory(), 0,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("empty", result.Text);
     }
 
     [Fact]
-    public void TextProcessor_BinaryContent_AddsWarning()
+    public async Task TextProcessor_BinaryContent_AddsWarning()
     {
         var proc = new TextProcessor();
         // Binary content with null byte
@@ -407,7 +407,7 @@ public class BinaryFileReaderTests
             "/test/file.bin", "file.bin", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), null, "text", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("WARNING", result.Text);
     }
 
@@ -416,7 +416,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void AudioProcessor_WithCapability_ReturnsAudioBase64()
+    public async Task AudioProcessor_WithCapability_ReturnsAudioBase64()
     {
         var proc = new AudioProcessor();
         var meta = new ModelMetadata("test", "test", Modalities: new HashSet<string> { "text", "audio" });
@@ -428,13 +428,13 @@ public class BinaryFileReaderTests
             "/test/audio.wav", "audio.wav", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), meta, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Equal(OutputModality.AudioBase64, result.ActualModality);
         Assert.Contains("Data: ", result.Text);
     }
 
     [Fact]
-    public void AudioProcessor_TextOnly_ReturnsMetadata()
+    public async Task AudioProcessor_TextOnly_ReturnsMetadata()
     {
         var proc = new AudioProcessor();
         var meta = new ModelMetadata("test", "test", Modalities: new HashSet<string> { "text" });
@@ -445,7 +445,7 @@ public class BinaryFileReaderTests
             "/test/audio.wav", "audio.wav", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), meta, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Equal(OutputModality.Metadata, result.ActualModality);
     }
 
@@ -454,7 +454,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void Base64Processor_ReturnsBase64Encoding()
+    public async Task Base64Processor_ReturnsBase64Encoding()
     {
         var proc = new Base64Processor();
         var bytes = "Hello, World!"u8.ToArray();
@@ -462,13 +462,13 @@ public class BinaryFileReaderTests
             "/test/file.bin", "file.bin", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), null, "base64", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("Data: ", result.Text);
         Assert.Contains("SGVsbG8sIFdvcmxkIQ==", result.Text); // base64 of "Hello, World!"
     }
 
     [Fact]
-    public void Base64Processor_MimeTypeFromExtension()
+    public async Task Base64Processor_MimeTypeFromExtension()
     {
         var proc = new Base64Processor();
         var bytes = new byte[] { 0x89, 0x50, 0x4E, 0x47 };
@@ -476,7 +476,7 @@ public class BinaryFileReaderTests
             "/test/img.png", "img.png", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), null, "base64", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("image/png", result.Text);
     }
 
@@ -650,7 +650,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void CsvProcessor_ParsesHeader()
+    public async Task CsvProcessor_ParsesHeader()
     {
         var proc = new CsvProcessor();
         var bytes = "name,age,city\nAlice,30,NYC\nBob,25,LA"u8.ToArray();
@@ -658,7 +658,7 @@ public class BinaryFileReaderTests
             "/test/data.csv", "data.csv", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("Columns", result.Text);
         Assert.Contains("name", result.Text);
         Assert.Contains("age", result.Text);
@@ -670,7 +670,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void EmailProcessor_ExtractsHeaders()
+    public async Task EmailProcessor_ExtractsHeaders()
     {
         var proc = new EmailProcessor();
         var email = "From: alice@example.com\nTo: bob@example.com\nSubject: Hello\n\nBody text here"u8.ToArray();
@@ -678,7 +678,7 @@ public class BinaryFileReaderTests
             "/test/msg.eml", "msg.eml", email.AsMemory(), email.Length,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("From", result.Text);
         Assert.Contains("alice@example.com", result.Text);
         Assert.Contains("Subject", result.Text);
@@ -700,7 +700,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void SvgProcessor_ReturnsContent()
+    public async Task SvgProcessor_ReturnsContent()
     {
         var proc = new SvgProcessor();
         var svg = "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect width=\"100\" height=\"100\"/></svg>"u8.ToArray();
@@ -708,7 +708,7 @@ public class BinaryFileReaderTests
             "/test/image.svg", "image.svg", svg.AsMemory(), svg.Length,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("<svg", result.Text);
         Assert.Contains("rect", result.Text);
     }
@@ -718,7 +718,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void ArchiveProcessor_NotZip_ReturnsListingUnavailable()
+    public async Task ArchiveProcessor_NotZip_ReturnsListingUnavailable()
     {
         var proc = new ArchiveProcessor();
         var bytes = new byte[] { 0x00, 0x01, 0x02, 0x03 }; // not a valid ZIP
@@ -726,7 +726,7 @@ public class BinaryFileReaderTests
             "/test/archive.zip", "archive.zip", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("shell commands", result.Text);
     }
 
@@ -735,7 +735,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void NotebookProcessor_ExtractsCodeCells()
+    public async Task NotebookProcessor_ExtractsCodeCells()
     {
         var proc = new NotebookProcessor();
         var nb = "{\"cells\":[{\"cell_type\":\"code\",\"source\":[\"print(\\\"hello\\\")\\n\"]},{\"cell_type\":\"markdown\",\"source\":[\"# Title\\n\"]}]}"u8.ToArray();
@@ -743,7 +743,7 @@ public class BinaryFileReaderTests
             "/test/notebook.ipynb", "notebook.ipynb", nb.AsMemory(), nb.Length,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("print", result.Text);
         Assert.Contains("hello", result.Text);
         Assert.Contains("Title", result.Text);
@@ -868,7 +868,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void OpenXmlProcessor_NonZip_ReturnsFallback()
+    public async Task OpenXmlProcessor_NonZip_ReturnsFallback()
     {
         var proc = new OpenXmlProcessor();
         var bytes = new byte[] { 0x00, 0x01, 0x02 };
@@ -876,7 +876,7 @@ public class BinaryFileReaderTests
             "/test/doc.docx", "doc.docx", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         // Fallback to hex dump
         Assert.NotEqual(OutputModality.Text, result.ActualModality);
     }
@@ -886,7 +886,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void LegacyOfficeProcessor_NonOle2_ReturnsFallback()
+    public async Task LegacyOfficeProcessor_NonOle2_ReturnsFallback()
     {
         var proc = new LegacyOfficeProcessor();
         var bytes = new byte[] { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
@@ -894,7 +894,7 @@ public class BinaryFileReaderTests
             "/test/doc.doc", "doc.doc", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         // Fallback to hex dump (no OLE2 signature)
         Assert.NotEqual(OutputModality.Text, result.ActualModality);
     }
@@ -904,7 +904,7 @@ public class BinaryFileReaderTests
     // ============================================================
 
     [Fact]
-    public void EbookProcessor_NonZip_ReturnsUnavailable()
+    public async Task EbookProcessor_NonZip_ReturnsUnavailable()
     {
         var proc = new EbookProcessor();
         var bytes = new byte[] { 0x00, 0x01, 0x02 };
@@ -912,7 +912,7 @@ public class BinaryFileReaderTests
             "/test/book.epub", "book.epub", bytes.AsMemory(), bytes.Length,
             new SessionId(Guid.Empty), null, "auto", null, null, null, CancellationToken.None);
 
-        var result = proc.ProcessAsync(ctx).GetAwaiter().GetResult();
+        var result = await proc.ProcessAsync(ctx);
         Assert.Contains("unavailable", result.Text);
     }
 }

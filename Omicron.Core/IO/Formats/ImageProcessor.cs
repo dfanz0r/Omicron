@@ -1,3 +1,4 @@
+using Omicron.Core.Content;
 using Omicron.Core.Models;
 
 namespace Omicron.Core.IO;
@@ -32,7 +33,7 @@ public sealed class ImageProcessor : IContentProcessor
             // Return base64 inline
             var b64 = Convert.ToBase64String(bytes.Span);
 
-            var text = $"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, {mimeType}";
+            var text = $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {mimeType}";
             if (dim.HasValue)
                 text += $", {dim.Value.Width}×{dim.Value.Height}px";
             text += ")\n";
@@ -45,7 +46,7 @@ public sealed class ImageProcessor : IContentProcessor
         }
 
         // Text-only model: fall back to hex dump with metadata header
-        var imageInfo = $"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, {mimeType}";
+        var imageInfo = $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {mimeType}";
         if (dim.HasValue)
             imageInfo += $", {dim.Value.Width}×{dim.Value.Height}px";
         imageInfo += ")\n";
@@ -213,10 +214,5 @@ public sealed class ImageProcessor : IContentProcessor
         return null;
     }
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
+
 }

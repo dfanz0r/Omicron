@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 
@@ -285,6 +286,7 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
             PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
             WriteIndented = false
         };
+        _jsonOptions.Converters.Add(new Content.ContentBlockJsonConverter());
         Directory.CreateDirectory(_storeDir);
         LoadIndex();
     }
@@ -565,7 +567,10 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
     }
 
     private static readonly JsonSerializerOptions _eventJsonOptions = new()
-        { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        Converters = { new Content.ContentBlockJsonConverter() }
+    };
 
     /// <summary>Deserialize a JSON line to an OmicronEvent using the $type discriminator.</summary>
     private static OmicronEvent? DeserializeEvent(string line)

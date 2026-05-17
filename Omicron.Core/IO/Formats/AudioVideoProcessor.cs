@@ -1,4 +1,5 @@
 using System.Text;
+using Omicron.Core.Content;
 using Omicron.Core.Models;
 
 namespace Omicron.Core.IO;
@@ -30,7 +31,7 @@ public sealed class AudioProcessor : IContentProcessor
         {
             var b64 = Convert.ToBase64String(context.Bytes.Span);
             var sb = new StringBuilder();
-            sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize(context.Bytes.Length)}, {mimeType})");
+            sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(context.Bytes.Length)}, {mimeType})");
             if (meta is not null)
                 sb.AppendLine($"Format: {meta.Format}, Duration: {meta.Duration:F1}s, Bitrate: {meta.Bitrate} kbps, Sample Rate: {meta.SampleRate} Hz");
             sb.Append($"Data: {b64}");
@@ -41,7 +42,7 @@ public sealed class AudioProcessor : IContentProcessor
 
         // Text-only model: metadata only
         var metaSb = new StringBuilder();
-        metaSb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize(context.Bytes.Length)}, {mimeType})");
+        metaSb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(context.Bytes.Length)}, {mimeType})");
         if (meta is not null)
         {
             metaSb.AppendLine($"Format: {meta.Format}");
@@ -238,13 +239,6 @@ public sealed class AudioProcessor : IContentProcessor
         };
     }
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
-
     internal sealed record AudioMeta(string Format, double Duration, int Bitrate, int SampleRate);
 }
 
@@ -274,7 +268,7 @@ public sealed class VideoProcessor : IContentProcessor
         {
             var b64 = Convert.ToBase64String(context.Bytes.Span);
             var sb = new StringBuilder();
-            sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize(context.Bytes.Length)}, {mimeType})");
+            sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(context.Bytes.Length)}, {mimeType})");
             if (meta is not null)
             {
                 sb.AppendLine($"Format: {meta.Format}, Duration: {meta.Duration:F1}s");
@@ -289,7 +283,7 @@ public sealed class VideoProcessor : IContentProcessor
 
         // Text-only model: metadata only
         var metaSb = new StringBuilder();
-        metaSb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize(context.Bytes.Length)}, {mimeType})");
+        metaSb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(context.Bytes.Length)}, {mimeType})");
         if (meta is not null)
         {
             metaSb.AppendLine($"Format: {meta.Format}");
@@ -423,13 +417,6 @@ public sealed class VideoProcessor : IContentProcessor
             ".flv" => "video/x-flv",
             _ => "application/octet-stream"
         };
-    }
-
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
     }
 
     internal sealed record VideoMeta(string Format, double Duration, int Width, int Height, int Bitrate);

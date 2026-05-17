@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading.Tasks;
 using Omicron.Core.Text;
 using Xunit;
 
@@ -120,7 +121,7 @@ public class Utf8TextStoreTests
     }
 
     [Fact]
-    public void Append_ThreadSafe()
+    public async Task Append_ThreadSafe()
     {
         var store = new Utf8TextStore(64);
         var tasks = new List<System.Threading.Tasks.Task>();
@@ -132,7 +133,7 @@ public class Utf8TextStoreTests
                     store.Append("line\n"u8);
             }));
         }
-        System.Threading.Tasks.Task.WaitAll([.. tasks]);
+        await System.Threading.Tasks.Task.WhenAll([.. tasks]);
         // Each of 10 threads × 100 iterations × 5 bytes = 5000
         Assert.Equal(5000, store.LengthBytes);
     }

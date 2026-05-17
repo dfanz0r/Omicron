@@ -1,3 +1,4 @@
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Text;
 
@@ -89,7 +90,7 @@ public sealed class TranscriptStore
     /// <summary>
     /// Update an existing tool call block with a new state and optional output text.
     /// </summary>
-    public ToolCallBlock UpdateToolCall(BlockId blockId, ToolCallState newState, ReadOnlySpan<byte> outputText)
+    public ToolCallBlock UpdateToolCall(BlockId blockId, ToolCallState newState, ReadOnlySpan<byte> outputText, List<IContentBlock>? contentBlocks = null)
     {
         for (int i = _blocks.Count - 1; i >= 0; i--)
         {
@@ -105,7 +106,8 @@ public sealed class TranscriptStore
                 var updated = tcb with
                 {
                     State = newState,
-                    ByteLength = tcb.ByteLength + outputText.Length
+                    ByteLength = tcb.ByteLength + outputText.Length,
+                    ContentBlocks = contentBlocks ?? tcb.ContentBlocks
                 };
                 _blocks[i] = updated;
                 return updated;
@@ -114,7 +116,7 @@ public sealed class TranscriptStore
 
         // Block not found — create a new one
         var pos = Text.Append(outputText);
-        var block = new ToolCallBlock(blockId, pos, outputText.Length, "unknown", null, newState);
+        var block = new ToolCallBlock(blockId, pos, outputText.Length, "unknown", null, newState, contentBlocks);
         _blocks.Add(block);
         return block;
     }
@@ -164,6 +166,7 @@ public sealed class TranscriptStore
 
     /// <summary>
     /// Remove all blocks and optionally clear the text store.
+    /// Does NOT dispose content blocks — the event sink owns them.
     /// </summary>
     public void Clear()
     {

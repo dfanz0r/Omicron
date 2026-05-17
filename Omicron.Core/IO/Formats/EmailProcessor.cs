@@ -1,4 +1,5 @@
 using System.Text;
+using Omicron.Core.Content;
 
 namespace Omicron.Core.IO;
 
@@ -28,7 +29,7 @@ public sealed class EmailProcessor : IContentProcessor
         }
 
         var sb = new StringBuilder();
-        sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, email)");
+        sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, email)");
         sb.AppendLine();
 
         // Try MimeKit first
@@ -143,10 +144,5 @@ public sealed class EmailProcessor : IContentProcessor
         return (headers, body);
     }
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
+
 }

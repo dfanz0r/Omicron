@@ -1,4 +1,5 @@
 using System.Text;
+using Omicron.Core.Content;
 
 namespace Omicron.Core.IO;
 
@@ -32,8 +33,8 @@ public sealed class SvgProcessor : IContentProcessor
         if (bytes.Length > MaxSvgBytes)
         {
             return ValueTask.FromResult(new ContentProcessorResult(
-                $"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, SVG — file too large, showing first {FormatSize(MaxSvgBytes)})\n" +
-                Encoding.UTF8.GetString(bytes[..(int)MaxSvgBytes].Span),
+                $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, SVG — file too large, showing first {FormatSize.Format(MaxSvgBytes)})\n" +
+                                Encoding.UTF8.GetString(bytes[..(int)MaxSvgBytes].Span),
                 OutputModality.Text,
                 IsTruncated: true));
         }
@@ -61,10 +62,5 @@ public sealed class SvgProcessor : IContentProcessor
             sb.ToString().TrimEnd(), OutputModality.Text));
     }
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
+
 }

@@ -1,3 +1,5 @@
+using Omicron.Core.Content;
+
 namespace Omicron.Core.Workspace;
 
 /// <summary>
@@ -29,6 +31,13 @@ public sealed class VfsWorkspaceAdapter : IWorkspace
         CancellationToken ct = default)
     {
         var content = await _readService.ReadAsync(path, options, ct);
-        return _renderer.Render(content);
+        var result = _renderer.Render(content);
+
+        // Produce structured content blocks lazily — only when the caller
+        // accesses .Blocks. This avoids building both string output and
+        // structured blocks when only one representation is needed.
+        var blocks = new Lazy<List<IContentBlock>>(() => WorkspaceLlmTextRenderer.ToContentBlocks(content));
+
+        return result with { Blocks = blocks };
     }
 }

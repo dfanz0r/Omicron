@@ -329,14 +329,14 @@ public class ModelMetadataTests
     }
 
     [Fact]
-    public void Extension_GetEffectiveContextWindow_MetadataOverridesModel()
+    public async Task Extension_GetEffectiveContextWindow_MetadataOverridesModel()
     {
         var prov = new Omicron.Core.Providers.ProviderFactory();
         var catalog = new ModelCatalogService(prov) as IModelCatalog;
 
         var model = new Model { Id = "m", ProviderName = "p", ContextWindow = 8000 };
         var meta = new List<ModelMetadata> { new("m", "p", ContextWindow: 128000) };
-        ((ModelCatalogService)catalog).RefreshMetadataAsync(new IModelMetadataSource[] { new StaticOverlaySource(meta) }).GetAwaiter().GetResult();
+        await ((ModelCatalogService)catalog).RefreshMetadataAsync(new IModelMetadataSource[] { new StaticOverlaySource(meta) });
 
         Assert.Equal(128000, catalog.GetEffectiveContextWindow(model));
     }
@@ -360,12 +360,12 @@ public class ModelMetadataTests
     }
 
     [Fact]
-    public void Extension_GetEffectiveMaxOutputTokens_MetadataOverridesModel()
+    public async Task Extension_GetEffectiveMaxOutputTokens_MetadataOverridesModel()
     {
         var prov = new Omicron.Core.Providers.ProviderFactory();
         var catalog = new ModelCatalogService(prov) as IModelCatalog;
         var meta = new List<ModelMetadata> { new("m", "p", MaxOutputTokens: 32000) };
-        ((ModelCatalogService)catalog).RefreshMetadataAsync(new IModelMetadataSource[] { new StaticOverlaySource(meta) }).GetAwaiter().GetResult();
+        await ((ModelCatalogService)catalog).RefreshMetadataAsync(new IModelMetadataSource[] { new StaticOverlaySource(meta) });
         var model = new Model { Id = "m", ProviderName = "p", MaxTokens = 4096 };
         Assert.Equal(32000, catalog.GetEffectiveMaxOutputTokens(model));
     }
@@ -380,12 +380,12 @@ public class ModelMetadataTests
     }
 
     [Fact]
-    public void Extension_MetadataLookup_IsCaseInsensitive()
+    public async Task Extension_MetadataLookup_IsCaseInsensitive()
     {
         var prov = new Omicron.Core.Providers.ProviderFactory();
         var catalog = new ModelCatalogService(prov) as IModelCatalog;
         var meta = new List<ModelMetadata> { new("Test-Model", "Test-Prov", ContextWindow: 5000) };
-        ((ModelCatalogService)catalog).RefreshMetadataAsync(new IModelMetadataSource[] { new StaticOverlaySource(meta) }).GetAwaiter().GetResult();
+        await ((ModelCatalogService)catalog).RefreshMetadataAsync(new IModelMetadataSource[] { new StaticOverlaySource(meta) });
 
         var model = new Model { Id = "test-model", ProviderName = "test-prov" };
         var result = catalog.GetMetadata(model);

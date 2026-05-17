@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Sessions;
@@ -29,7 +30,7 @@ public sealed record ToolInvocationContext(
 /// <summary>
 /// Result returned by a tool after execution.
 /// </summary>
-public sealed record ToolResult(string Text, bool IsError = false);
+public sealed record ToolResult(string Text, bool IsError = false, List<IContentBlock>? Blocks = null);
 
 /// <summary>
 /// Registry of all tools available to the LLM agent.

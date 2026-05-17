@@ -32,7 +32,7 @@ public class TerminalBackendTests
     }
 
     [Fact]
-    public void VirtualTerminalBackend_InjectedEvent_YieldsFromReadEvents()
+    public async Task VirtualTerminalBackend_InjectedEvent_YieldsFromReadEvents()
     {
         using var backend = new VirtualTerminalBackend();
         backend.InjectEvent(new KeyEvent(Key.Enter, KeyModifiers.None, null));
@@ -40,7 +40,7 @@ public class TerminalBackendTests
 
         var events = new List<TerminalEvent>();
         var enumerator = backend.ReadEvents(CancellationToken.None).GetAsyncEnumerator();
-        while (enumerator.MoveNextAsync().AsTask().Result)
+        while (await enumerator.MoveNextAsync())
             events.Add(enumerator.Current);
 
         Assert.Equal(2, events.Count);

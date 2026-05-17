@@ -1,3 +1,5 @@
+using Omicron.Core.Content;
+
 namespace Omicron.Core.Workspace;
 
 /// <summary>
@@ -21,12 +23,15 @@ public sealed record ReadOptions
 
 /// <summary>
 /// Result of a workspace read operation.
+/// Blocks are lazily computed from the same underlying content so callers
+/// that only need <see cref="Content"/> don't pay for block construction.
 /// </summary>
 public sealed record WorkspaceReadResult(
     string Content,
     bool IsDirectory,
     bool IsBinary,
-    bool Truncated);
+    bool Truncated,
+    Lazy<List<IContentBlock>>? Blocks = null);
 
 /// <summary>
 /// Abstraction for file system access within a workspace root.

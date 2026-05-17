@@ -35,7 +35,7 @@ catch { } // non-fatal
 
 // Safety net: if a previous TUI session crashed and left the console in raw / VT-input mode,
 // restore traditional input processing before we decide which mode to enter.
-SystemTerminalBackend.EnsureSafeConsoleInputMode();
+TerminalBackendFactory.EnsureSafeConsoleInputMode();
 
 // ── TUI mode ──
 if (args is { Length: > 0 } && args.Contains("--tui"))
@@ -519,7 +519,7 @@ async Task ReadSessionOutput(AgentSession session, string input, CancellationTok
 /// </summary>
 async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConfig cfg, JsonlSessionStore sessionStore)
 {
-    using var backend = new SystemTerminalBackend();
+    using var backend = TerminalBackendFactory.CreateSystemBackend();
     backend.Initialize();
     using var shell = new TuiShell(backend);
 
@@ -586,7 +586,10 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
                 onRender: (frame) =>
                 {
                     frame.Clear();
-                    var ctx = new RenderContext(frame, new Rect(0, 0, frame.Width, frame.Height), TextStyle.Default);
+                    var bounds = new Rect(0, 0, frame.Width, frame.Height);
+                    picker.Measure(new Size(frame.Width, frame.Height));
+                    picker.Arrange(bounds);
+                    var ctx = new RenderContext(frame, bounds, TextStyle.Default);
                     picker.Render(ctx);
                     return Task.CompletedTask;
                 });
@@ -600,6 +603,7 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
                     .FirstOrDefault(kv => kv.Value.Id == selectedModel.Id && kv.Value.ProviderName == selectedModel.ProviderName)
                     .Key ?? selectedModel.Id;
                 var apiKey = ResolveApiKey(selectedModel);
+                bool promptedForApiKey = false;
                 if (apiKey is null)
                 {
                     // Show API key prompt inside TUI
@@ -610,6 +614,12 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
                     await shell.RunAsync(
                         onEvent: (evt) =>
                         {
+                            if (evt is PasteEvent pe)
+                            {
+                                prompt.Insert(pe.Text);
+                                return Task.FromResult(true);
+                            }
+
                             if (evt is KeyEvent ke)
                             {
                                 if (prompt.HandleKey(ke))
@@ -626,17 +636,27 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
                         onRender: (frame) =>
                         {
                             frame.Clear();
-                            var ctx = new RenderContext(frame, new Rect(0, 0, frame.Width, frame.Height), TextStyle.Default);
+                            var bounds = new Rect(0, 0, frame.Width, frame.Height);
+                            prompt.Measure(new Size(frame.Width, frame.Height));
+                            prompt.Arrange(bounds);
+                            var ctx = new RenderContext(frame, bounds, TextStyle.Default);
                             prompt.Render(ctx);
                             return Task.CompletedTask;
                         });
 
                     apiKey = await promptTask.Task;
+                    apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey;
+                    promptedForApiKey = apiKey is not null;
                     shell.ForceFullRedraw(); // Prevent prompt artifacts from leaking into main app
                 }
 
                 if (apiKey is not null)
                 {
+                    // Persist keys entered through the TUI prompt, matching the
+                    // non-TUI startup flow. Do not copy env-var keys into config.
+                    if (promptedForApiKey)
+                        configManager.SetApiKey(selectedModel.ProviderName, apiKey);
+
                     var sessionConfig = SessionConfig.Create(selectedModel, cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.", apiKey, cfg.DefaultMaxTokens, cfg.DefaultTemperature, maxIterations: cfg.MaxIterations);
                     session = host.CreateSession(sessionConfig);
                     cfg.LastModel = modelKey;
@@ -713,5 +733,3 @@ public static class DisplayHelpers
     public static string Truncate(this string value, int maxLength)
         => value.Length <= maxLength ? value : value[..(maxLength - 1)] + "\u2026";
 }
-
-

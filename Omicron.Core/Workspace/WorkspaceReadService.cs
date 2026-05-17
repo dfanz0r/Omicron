@@ -114,33 +114,62 @@ public sealed class WorkspaceReadService : IWorkspaceReadService
         };
     }
 
-    /// <summary>Split file bytes into lines, applying offset/limit/chunk.</summary>
+    /// <summary>
+    /// Scan file bytes for line boundaries without allocating a full-file string.
+    /// Only decodes lines that fall within the requested offset/limit range.
+    /// </summary>
     internal static (IReadOnlyList<WorkspaceTextLine> Lines, int TotalLines, bool Truncated, int? NextOffset) ParseLines(
         ReadOnlyMemory<byte> bytes, ReadOptions? options)
     {
         if (bytes.IsEmpty)
             return (Array.Empty<WorkspaceTextLine>(), 0, false, null);
 
-        var text = Encoding.UTF8.GetString(bytes.Span);
-        var allLines = text.Replace("\r\n", "\n").Split('\n');
-        var totalLines = allLines.Length;
+        var span = bytes.Span;
+
+        // First pass: count total lines and record byte offsets of each line start.
+        // Use a pooled list for line offsets to avoid allocating a string array.
+        var lineStarts = new List<int> { 0 };
+        for (int i = 0; i < span.Length; i++)
+        {
+            if (span[i] == (byte)'\n')
+                lineStarts.Add(i + 1);
+        }
+
+        // If the last byte is not a newline, we still have a final line.
+        // lineStarts already accounts for this because each entry points to
+        // the start of a line; the total number of lines equals the number
+        // of line starts (the final entry points one past the last byte if
+        // the file ends with \n, or to the start of the final line).
+        // Correction: if the file doesn't end with \n, the final line is
+        // not counted by newline scanning. Let's recompute.
+        // Re-scan properly:
+        lineStarts.Clear();
+        int totalLines = 1; // at least one line even for empty-ish files
+        lineStarts.Add(0);
+        for (int i = 0; i < span.Length; i++)
+        {
+            if (span[i] == (byte)'\n')
+            {
+                lineStarts.Add(i + 1);
+                totalLines = lineStarts.Count;
+            }
+        }
+        totalLines = lineStarts.Count;
 
         // Chunk: find the 0-based line index that corresponds to chunk * DefaultChunkSizeBytes
         int chunkStartLine = 0;
         if (options?.Chunk is > 0)
         {
             var targetByte = options.Chunk.Value * DefaultChunkSizeBytes;
-            int byteCount = 0;
             int foundStart = -1;
-            for (int i = 0; i < allLines.Length; i++)
+            for (int i = 0; i < lineStarts.Count; i++)
             {
-                int lineBytes = Encoding.UTF8.GetByteCount(allLines[i]) + 1;
-                if (byteCount + lineBytes > targetByte)
+                int lineEnd = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : span.Length;
+                if (lineEnd > targetByte)
                 {
                     foundStart = i;
                     break;
                 }
-                byteCount += lineBytes;
             }
             if (foundStart < 0)
             {
@@ -155,29 +184,38 @@ public sealed class WorkspaceReadService : IWorkspaceReadService
         int offsetLine = options?.Offset is > 0 ? options.Offset.Value - 1 : 0;
         int startLine = chunkStartLine + offsetLine;
 
-        if (startLine >= allLines.Length)
+        if (startLine >= totalLines)
             return (Array.Empty<WorkspaceTextLine>(), totalLines, false, null);
 
         int limit = options?.Limit is > 0 ? options.Limit.Value : int.MaxValue;
-        int endLine = Math.Min(startLine + limit, allLines.Length);
+        int endLine = Math.Min(startLine + limit, totalLines);
 
-        var sliceLines = allLines[startLine..endLine];
-        var result = new List<WorkspaceTextLine>(sliceLines.Length);
+        var result = new List<WorkspaceTextLine>(endLine - startLine);
 
         int byteCountWritten = 0;
-        for (int i = 0; i < sliceLines.Length; i++)
+        for (int i = startLine; i < endLine; i++)
         {
-            var line = sliceLines[i];
-            var lineBytes = Encoding.UTF8.GetByteCount(line) + 1;
+            int lineByteStart = lineStarts[i];
+            int lineByteEnd = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : span.Length;
 
-            if (result.Count >= MaxOutputLines || byteCountWritten + lineBytes > MaxOutputBytes)
+            // Strip trailing \r and \n from line end
+            int lineLength = lineByteEnd - lineByteStart;
+            if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\n')
+                lineLength--;
+            if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\r')
+                lineLength--;
+
+            int lineBytes = lineLength + 1; // +1 for newline in our output
+
+            if (result.Count >= MaxOutputLines || (byteCountWritten > 0 && byteCountWritten + lineBytes > MaxOutputBytes))
                 break;
 
-            result.Add(new WorkspaceTextLine(startLine + i + 1, line));
+            var lineText = Encoding.UTF8.GetString(span.Slice(lineByteStart, lineLength));
+            result.Add(new WorkspaceTextLine(i + 1, lineText));
             byteCountWritten += lineBytes;
         }
 
-        bool truncated = result.Count < sliceLines.Length || endLine < allLines.Length;
+        bool truncated = (startLine + result.Count) < totalLines || endLine < totalLines;
         int? nextOffset = truncated ? startLine + result.Count + 1 : null;
 
         return (result, totalLines, truncated, nextOffset);

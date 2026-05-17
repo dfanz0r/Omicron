@@ -1,93 +1,167 @@
-using System.Text;
+using Cysharp.Text;
 
 namespace Omicron.Core.Content;
 
 /// <summary>
-/// Simple text renderer for <see cref="ContentBlock"/> instances.
+/// Simple text renderer for <see cref="IContentBlock"/> instances.
 /// Produces CLI-friendly text. No markdown parsing, no syntax
 /// highlighting, no terminal-width awareness.
 /// </summary>
 public static class ContentBlockTextRenderer
 {
-    /// <summary>Render a single content block as text.</summary>
-    public static string Render(ContentBlock block)
+    /// <summary>
+    /// Render a single content block as text. This is a boundary method: hot
+    /// paths should prefer <see cref="AppendUtf8To"/> and keep the caller-owned
+    /// builder alive across render operations.
+    /// </summary>
+    public static string Render(IContentBlock block)
     {
-        return block switch
+        var sb = ZString.CreateUtf8StringBuilder();
+        try
         {
-            PlainTextContentBlock t => t.Text,
-            MarkdownContentBlock m => m.Markdown,
-            CodeContentBlock c => RenderCode(c),
-            DiffContentBlock d => d.UnifiedDiff,
-            FilePreviewContentBlock f => RenderFilePreview(f),
-            ErrorContentBlock e => RenderError(e),
-            ToolCallContentBlock t => RenderToolCall(t),
-            _ => $"Error: unknown content block type ({block.GetType().Name})"
-        };
+            AppendUtf8To(ref sb, block);
+            return sb.ToString();
+        }
+        finally
+        {
+            sb.Dispose();
+        }
     }
 
-    /// <summary>Render a sequence of content blocks, separated by newlines.</summary>
-    public static string RenderAll(IReadOnlyList<ContentBlock> blocks)
+    /// <summary>
+    /// Render a sequence of content blocks, separated by newlines. This is a
+    /// boundary method; prefer <see cref="AppendAllUtf8To"/> in hot paths.
+    /// </summary>
+    public static string RenderAll(List<IContentBlock> blocks)
     {
         if (blocks.Count == 0) return "";
-        if (blocks.Count == 1) return Render(blocks[0]);
 
-        var sb = new StringBuilder();
+        var sb = ZString.CreateUtf8StringBuilder();
+        try
+        {
+            AppendAllUtf8To(ref sb, blocks);
+            return sb.ToString();
+        }
+        finally
+        {
+            sb.Dispose();
+        }
+    }
+
+    /// <summary>Append a rendered content block directly into a caller-owned UTF-8 value string builder.</summary>
+    public static void AppendUtf8To(ref Utf8ValueStringBuilder sb, IContentBlock block)
+    {
+        switch (block)
+        {
+            case PlainTextContentBlock t:
+                t.TextBuffer.AppendTo(ref sb);
+                break;
+            case MarkdownContentBlock m:
+                m.TextBuffer.AppendTo(ref sb);
+                break;
+            case CodeContentBlock c:
+                AppendCodeUtf8(ref sb, c);
+                break;
+            case DiffContentBlock d:
+                d.TextBuffer.AppendTo(ref sb);
+                break;
+            case FilePreviewContentBlock f:
+                AppendFilePreviewUtf8(ref sb, f);
+                break;
+            case ErrorContentBlock e:
+                AppendErrorUtf8(ref sb, e);
+                break;
+            case ToolCallContentBlock tc:
+                AppendToolCallUtf8(ref sb, tc);
+                break;
+            default:
+                sb.AppendLiteral("Error: unknown content block type ("u8);
+                sb.Append(block.GetType().Name);
+                sb.Append(')');
+                break;
+        }
+    }
+
+    /// <summary>Append rendered content blocks directly into a caller-owned UTF-8 value string builder.</summary>
+    public static void AppendAllUtf8To(ref Utf8ValueStringBuilder sb, List<IContentBlock> blocks)
+    {
         for (int i = 0; i < blocks.Count; i++)
         {
             if (i > 0) sb.AppendLine();
-            sb.Append(Render(blocks[i]));
+            AppendUtf8To(ref sb, blocks[i]);
         }
-        return sb.ToString();
     }
 
-    private static string RenderCode(CodeContentBlock block)
+    private static void AppendCodeUtf8(ref Utf8ValueStringBuilder sb, CodeContentBlock block)
     {
-        var sb = new StringBuilder();
         if (block.Path is not null)
-            sb.AppendLine($"// {block.Path}");
+        {
+            sb.AppendLiteral("// "u8);
+            sb.AppendLine(block.Path);
+        }
+
+        sb.AppendLiteral("```"u8);
         if (block.Language is not null)
-            sb.AppendLine($"```{block.Language}");
-        else
-            sb.AppendLine("```");
-        sb.Append(block.Code);
-        if (!block.Code.EndsWith('\n'))
+            sb.Append(block.Language);
+        sb.AppendLine();
+
+        block.TextBuffer.AppendTo(ref sb);
+        if (!EndsWithLineFeed(block.TextBuffer))
             sb.AppendLine();
-        sb.Append("```");
-        return sb.ToString();
+        sb.AppendLiteral("```"u8);
     }
 
-    private static string RenderFilePreview(FilePreviewContentBlock block)
+    private static void AppendFilePreviewUtf8(ref Utf8ValueStringBuilder sb, FilePreviewContentBlock block)
     {
+        sb.AppendLiteral("[FILE] "u8);
+        sb.Append(block.Path);
+        sb.AppendLiteral("  ("u8);
+        FormatSize.AppendUtf8To(ref sb, block.Size);
+
         if (block.IsBinary)
-            return $"[FILE] {block.Path}  ({FormatSize.Format(block.Size)}, binary)";
+        {
+            sb.AppendLiteral(", binary)"u8);
+            return;
+        }
 
-        var lineInfo = block.LineCount.HasValue
-            ? $"{block.LineCount} lines"
-            : "";
+        if (block.LineCount.HasValue)
+        {
+            sb.AppendLiteral(", "u8);
+            sb.Append(block.LineCount.Value);
+            sb.AppendLiteral(" lines"u8);
+        }
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"[FILE] {block.Path}  ({FormatSize.Format(block.Size)}" +
-            (lineInfo.Length > 0 ? $", {lineInfo}" : "") + ")");
-        sb.Append(block.Preview);
-        return sb.ToString();
+        sb.AppendLine(")");
+        block.TextBuffer.AppendTo(ref sb);
     }
 
-    private static string RenderError(ErrorContentBlock block)
+    private static void AppendErrorUtf8(ref Utf8ValueStringBuilder sb, ErrorContentBlock block)
     {
-        var sb = new StringBuilder();
-        sb.Append($"Error: {block.Message}");
-        if (block.Details is not null)
-            sb.Append($"\nDetails: {block.Details}");
-        return sb.ToString();
+        sb.AppendLiteral("Error: "u8);
+        block.TextBuffer.AppendTo(ref sb);
+        if (block.DetailsBuffer is not null)
+        {
+            sb.AppendLiteral("\nDetails: "u8);
+            block.DetailsBuffer.AppendTo(ref sb);
+        }
     }
 
-    private static string RenderToolCall(ToolCallContentBlock block)
+    private static void AppendToolCallUtf8(ref Utf8ValueStringBuilder sb, ToolCallContentBlock block)
     {
-        var args = block.Arguments is not null && block.Arguments.Count > 0
-            ? System.Text.Json.JsonSerializer.Serialize(block.Arguments)
-            : "";
-        return $"Calling {block.ToolName}({args})...";
+        sb.AppendLiteral("[Tool Call: "u8);
+        sb.Append(block.ToolName);
+        if (block.ToolCallId is not null)
+        {
+            sb.AppendLiteral(" ("u8);
+            sb.Append(block.ToolCallId);
+            sb.Append(')');
+        }
+        sb.Append(']');
     }
 
+    private static bool EndsWithLineFeed(Utf8ContentBuffer buffer)
+    {
+        var span = buffer.AsSpan();
+        return span.Length > 0 && span[^1] == (byte)'\n';
+    }
 }
-

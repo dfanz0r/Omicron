@@ -1,4 +1,5 @@
 using System.Text;
+using Omicron.Core.Content;
 
 namespace Omicron.Core.IO;
 
@@ -66,7 +67,7 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
                 var openXmlResult = await openXmlProcessor.ProcessAsync(openXmlContext, ct);
 
                 var sb = new StringBuilder();
-                sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, {docType})");
+                sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {docType})");
                 sb.AppendLine($"[CONVERTED] {conversion.Method} -> {conversion.ConvertedExtension}");
                 sb.AppendLine();
                 sb.Append(openXmlResult.Text);
@@ -306,7 +307,7 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
         string method, string text, string? warning)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"[FILE] {relativePath}  ({FormatSize(size)}, {docType})");
+        sb.AppendLine($"[FILE] {relativePath}  ({FormatSize.Format(size)}, {docType})");
         sb.AppendLine($"[METHOD] {method}");
         if (warning is not null)
             sb.AppendLine($"[WARNING] {warning}");
@@ -334,16 +335,11 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
         var warning = $"Legacy Office text extraction unavailable{reason}; showing hex dump.";
 
         return new ContentProcessorResult(
-            $"[FILE] {context.RelativePath}  ({FormatSize(bytes.Length)}, {docType})\n" +
+            $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {docType})\n" +
             $"[WARNING] {warning}\n{hexResult.Text}",
             OutputModality.HexDump,
             Warning: warning);
     }
 
-    private static string FormatSize(long bytes)
-    {
-        if (bytes < 1024) return $"{bytes} B";
-        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-        return $"{bytes / (1024.0 * 1024.0):F1} MB";
-    }
+
 }

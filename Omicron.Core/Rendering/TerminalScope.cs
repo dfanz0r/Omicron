@@ -27,8 +27,8 @@ public sealed class TerminalScope : IDisposable
         => Acquire(backend, ScopeType.AlternateScreen, "\x1b[?1049h");
 
     // UseRawMode deliberately omitted — raw mode is always active
-    // while SystemTerminalBackend is alive. The backend constructor
-    // sets raw mode eagerly on Unix.
+    // while the backend is alive. The backend initializer
+    // sets raw mode eagerly.
 
     /// <summary>Hide the cursor.</summary>
     public static TerminalScope HideCursor(ITerminalBackend backend)

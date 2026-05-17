@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text;
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Permissions;
@@ -387,6 +388,7 @@ public sealed class AgentSession
                     var toolDef = _toolRegistry.GetTool(toolCall.Name);
                     string resultText;
                     bool isError = false;
+                    List<IContentBlock>? resultBlocks = null;
 
                     if (toolDef is null)
                     {
@@ -430,6 +432,7 @@ public sealed class AgentSession
                                         Id, AgentId, ct, toolModelMeta));
                                 resultText = invokeResult.Text;
                                 isError = invokeResult.IsError;
+                                resultBlocks = invokeResult.Blocks;
 
                                 // Multimodal bridge: if read_path returned base64 content,
                                 // inject a user message with actual image/audio/video/PDF content
@@ -458,7 +461,7 @@ public sealed class AgentSession
 
                     yield return Emit(new ToolInvocationCompletedEvent(
                         _writer.Envelope(),
-                        toolCallId, toolCall.Name, resultText ?? "", isError));
+                        toolCallId, toolCall.Name, resultText ?? "", isError, resultBlocks));
                 }
 
                 continue;

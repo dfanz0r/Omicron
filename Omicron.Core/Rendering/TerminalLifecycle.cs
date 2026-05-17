@@ -69,41 +69,42 @@ public sealed class TerminalLifecycle : IDisposable
     {
         lock (_trackLock)
         {
-            if (_lastBackend is null)
-                return;
-
-            foreach (var type in _activeScopeTypes)
+            if (_lastBackend is not null)
             {
-                string? exitSequence = type switch
+                foreach (var type in _activeScopeTypes)
                 {
-                    TerminalScope.ScopeType.AlternateScreen => "\x1b[?1049l",
-                    TerminalScope.ScopeType.HideCursor => "\x1b[?25h",
-                    TerminalScope.ScopeType.BracketedPaste => "\x1b[?2004l",
-                    TerminalScope.ScopeType.Mouse => "\x1b[?1006l\x1b[?1002l\x1b[?1000l",
-                    _ => null
-                };
+                    string? exitSequence = type switch
+                    {
+                        TerminalScope.ScopeType.AlternateScreen => "\x1b[?1049l",
+                        TerminalScope.ScopeType.HideCursor => "\x1b[?25h",
+                        TerminalScope.ScopeType.BracketedPaste => "\x1b[?2004l",
+                        TerminalScope.ScopeType.Mouse => "\x1b[?1006l\x1b[?1002l\x1b[?1000l",
+                        _ => null
+                    };
 
-                if (exitSequence is not null)
-                {
-                    try
+                    if (exitSequence is not null)
                     {
-                        var bytes = System.Text.Encoding.UTF8.GetBytes(exitSequence);
-                        _lastBackend.Output.Write(bytes);
-                        _lastBackend.Flush();
-                    }
-                    catch
-                    {
-                        // Best-effort during crash recovery
+                        try
+                        {
+                            var bytes = System.Text.Encoding.UTF8.GetBytes(exitSequence);
+                            _lastBackend.Output.Write(bytes);
+                            _lastBackend.Flush();
+                        }
+                        catch
+                        {
+                            // Best-effort during crash recovery
+                        }
                     }
                 }
             }
         }
 
-        // Also restore platform console modes so standard Console.ReadKey works
-        // after a crash/kill that bypassed Dispose().
+        // Always attempt platform-level safe mode restore, even if no
+        // backend was tracked (raw mode may have been entered before any
+        // TerminalScope.Track call).
         try
         {
-            SystemTerminalBackend.EnsureSafeConsoleInputMode();
+            TerminalBackendFactory.EnsureSafeConsoleInputMode();
         }
         catch
         {

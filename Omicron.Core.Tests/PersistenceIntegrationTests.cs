@@ -1,9 +1,11 @@
 using Omicron.Core.Config;
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Providers;
 using Omicron.Core.Sessions;
 using Omicron.Core.Workspace;
+using System.Text.Json;
 using Xunit;
 
 namespace Omicron.Core.Tests;
@@ -274,6 +276,131 @@ public class PersistenceIntegrationTests
 
         Assert.True(persistentSink.PersistedCount > 0);
         Assert.Equal(0, persistentSink.FailureCount);
+    }
+
+    /// <summary>
+    /// Regression test for F1: ensures ToolInvocationCompletedEvent with structured
+    /// IContentBlock blocks survives JSONL round-trip without serialization errors.
+    /// </summary>
+    [Fact]
+    public async Task ToolInvocationCompletedEvent_WithContentBlocks_RoundTrip()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"omicron-persist-tic-{Guid.NewGuid():N}");
+
+        {
+            using var store = new JsonlSessionStore(tempDir);
+            var record = await store.CreateSessionAsync(
+                new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
+
+            var toolCallId = new ToolCallId("call_abc123");
+
+            var blocks = new List<IContentBlock>
+            {
+                new FilePreviewContentBlock(
+                    Path: "src/Foo.cs",
+                    Preview: "public class Foo { }",
+                    Size: 100,
+                    LineCount: 1,
+                    IsBinary: false),
+                new CodeContentBlock(
+                    code: "int x = 1;",
+                    Language: "csharp",
+                    Path: "src/Bar.cs"),
+                new ErrorContentBlock(
+                    Message: "something went wrong",
+                    Details: "at line 42"),
+                new PlainTextContentBlock("plain message"),
+                new MarkdownContentBlock("# Title\n\n**bold**"),
+                new DiffContentBlock(
+                    unifiedDiff: "@@ -1,1 +1,1 @@\n-old\n+new",
+                    Path: "src/file.cs"),
+                new ToolCallContentBlock(
+                    toolCallId: "call_nested",
+                    toolName: "read_path",
+                    arguments: new Dictionary<string, object?> { ["path"] = "test.txt" })
+            };
+
+            var evt = new ToolInvocationCompletedEvent(
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId),
+                toolCallId,
+                "read_path",
+                "Result text",
+                IsError: false,
+                Blocks: blocks);
+
+            // Persist
+            await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent> { evt });
+
+            // Dispose store before reading back (forces flush, closes files)
+        }
+
+        // Read back from a fresh store instance (explicit scope for disposal before cleanup)
+        {
+            using var reopened = new JsonlSessionStore(tempDir);
+            var sessions = await reopened.ListSessionsAsync(new SessionListQuery());
+            var sessionId = Assert.Single(sessions).SessionId;
+
+            var events = new List<OmicronEvent>();
+            await foreach (var e in reopened.ReadEventsAsync(sessionId, EventSequenceRange.All))
+                events.Add(e);
+
+            var deserialized = Assert.Single(events);
+            var tic = Assert.IsType<ToolInvocationCompletedEvent>(deserialized);
+            Assert.Equal("call_abc123", tic.ToolCallId.Value);
+            Assert.Equal("read_path", tic.ToolName);
+            Assert.NotNull(tic.Blocks);
+            Assert.Equal(7, tic.Blocks.Count);
+
+            // Verify first block: FilePreviewContentBlock
+            var fp = Assert.IsType<FilePreviewContentBlock>(tic.Blocks[0]);
+            Assert.Equal("src/Foo.cs", fp.Path);
+            Assert.Equal("public class Foo { }", fp.Text);
+            Assert.Equal(100, fp.Size);
+            Assert.Equal(1, fp.LineCount);
+            Assert.False(fp.IsBinary);
+
+            // Verify second block: CodeContentBlock
+            var code = Assert.IsType<CodeContentBlock>(tic.Blocks[1]);
+            Assert.Equal("int x = 1;", code.Text);
+            Assert.Equal("csharp", code.Language);
+            Assert.Equal("src/Bar.cs", code.Path);
+
+            // Verify third block: ErrorContentBlock
+            var err = Assert.IsType<ErrorContentBlock>(tic.Blocks[2]);
+            Assert.Equal("something went wrong", err.Text);
+            Assert.Equal("at line 42", err.Details);
+
+            // Verify fourth block: PlainTextContentBlock
+            var pt = Assert.IsType<PlainTextContentBlock>(tic.Blocks[3]);
+            Assert.Equal("plain message", pt.Text);
+
+            // Verify fifth block: MarkdownContentBlock
+            var md = Assert.IsType<MarkdownContentBlock>(tic.Blocks[4]);
+            Assert.Contains("Title", md.Text);
+
+            // Verify sixth block: DiffContentBlock
+            var diff = Assert.IsType<DiffContentBlock>(tic.Blocks[5]);
+            Assert.Contains("-old", diff.Text);
+            Assert.Equal("src/file.cs", diff.Path);
+
+            // Verify seventh block: ToolCallContentBlock
+            var tc = Assert.IsType<ToolCallContentBlock>(tic.Blocks[6]);
+            Assert.Equal("call_nested", tc.ToolCallId);
+            Assert.Equal("read_path", tc.ToolName);
+            Assert.NotNull(tc.Arguments);
+            Assert.True(tc.Arguments.ContainsKey("path"));
+            // JsonElement round-trips as JsonElement, not native string
+            var pathValue = tc.Arguments["path"];
+            Assert.NotNull(pathValue);
+            // Accept either string or JsonElement (System.Text.Json deserialization)
+            if (pathValue is JsonElement je)
+                Assert.Equal("test.txt", je.GetString());
+            else
+                Assert.Equal("test.txt", pathValue as string);
+        }
+
+        // Cleanup after store is disposed
+        try { Directory.Delete(tempDir, recursive: true); } catch { }
     }
 
     [Fact]
