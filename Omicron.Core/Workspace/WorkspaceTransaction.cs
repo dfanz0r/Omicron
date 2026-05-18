@@ -196,7 +196,7 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
                         var oldLines = TextLineSplitter.CreateUtf8LineIndex(oldBytes);
                         var newLines = TextLineSplitter.CreateUtf8LineIndex(newContent);
                         var diff = TextDiffEngine.DiffLines(oldLines, newLines);
-                        var textDiff = diff.HasChanges
+                        var textDiff = diff.HasChanges || diff.IsTruncated
                             ? UnifiedDiffRenderer.Render(fromPath, pathStr, oldLines, newLines, diff)
                             : null;
 

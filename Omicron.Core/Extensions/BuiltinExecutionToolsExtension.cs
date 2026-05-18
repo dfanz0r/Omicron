@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json;
+using Cysharp.Text;
 using Omicron.Core.Execution;
 using Omicron.Core.Tools;
 using Omicron.Core.Workspace;
@@ -76,9 +78,38 @@ public sealed class BuiltinExecutionToolsExtension : IOmicronExtension
                         ctx.ToolCallId),
                     ctx.CancellationToken);
 
-                // Build header similar to old ShellTools output
-                var output = $"[shell: {shellId}] [cwd: {workDir}]\n$ {command}\n\n{result.Output}";
-                return new ToolResult(output, IsError: result.ExitCode != 0 || result.TimedOut);
+                // Build header and combine with result bytes
+                var combined = ZString.CreateUtf8StringBuilder();
+                try
+                {
+                    combined.AppendLiteral("[shell: "u8);
+                    combined.Append(shellId);
+                    combined.AppendLiteral("] [cwd: "u8);
+                    combined.Append(workDir);
+                    combined.Append(']');
+                    combined.AppendLine();
+                    combined.AppendLiteral("$ "u8);
+                    combined.Append(command);
+                    combined.AppendLine();
+                    combined.AppendLine();
+
+                    if (result.Utf8Output.HasValue)
+                    {
+                        combined.AppendLiteral(result.Utf8Output.Value.Span);
+                    }
+                    else
+                    {
+                        combined.Append(result.Output);
+                    }
+
+                    return new ToolResult(
+                        Utf8Data: combined.AsSpan().ToArray(),
+                        IsError: result.ExitCode != 0 || result.TimedOut);
+                }
+                finally
+                {
+                    combined.Dispose();
+                }
             }
         ));
     }

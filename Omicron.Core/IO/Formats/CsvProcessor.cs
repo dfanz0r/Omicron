@@ -52,10 +52,10 @@ public sealed class CsvProcessor : IContentProcessor
             csv.Read();
             csv.ReadHeader();
             var headers = csv.HeaderRecord ?? [];
-            output.Append($"[FILE] {context.RelativePath}  (CSV, {delimiter}-delimited)");
+            output.AppendFormat("[FILE] {0}  (CSV, {1}-delimited)", context.RelativePath, delimiter);
             output.AppendLine();
             output.AppendLine();
-            output.Append($"Columns ({headers.Length}): ");
+            output.AppendFormat("Columns ({0}): ", headers.Length);
             output.Append(string.Join(", ", headers));
             output.AppendLine();
             output.AppendLine();
@@ -130,7 +130,7 @@ public sealed class CsvProcessor : IContentProcessor
 
         var totalLines = lineStarts.Count;
 
-        output.Append($"[FILE] {context.RelativePath}  ({totalLines} rows, {delimiter}-delimited)");
+        output.AppendFormat("[FILE] {0}  ({1} rows, {2}-delimited)", context.RelativePath, totalLines, delimiter);
         output.AppendLine();
         output.AppendLine();
 
@@ -146,7 +146,7 @@ public sealed class CsvProcessor : IContentProcessor
 
             var headerText = Encoding.UTF8.GetString(span.Slice(headerStart, headerLen));
             var columns = headerText.Split(delimiter);
-            output.Append($"Columns ({columns.Length}): ");
+            output.AppendFormat("Columns ({0}): ", columns.Length);
             output.Append(string.Join(", ", columns));
             output.AppendLine();
             output.AppendLine();

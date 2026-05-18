@@ -14,7 +14,7 @@ public class CoreModelTests
     {
         var msg = Message.UserMessage("Hello");
         Assert.Equal(MessageRole.User, msg.Role);
-        Assert.Equal("Hello", msg.Text);
+        Assert.Equal("Hello", msg.GetTextString());
     }
 
     [Fact]
@@ -22,7 +22,7 @@ public class CoreModelTests
     {
         var msg = Message.AssistantMessage("Hi there");
         Assert.Equal(MessageRole.Assistant, msg.Role);
-        Assert.Equal("Hi there", msg.Text);
+        Assert.Equal("Hi there", msg.GetTextString());
     }
 
     [Fact]
@@ -48,7 +48,7 @@ public class CoreModelTests
         Assert.Equal(MessageRole.ToolResult, msg.Role);
         Assert.Equal("call_1", msg.ToolCallId);
         Assert.Equal("get_weather", msg.ToolName);
-        Assert.Equal("Sunny, 22°C", msg.Text);
+        Assert.Equal("Sunny, 22°C", msg.GetTextString());
         Assert.False(msg.IsError);
     }
 
@@ -58,7 +58,7 @@ public class CoreModelTests
         var msg = Message.ToolResultMessage("call_1", "get_weather", "Failed", isError: true);
 
         Assert.True(msg.IsError);
-        Assert.Equal("Failed", msg.Text);
+        Assert.Equal("Failed", msg.GetTextString());
     }
 
     [Fact]

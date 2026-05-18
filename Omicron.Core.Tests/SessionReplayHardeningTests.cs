@@ -1,3 +1,4 @@
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.IO;
 using Omicron.Core.Models;
@@ -78,15 +79,15 @@ public class SessionReplayHardeningTests
         var events = new OmicronEvent[]
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
-            new UserMessageEvent(Envelope(), "hello"),
+            new UserMessageEvent(Envelope(), "hello"u8),
             new ModalityUsedEvent(Envelope(), "image", "photo.png", OutputModality.ImageBase64),
-            new AssistantResponseCompleteEvent(Envelope(), "response", null, new TokenUsage(10, 20)),
+            new AssistantResponseCompleteEvent(Envelope(), "response"u8, null, new TokenUsage(10, 20)),
         };
 
         var projection = projector.Project(events);
         Assert.Equal(2, projection.Messages.Count); // User + Assistant; ModalityUsedEvent ignored
         Assert.Equal(MessageRole.User, projection.Messages[0].Role);
-        Assert.Equal("hello", projection.Messages[0].Text);
+        Assert.True(projection.Messages[0].TextUtf8.SequenceEqual("hello"u8));
     }
 
     [Fact]
@@ -101,7 +102,7 @@ public class SessionReplayHardeningTests
             new TransactionStagedEvent(Envelope(), txId, "file.txt", "write"),
             new TransactionCommittedEvent(Envelope(), txId),
             new TransactionRolledBackEvent(Envelope(), txId),
-            new UserMessageEvent(Envelope(), "hello"),
+            new UserMessageEvent(Envelope(), "hello"u8),
         };
 
         var projection = projector.Project(events);
@@ -117,7 +118,7 @@ public class SessionReplayHardeningTests
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
             new SessionEndedEvent(Envelope(), "done"),
-            new UserMessageEvent(Envelope(), "ping"),
+            new UserMessageEvent(Envelope(), "ping"u8),
         };
 
         var projection = projector.Project(events);
@@ -133,7 +134,7 @@ public class SessionReplayHardeningTests
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
             new ExecutionStartedEvent(Envelope(), "ls -la", "/tmp"),
             new ExecutionCompletedEvent(Envelope(), "ls -la", 0, 100, false),
-            new UserMessageEvent(Envelope(), "ok"),
+            new UserMessageEvent(Envelope(), "ok"u8),
         };
 
         var projection = projector.Project(events);
@@ -148,7 +149,7 @@ public class SessionReplayHardeningTests
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
             new PermissionRequestedEvent(Envelope(), "read_path", true),
-            new UserMessageEvent(Envelope(), "hello"),
+            new UserMessageEvent(Envelope(), "hello"u8),
         };
 
         var projection = projector.Project(events);
@@ -202,7 +203,7 @@ public class SessionReplayHardeningTests
             Messages = new[]
             {
                 Message.UserMessage("hello"),
-                new Message { Role = MessageRole.Assistant, Text = "world" }
+                new Message { Role = MessageRole.Assistant, TextData = "world"u8 }
             },
             ProviderStates = new Dictionary<ProviderStateKey, ProviderTurnState>()
         };
@@ -212,9 +213,9 @@ public class SessionReplayHardeningTests
 
         Assert.Equal(2, session.Messages.Count);
         Assert.Equal(MessageRole.User, session.Messages[0].Role);
-        Assert.Equal("hello", session.Messages[0].Text);
+        Assert.True(session.Messages[0].TextUtf8.SequenceEqual("hello"u8));
         Assert.Equal(MessageRole.Assistant, session.Messages[1].Role);
-        Assert.Equal("world", session.Messages[1].Text);
+        Assert.True(session.Messages[1].TextUtf8.SequenceEqual("world"u8));
     }
 
     // ============================================================
@@ -290,13 +291,13 @@ public class SessionReplayHardeningTests
         var events = new OmicronEvent[]
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
-            new UserMessageEvent(Envelope(), "read the file"),
-            new AssistantResponseCompleteEvent(Envelope(), "I'll read it", null, new TokenUsage(10, 20)),
+            new UserMessageEvent(Envelope(), "read the file"u8),
+            new AssistantResponseCompleteEvent(Envelope(), "I'll read it"u8, null, new TokenUsage(10, 20)),
             new ToolInvocationStartedEvent(Envelope(), new ToolCallId("tc1"), "read_path",
                 new Dictionary<string, object?> { ["path"] = "test.txt" }),
             new ToolInvocationCompletedEvent(Envelope(), new ToolCallId("tc1"), "read_path",
-                "[FILE] test.txt (content)", false),
-            new AssistantResponseCompleteEvent(Envelope(), "Here's the content", null, new TokenUsage(5, 10)),
+                "[FILE] test.txt (content)"u8, false),
+            new AssistantResponseCompleteEvent(Envelope(), "Here's the content"u8, null, new TokenUsage(5, 10)),
         };
 
         var projection = projector.Project(events);
@@ -305,7 +306,7 @@ public class SessionReplayHardeningTests
         Assert.Equal(4, projection.Messages.Count);
         Assert.Equal(MessageRole.User, projection.Messages[0].Role);
         Assert.Equal(MessageRole.Assistant, projection.Messages[1].Role);
-        Assert.Contains("I'll read it", projection.Messages[1].Text);
+        Assert.Contains("I'll read it", projection.Messages[1].GetTextString());
         Assert.NotNull(projection.Messages[1].ToolCalls);
         var toolCall = Assert.Single(projection.Messages[1].ToolCalls!);
         Assert.Equal("read_path", toolCall.Name);
@@ -313,10 +314,10 @@ public class SessionReplayHardeningTests
         Assert.Equal(MessageRole.ToolResult, projection.Messages[2].Role);
         Assert.Equal("tc1", projection.Messages[2].ToolCallId);
         Assert.Equal("read_path", projection.Messages[2].ToolName);
-        Assert.Contains("[FILE] test.txt", projection.Messages[2].Text);
+        Assert.Contains("[FILE] test.txt", projection.Messages[2].GetTextString());
 
         Assert.Equal(MessageRole.Assistant, projection.Messages[3].Role);
-        Assert.Equal("Here's the content", projection.Messages[3].Text);
+        Assert.True(projection.Messages[3].TextUtf8.SequenceEqual("Here's the content"u8));
     }
 
     [Fact]
@@ -326,10 +327,10 @@ public class SessionReplayHardeningTests
         var events = new OmicronEvent[]
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
-            new UserMessageEvent(Envelope(), "hello"),
-            new AssistantResponseCompleteEvent(Envelope(), "hi", null, new TokenUsage(10, 20)),
-            new UserMessageEvent(Envelope(), "again"),
-            new AssistantResponseCompleteEvent(Envelope(), "ok", null, new TokenUsage(5, 15)),
+            new UserMessageEvent(Envelope(), "hello"u8),
+            new AssistantResponseCompleteEvent(Envelope(), "hi"u8, null, new TokenUsage(10, 20)),
+            new UserMessageEvent(Envelope(), "again"u8),
+            new AssistantResponseCompleteEvent(Envelope(), "ok"u8, null, new TokenUsage(5, 15)),
         };
 
         var projection = projector.Project(events);
@@ -344,17 +345,17 @@ public class SessionReplayHardeningTests
         var events = new OmicronEvent[]
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
-            new UserMessageEvent(Envelope(), "hello"),
-            new AssistantResponseCompleteEvent(Envelope(), "hi", null, new TokenUsage(5, 10)),
+            new UserMessageEvent(Envelope(), "hello"u8),
+            new AssistantResponseCompleteEvent(Envelope(), "hi"u8, null, new TokenUsage(5, 10)),
             new SessionResetEvent(Envelope()),
-            new UserMessageEvent(Envelope(), "fresh start"),
-            new AssistantResponseCompleteEvent(Envelope(), "ok", null, new TokenUsage(1, 2)),
+            new UserMessageEvent(Envelope(), "fresh start"u8),
+            new AssistantResponseCompleteEvent(Envelope(), "ok"u8, null, new TokenUsage(1, 2)),
         };
 
         var projection = projector.Project(events);
         // Only messages after reset should exist
         Assert.Equal(2, projection.Messages.Count); // User + Assistant
-        Assert.Equal("fresh start", projection.Messages[0].Text);
+        Assert.True(projection.Messages[0].TextUtf8.SequenceEqual("fresh start"u8));
         Assert.True(projection.IsReset);
         // Token usage should be reset too
         Assert.Equal(1, projection.TotalUsage.InputTokens);
@@ -368,15 +369,15 @@ public class SessionReplayHardeningTests
         var events = new OmicronEvent[]
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
-            new UserMessageEvent(Envelope(), "do both"),
+            new UserMessageEvent(Envelope(), "do both"u8),
             // Batch: 2 tool calls in parallel
             new ToolInvocationStartedEvent(Envelope(), new ToolCallId("tc1"), "tool_a",
                 new Dictionary<string, object?>()),
             new ToolInvocationStartedEvent(Envelope(), new ToolCallId("tc2"), "tool_b",
                 new Dictionary<string, object?>()),
-            new ToolInvocationCompletedEvent(Envelope(), new ToolCallId("tc1"), "tool_a", "result_a", false),
-            new ToolInvocationCompletedEvent(Envelope(), new ToolCallId("tc2"), "tool_b", "result_b", false),
-            new AssistantResponseCompleteEvent(Envelope(), "done", null, new TokenUsage(10, 20)),
+            new ToolInvocationCompletedEvent(Envelope(), new ToolCallId("tc1"), "tool_a", "result_a"u8, false),
+            new ToolInvocationCompletedEvent(Envelope(), new ToolCallId("tc2"), "tool_b", "result_b"u8, false),
+            new AssistantResponseCompleteEvent(Envelope(), "done"u8, null, new TokenUsage(10, 20)),
         };
 
         var projection = projector.Project(events);

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Omicron.Core.Content;
 using Omicron.Core.Providers;
 
 namespace Omicron.Core.Models;
@@ -118,7 +119,7 @@ public static class ConversationConverter
             content.Add(new ToolResultContentItem(
                 msg.ToolCallId,
                 msg.ToolName ?? "",
-                msg.Text ?? "",
+                msg.GetTextString(),
                 msg.IsError));
 
             ProviderOrigin? toolResultOrigin = null;
@@ -132,15 +133,16 @@ public static class ConversationConverter
         }
 
         // Add text content
-        if (!string.IsNullOrEmpty(msg.Text))
+        if (!string.IsNullOrEmpty(msg.GetTextString()))
         {
-            content.Add(new TextContentItem(msg.Text));
+            content.Add(new TextContentItem(msg.GetTextString()));
         }
 
-        // Add reasoning content
-        if (!string.IsNullOrEmpty(msg.Reasoning))
+        // Add reasoning content (preserve null-vs-empty distinction)
+        var reasoning = msg.GetReasoningStringOrNull();
+        if (reasoning is not null)
         {
-            content.Add(new ReasoningContentItem(msg.Reasoning, null, null));
+            content.Add(new ReasoningContentItem(reasoning, null, null));
         }
 
         // Add images
@@ -244,7 +246,7 @@ public static class ConversationConverter
             return new Message
             {
                 Role = MessageRole.ToolResult,
-                Text = string.IsNullOrEmpty(text) ? null : text,
+                TextData = string.IsNullOrEmpty(text) ? null : Utf8String.FromString(text),
                 ToolCallId = toolCallId,
                 ToolName = toolName,
                 IsError = isError,
@@ -257,8 +259,8 @@ public static class ConversationConverter
             return new Message
             {
                 Role = MessageRole.Assistant,
-                Text = string.IsNullOrEmpty(text) ? null : text,
-                Reasoning = reasoning,
+                TextData = string.IsNullOrEmpty(text) ? null : Utf8String.FromString(text),
+                ReasoningData = reasoning is not null ? Utf8String.FromString(reasoning) : null,
                 ToolCalls = toolCalls,
                 ToolCall = toolCalls.Count == 1 ? toolCalls[0] : null,
                 Timestamp = turn.Timestamp.DateTime
@@ -268,8 +270,8 @@ public static class ConversationConverter
         return new Message
         {
             Role = turn.Role,
-            Text = string.IsNullOrEmpty(text) ? null : text,
-            Reasoning = reasoning,
+            TextData = string.IsNullOrEmpty(text) ? null : Utf8String.FromString(text),
+            ReasoningData = reasoning is not null ? Utf8String.FromString(reasoning) : null,
             Images = images.Count > 0 ? images : null,
             Timestamp = turn.Timestamp.DateTime
         };

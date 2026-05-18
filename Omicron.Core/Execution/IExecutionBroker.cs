@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Cysharp.Text;
 using Omicron.Core.Events;
 
 namespace Omicron.Core.Execution;
@@ -25,7 +26,8 @@ public sealed record ExecutionResult(
     long DurationMs,
     bool TimedOut,
     bool Cancelled,
-    string? Error);
+    string? Error,
+    ReadOnlyMemory<byte>? Utf8Output = null);
 
 /// <summary>
 /// Abstraction for executing shell commands.
@@ -85,12 +87,14 @@ public sealed class LocalExecutionBroker : IExecutionBroker
 
         // Helper to emit completion event and return result
         ExecutionResult Complete(int exitCode, long durationMs, bool timedOut, bool cancelled,
-            string? output, string? error)
+            string? output, string? error, ReadOnlyMemory<byte>? utf8Output = null)
         {
             _eventSink?.Emit(new ExecutionCompletedEvent(
                 new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId),
                 request.Command, exitCode, durationMs, timedOut, toolCallId, cancelled, error));
-            return new ExecutionResult(output ?? "", exitCode, durationMs, timedOut, cancelled, error);
+            var outputStr = output ?? "";
+            return new ExecutionResult(outputStr, exitCode, durationMs, timedOut, cancelled, error,
+                Utf8Output: utf8Output ?? (outputStr.Length > 0 ? Encoding.UTF8.GetBytes(outputStr) : null));
         }
 
         // Emit execution started event
@@ -193,24 +197,26 @@ public sealed class LocalExecutionBroker : IExecutionBroker
 
         stopwatch.Stop();
 
-        // Build output
-        var output = stdout.ToString();
-        var error = stderr.ToString();
+        // Build output using Utf8ValueStringBuilder.
+        var outputStr = stdout.ToString();
+        var errorStr = stderr.ToString();
 
         // Merge stderr into output if stdout is empty
-        if (output.Length == 0 && error.Length > 0)
+        if (outputStr.Length == 0 && errorStr.Length > 0)
         {
-            output = error;
-            error = "";
+            outputStr = errorStr;
+            errorStr = "";
         }
 
-        // Truncate — use StringReader to avoid Replace+Split allocations
+        // Truncate
         var truncated = false;
-        var outputReader = new StringReader(output);
         var lines = new List<string>();
         string? lineStr;
-        while ((lineStr = outputReader.ReadLine()) is not null)
-            lines.Add(lineStr);
+        using (var outputReader = new StringReader(outputStr))
+        {
+            while ((lineStr = outputReader.ReadLine()) is not null)
+                lines.Add(lineStr);
+        }
         var totalLines = lines.Count;
 
         if (totalLines > MaxOutputLines)
@@ -219,69 +225,75 @@ public sealed class LocalExecutionBroker : IExecutionBroker
             truncated = true;
         }
 
-        var joined = string.Join("\n", lines);
-        var joinedByteCount = Encoding.UTF8.GetByteCount(joined);
-        if (joinedByteCount > MaxOutputBytes)
+        var builder = ZString.CreateUtf8StringBuilder();
+        try
         {
-            var trimmed = new StringBuilder();
-            int trimmedBytes = 0;
+            // Append truncated output
+            int bytesUsed = 0;
             foreach (var line in lines)
             {
-                var lineBytes = Encoding.UTF8.GetByteCount(line) + 1; // +1 for newline
-                if (trimmedBytes + lineBytes > MaxOutputBytes)
+                var lineBytes = Encoding.UTF8.GetByteCount(line) + 1;
+                if (bytesUsed + lineBytes > MaxOutputBytes)
                 {
                     truncated = true;
                     break;
                 }
-                trimmed.Append(line);
-                trimmed.Append('\n');
-                trimmedBytes += lineBytes;
+                builder.Append(line);
+                builder.AppendLine();
+                bytesUsed += lineBytes;
             }
-            joined = trimmed.ToString().TrimEnd();
-        }
 
-        var sb = new StringBuilder();
-        sb.Append(joined.TrimEnd());
-
-        if (truncated)
-        {
-            sb.AppendLine();
-            sb.AppendLine();
-            sb.AppendLine($"[Output truncated. Full: {totalLines:N0} lines, {Encoding.UTF8.GetByteCount(output):N0} bytes.]");
-        }
-
-        // Append stderr
-        if (error.Length > 0)
-        {
-            sb.AppendLine();
-            sb.AppendLine("--- stderr ---");
-            int stderrLineCount = 0;
-            using var stderrReader = new StringReader(error);
-            string? stderrLine;
-            while ((stderrLine = stderrReader.ReadLine()) is not null)
+            if (truncated)
             {
-                stderrLineCount++;
-                if (stderrLineCount <= 50)
+                builder.AppendLine();
+                builder.AppendFormat("[Output truncated. Full: {0:N0} lines, {1:N0} bytes.]", totalLines, Encoding.UTF8.GetByteCount(outputStr));
+                builder.AppendLine();
+            }
+
+            // Append stderr (first 50 lines)
+            if (errorStr.Length > 0)
+            {
+                builder.AppendLine();
+                builder.AppendLiteral("--- stderr ---"u8);
+                builder.AppendLine();
+                int stderrLineCount = 0;
+                using var stderrReader = new StringReader(errorStr);
+                string? stderrLine;
+                while ((stderrLine = stderrReader.ReadLine()) is not null)
                 {
-                    sb.Append(stderrLine);
-                    sb.Append('\n');
+                    stderrLineCount++;
+                    if (stderrLineCount <= 50)
+                    {
+                        builder.Append(stderrLine);
+                        builder.AppendLine();
+                    }
+                }
+                if (stderrLineCount > 50)
+                {
+                    builder.AppendFormat("... and {0} more stderr lines", stderrLineCount - 50);
+                    builder.AppendLine();
                 }
             }
-            if (stderrLineCount > 50)
-                sb.Append($"... and {stderrLineCount - 50} more stderr lines\n");
+
+            // Status line
+            builder.AppendLine();
+            if (timedOut)
+                builder.AppendFormat("--- (timed out after {0}s) ---", timeoutSec);
+            else if (cancelled)
+                builder.AppendLiteral("--- (cancelled) ---"u8);
+            else
+                builder.AppendFormat("--- (exit {0}, {1:F1}s) ---", exitCode, stopwatch.Elapsed.TotalSeconds);
+            builder.AppendLine();
+
+            var resultBytes = builder.AsSpan().ToArray();
+            return Complete(exitCode, (long)stopwatch.ElapsedMilliseconds, timedOut, cancelled,
+                Encoding.UTF8.GetString(resultBytes).TrimEnd(), errorMessage,
+                utf8Output: resultBytes);
         }
-
-        // Status line
-        sb.AppendLine();
-        if (timedOut)
-            sb.AppendLine($"--- (timed out after {timeoutSec}s) ---");
-        else if (cancelled)
-            sb.AppendLine("--- (cancelled) ---");
-        else
-            sb.AppendLine($"--- (exit {exitCode}, {stopwatch.Elapsed.TotalSeconds:F1}s) ---");
-
-        return Complete(exitCode, (long)stopwatch.ElapsedMilliseconds, timedOut, cancelled,
-            sb?.ToString().TrimEnd() ?? output.TrimEnd(), errorMessage);
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
     private static string DetectDefaultShell()

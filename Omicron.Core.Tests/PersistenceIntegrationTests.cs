@@ -83,8 +83,8 @@ public class PersistenceIntegrationTests
 
         // Should have at least: SessionStarted, UserMessage, TurnStarted, AssistantTextDelta, AssistantResponseComplete
         Assert.Contains(persisted, e => e is SessionStartedEvent);
-        Assert.Contains(persisted, e => e is UserMessageEvent u && u.Text == "Hello");
-        Assert.Contains(persisted, e => e is AssistantResponseCompleteEvent arc && arc.FullText == "Response text");
+        Assert.Contains(persisted, e => e is UserMessageEvent u && u.Text.ToString() == "Hello");
+        Assert.Contains(persisted, e => e is AssistantResponseCompleteEvent arc && arc.FullText.ToString() == "Response text");
 
         // Verify sequence order is preserved
         for (int i = 1; i < persisted.Count; i++)
@@ -324,7 +324,7 @@ public class PersistenceIntegrationTests
                 new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId),
                 toolCallId,
                 "read_path",
-                "Result text",
+                "Result text"u8,
                 IsError: false,
                 Blocks: blocks);
 

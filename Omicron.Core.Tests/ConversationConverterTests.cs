@@ -1,3 +1,4 @@
+using Omicron.Core.Content;
 using System.Text.Json;
 using Omicron.Core.Models;
 using Xunit;
@@ -25,8 +26,8 @@ public class ConversationConverterTests
         var msg = new Message
         {
             Role = MessageRole.Assistant,
-            Text = "Hello back!",
-            Reasoning = "Thinking..."
+            TextData = "Hello back!"u8,
+            ReasoningData = "Thinking..."u8
         };
 
         var turn = ConversationConverter.ToCanonical(msg);
@@ -75,7 +76,7 @@ public class ConversationConverterTests
         var msg = new Message
         {
             Role = MessageRole.User,
-            Text = "What's in this image?",
+            TextData = "What's in this image?"u8,
             Images = new List<ImageContent>
             {
                 new("/9j/4AAQ==", "image/jpeg")
@@ -100,7 +101,7 @@ public class ConversationConverterTests
         var result = ConversationConverter.FromCanonical(turn);
 
         Assert.Equal(original.Role, result.Role);
-        Assert.Equal(original.Text, result.Text);
+        Assert.Equal(original.GetTextString(), result.GetTextString());
     }
 
     [Fact]
@@ -189,7 +190,7 @@ public class ConversationConverterTests
         for (int i = 0; i < original.Count; i++)
         {
             Assert.Equal(original[i].Role, result[i].Role);
-            Assert.Equal(original[i].Text, result[i].Text);
+            Assert.Equal(original[i].GetTextString(), result[i].GetTextString());
         }
     }
 }

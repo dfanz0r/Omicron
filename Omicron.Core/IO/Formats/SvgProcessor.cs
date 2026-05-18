@@ -53,11 +53,11 @@ public sealed class SvgProcessor : IContentProcessor
 
         if (isTruncated)
         {
-            output.Append($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, SVG — file too large, showing first {FormatSize.Format(MaxSvgBytes)})");
+            output.AppendFormat("[FILE] {0}  ({1}, SVG — file too large, showing first {2})", context.RelativePath, FormatSize.Format(bytes.Length), FormatSize.Format(MaxSvgBytes));
         }
         else
         {
-            output.Append($"[FILE] {context.RelativePath}  ({totalLines} lines, SVG)");
+            output.AppendFormat("[FILE] {0}  ({1} lines, SVG)", context.RelativePath, totalLines);
         }
         output.AppendLine();
         output.AppendLine();

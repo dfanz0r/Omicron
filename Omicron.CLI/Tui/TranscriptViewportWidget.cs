@@ -214,19 +214,22 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                         blockSb.Dispose();
                     }
                 }
-                else if (tic.ResultBytes.HasValue && !tic.IsError)
-                {
-                    // Prefer byte data to avoid string→UTF-8 roundtrip
-                    var bytes = new byte[tic.ResultBytes.Value.Length + 1];
-                    bytes[0] = (byte)'\n';
-                    tic.ResultBytes.Value.Span.CopyTo(bytes.AsSpan(1));
-                    UpdateWithSpan(bytes.AsSpan(), null);
-                }
                 else
                 {
-                    var str = tic.IsError ? $"\n[Error: {tic.Result}]" : $"\n{tic.Result}";
-                    var bytes = System.Text.Encoding.UTF8.GetBytes(str);
-                    UpdateWithSpan(bytes.AsSpan(), null);
+                    // Use Utf8String directly — no string allocation
+                    var resultSpan = tic.Result.Utf8Span;
+                    if (tic.IsError)
+                    {
+                        var bytes = System.Text.Encoding.UTF8.GetBytes($"\n[Error: {tic.Result.ToString()}]");
+                        UpdateWithSpan(bytes.AsSpan(), null);
+                    }
+                    else
+                    {
+                        var bytes = new byte[resultSpan.Length + 1];
+                        bytes[0] = (byte)'\n';
+                        resultSpan.CopyTo(bytes.AsSpan(1));
+                        UpdateWithSpan(bytes.AsSpan(), null);
+                    }
                 }
 
                 RebuildLayout();
@@ -265,12 +268,12 @@ public sealed class TranscriptViewportWidget : ITuiWidget
         {
             case MessageRole.User:
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
-                _store.AppendUserMessage(Encoding.UTF8.GetBytes($"  You: {msg.Text}"));
+                _store.AppendUserMessage(Encoding.UTF8.GetBytes($"  You: {msg.GetTextString()}"));
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
                 break;
             case MessageRole.Assistant:
                 _store.AppendSeparator();
-                var assistant = "  Agent: " + (msg.Text ?? string.Empty);
+                var assistant = "  Agent: " + msg.GetTextString();
                 _store.AppendAssistantDelta(Encoding.UTF8.GetBytes(assistant));
                 _store.CompleteLastAssistantBlock();
                 _store.AppendSeparator();
@@ -284,9 +287,9 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                         tcb.ToolCallId == msg.ToolCallId &&
                         tcb.State is ToolCallState.Running or ToolCallState.Pending)
                     {
-                        var resultSpan = msg.Utf8Text.HasValue
-                            ? msg.Utf8Text.Value.Span
-                            : (ReadOnlySpan<byte>)Encoding.UTF8.GetBytes(msg.Text ?? string.Empty);
+                        var resultSpan = msg.HasText
+                            ? msg.TextUtf8
+                            : (ReadOnlySpan<byte>)Encoding.UTF8.GetBytes(msg.GetTextString());
                         _store.UpdateToolCall(tcb.Id, msg.IsError ? ToolCallState.Failed : ToolCallState.Completed, resultSpan);
                         break;
                     }

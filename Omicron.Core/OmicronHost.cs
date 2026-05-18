@@ -1,4 +1,5 @@
 using Omicron.Core.Commands;
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Execution;
 using Omicron.Core.Extensions;
@@ -420,7 +421,7 @@ public sealed class OmicronHost : IDisposable
                 case MessageRole.User:
                     replayEvents.Add(new UserMessageEvent(
                         EventEnvelope.ForSession(session.Id),
-                        msg.EffectiveText));
+                        msg.TextData ?? Utf8String.Empty));
                     break;
 
                 case MessageRole.Assistant:
@@ -439,7 +440,9 @@ public sealed class OmicronHost : IDisposable
 
                     replayEvents.Add(new AssistantResponseCompleteEvent(
                         EventEnvelope.ForSession(session.Id),
-                        msg.EffectiveText, msg.Reasoning, new TokenUsage(0, 0)));
+                        msg.TextData ?? Utf8String.Empty,
+                        msg.ReasoningData,
+                        new TokenUsage(0, 0)));
                     break;
                 }
 
@@ -448,7 +451,8 @@ public sealed class OmicronHost : IDisposable
                         EventEnvelope.ForSession(session.Id),
                         new ToolCallId(msg.ToolCallId ?? ""),
                         msg.ToolName ?? "",
-                        msg.EffectiveText, msg.IsError));
+                        msg.TextData ?? Utf8String.Empty,
+                        msg.IsError));
                     break;
             }
         }

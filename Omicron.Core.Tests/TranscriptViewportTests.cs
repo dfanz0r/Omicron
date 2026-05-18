@@ -140,7 +140,7 @@ public class TranscriptViewportTests
         widget.Arrange(new Rect(0, 0, 120, 20));
         var sessionId = new SessionId(Guid.NewGuid());
         var callId = new ToolCallId("call-hashlines");
-        const string result = "[FILE] test.cs  (1 lines, hashline anchors)\n\n1ab|class C {}";
+        var result = "[FILE] test.cs  (1 lines, hashline anchors)\n\n1ab|class C {}"u8.ToArray();
 
         widget.UpdateFromEvent(new ToolInvocationStartedEvent(
             EventEnvelope.ForSession(sessionId), callId, "read_file_hashlines",
@@ -163,7 +163,7 @@ public class TranscriptViewportTests
         var sessionId = new SessionId(Guid.NewGuid());
         var firstCallId = new ToolCallId("call-read-1");
         var secondCallId = new ToolCallId("call-read-2");
-        const string firstResult = "[FILE] a.txt  (1 lines)\n\n     1| first";
+        var firstResult = "[FILE] a.txt  (1 lines)\n\n     1| first"u8.ToArray();
 
         widget.UpdateFromEvent(new ToolInvocationStartedEvent(
             EventEnvelope.ForSession(sessionId), firstCallId, "read_path",

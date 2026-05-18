@@ -832,7 +832,7 @@ public class BinaryFileReaderTests
     {
         var events = new List<OmicronEvent>
         {
-            new UserMessageEvent(EventEnvelope.ForSession(new SessionId(Guid.NewGuid())), "hello")
+            new UserMessageEvent(EventEnvelope.ForSession(new SessionId(Guid.NewGuid())), "hello"u8)
         };
 
         var target = new ModelMetadata("text-only", "test",

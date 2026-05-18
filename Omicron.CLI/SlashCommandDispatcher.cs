@@ -348,8 +348,8 @@ internal sealed class SlashCommandDispatcher
 
     private static string GetEventDetail(OmicronEvent evt, SlashCommandContext ctx) => evt switch
     {
-        UserMessageEvent u => Truncate(u.Text, 60),
-        AssistantTextDeltaEvent atd => Truncate(atd.Delta, 60),
+        UserMessageEvent u => Truncate(u.Text.ToString(), 60),
+        AssistantTextDeltaEvent atd => Truncate(atd.Delta.ToString(), 60),
         AssistantResponseCompleteEvent arc => $"{arc.Usage.InputTokens}↑ {arc.Usage.OutputTokens}↓",
         ToolInvocationStartedEvent tis => $"{tis.ToolName} {FormatArgs(tis.Arguments)}",
         ToolInvocationCompletedEvent tic => $"{tic.ToolName} {(tic.IsError ? "error" : "ok")}",

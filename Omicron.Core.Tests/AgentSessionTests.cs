@@ -58,10 +58,10 @@ public class AgentSessionTests
         Assert.Contains(events, e => e is AssistantResponseCompleteEvent);
 
         var userMsg = events.OfType<UserMessageEvent>().Single();
-        Assert.Equal("Hello", userMsg.Text);
+        Assert.True(userMsg.Text.Utf8Span.SequenceEqual("Hello"u8));
 
         var responseComplete = events.OfType<AssistantResponseCompleteEvent>().Single();
-        Assert.Equal("Hello from AI!", responseComplete.FullText);
+        Assert.True(responseComplete.FullText.Utf8Span.SequenceEqual("Hello from AI!"u8));
         Assert.Equal(10, responseComplete.Usage.InputTokens);
         Assert.Equal(20, responseComplete.Usage.OutputTokens);
 
@@ -124,12 +124,12 @@ public class AgentSessionTests
 
         var toolEnd = events.OfType<ToolInvocationCompletedEvent>()
             .First(e => e.ToolName == "test_tool");
-        Assert.Equal("Tool result", toolEnd.Result);
+        Assert.True(toolEnd.Result.Utf8Span.SequenceEqual("Tool result"u8));
         Assert.False(toolEnd.IsError);
 
         Assert.Contains(events, e => e is AssistantResponseCompleteEvent);
         var final = events.OfType<AssistantResponseCompleteEvent>().Last();
-        Assert.Equal("Final answer based on tool", final.FullText);
+        Assert.True(final.FullText.Utf8Span.SequenceEqual("Final answer based on tool"u8));
 
         var logEvents = eventSink.GetSessionEvents(session.Id);
         Assert.Contains(logEvents, e => e is ToolInvocationStartedEvent);

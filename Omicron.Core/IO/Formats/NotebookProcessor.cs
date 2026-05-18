@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Cysharp.Text;
 
 namespace Omicron.Core.IO;
 
@@ -46,7 +47,7 @@ public sealed class NotebookProcessor : IContentProcessor
                     $"[FILE] {context.RelativePath}  (not a valid .ipynb file — missing 'cells' array)", OutputModality.Text));
             }
 
-            var sb = new StringBuilder();
+            using var output = ZString.CreateUtf8StringBuilder();
 
             // Get notebook metadata
             string? language = null;
@@ -55,10 +56,14 @@ public sealed class NotebookProcessor : IContentProcessor
                 language = ks.TryGetProperty("display_name", out var dn) ? dn.GetString() : null;
             }
 
-            sb.AppendLine($"[FILE] {context.RelativePath}  ({cells.GetArrayLength()} cells, Jupyter Notebook)");
+            output.AppendFormat("[FILE] {0}  ({1} cells, Jupyter Notebook)", context.RelativePath, cells.GetArrayLength());
+            output.AppendLine();
             if (language is not null)
-                sb.AppendLine($"Language: {language}");
-            sb.AppendLine();
+            {
+                output.AppendFormat("Language: {0}", language);
+                output.AppendLine();
+            }
+            output.AppendLine();
 
             int cellNumber = 0;
             long totalBytes = 0;
@@ -86,21 +91,28 @@ public sealed class NotebookProcessor : IContentProcessor
                     _ => "    "
                 };
 
-                var line = $"[{cellNumber}] {prefix}{cellType}\n{cellText}";
-                var lineBytes = Encoding.UTF8.GetByteCount(line);
+                // Compute byte cost: "[N] prefix cellType\ncellText\n"
+                var linePrefix = $"[{cellNumber}] {prefix}{cellType}\n";
+                var linePrefixBytes = Encoding.UTF8.GetByteCount(linePrefix);
+                var cellTextBytes = Encoding.UTF8.GetByteCount(cellText);
+                var lineBytes = linePrefixBytes + cellTextBytes + 1; // +1 for newline after cellText
 
                 if (totalBytes + lineBytes > maxBytes)
                 {
-                    sb.AppendLine($"... (output truncated, {cells.GetArrayLength() - cellNumber + 1} more cells)");
+                    output.AppendFormat("... (output truncated, {0} more cells)", cells.GetArrayLength() - cellNumber + 1);
+                    output.AppendLine();
                     break;
                 }
 
-                sb.AppendLine(line);
+                output.Append(linePrefix);
+                output.Append(cellText);
+                output.AppendLine();
                 totalBytes += lineBytes;
             }
 
             return ValueTask.FromResult(new ContentProcessorResult(
-                sb.ToString().TrimEnd(), OutputModality.Text));
+                output.ToString().TrimEnd(), OutputModality.Text,
+                Utf8Data: output.AsSpan().ToArray()));
         }
         catch (JsonException)
         {
@@ -111,11 +123,13 @@ public sealed class NotebookProcessor : IContentProcessor
 
     private static string ExtractSourceText(JsonElement source)
     {
-        var sb = new StringBuilder();
+        using var output = ZString.CreateUtf8StringBuilder();
         foreach (var line in source.EnumerateArray())
         {
-            sb.AppendLine(line.GetString() ?? "");
+            var text = line.GetString() ?? "";
+            output.Append(text);
+            output.AppendLine();
         }
-        return sb.ToString().TrimEnd();
+        return output.ToString().TrimEnd();
     }
 }

@@ -1,3 +1,6 @@
+using System.Buffers;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -34,12 +37,18 @@ public class AnthropicProvider : IChatProvider
         ChatOptions options)
     {
         var ct = options.CancellationToken;
-        var body = BuildRequestBody(model, messages, systemPrompt, tools, options);
-        var json = JsonSerializer.Serialize(body, JsonOptions);
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var jsonWriter = new Utf8JsonWriter(buffer))
+        {
+            WriteRequestBody(jsonWriter, model, messages, systemPrompt, tools, options);
+        }
+        var jsonBytes = buffer.WrittenSpan;
 
+        var content = new ByteArrayContent(jsonBytes.ToArray());
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
         using var request = new HttpRequestMessage(HttpMethod.Post, $"{model.BaseUrl.TrimEnd('/')}/messages")
         {
-            Content = new StringContent(json, Encoding.UTF8, "application/json")
+            Content = content
         };
         if (!string.IsNullOrEmpty(options.ApiKey))
             request.Headers.Add("x-api-key", options.ApiKey);
@@ -52,26 +61,87 @@ public class AnthropicProvider : IChatProvider
             yield break;
         }
 
-        using var reader = new StreamReader(sendResult.Stream!);
+        var stream = sendResult.Stream!;
         var toolCallAccumulators = new Dictionary<int, (string Id, string Name, StringBuilder Args)>();
+
+        // Read SSE frames using a reusable byte buffer, scanning for LF-delimited lines.
+        byte[] sseBuffer = new byte[8192];
+        int sseLen = 0;
 
         while (true)
         {
-            var lineResult = await ReadLineAsync(reader, ct);
-            if (lineResult.Error is not null)
+            int lfIndex = -1;
+            for (int i = 0; i < sseLen; i++)
             {
-                yield return lineResult.Error;
-                yield break;
+                if (sseBuffer[i] == (byte)'\n')
+                {
+                    lfIndex = i;
+                    break;
+                }
             }
 
-            var line = lineResult.Line;
-            if (line is null) break;
-            if (!line.StartsWith("data: ")) continue;
+            if (lfIndex < 0)
+            {
+                if (sseLen >= sseBuffer.Length)
+                {
+                    yield return new StreamEvent { Type = StreamEventType.Error, ErrorMessage = "SSE line exceeds buffer size" };
+                    yield break;
+                }
+                var read = await stream.ReadAsync(sseBuffer.AsMemory(sseLen), ct);
+                if (read == 0) break;
+                sseLen += read;
+                continue;
+            }
 
-            var data = line[6..].Trim();
-            if (data == "[DONE]") break;
+            var lineSpan = new ReadOnlySpan<byte>(sseBuffer, 0, lfIndex);
+            if (lineSpan.Length > 0 && lineSpan[^1] == (byte)'\r')
+                lineSpan = lineSpan[..^1];
 
-            var parsed = ParseChunk(data, toolCallAccumulators);
+            // Strip UTF-8 BOM if present
+            if (lineSpan.Length >= 3 &&
+                lineSpan[0] == 0xEF && lineSpan[1] == 0xBB && lineSpan[2] == 0xBF)
+                lineSpan = lineSpan[3..];
+
+            bool isDataLine = lineSpan.Length >= 6 &&
+                lineSpan[0] == (byte)'d' && lineSpan[1] == (byte)'a' &&
+                lineSpan[2] == (byte)'t' && lineSpan[3] == (byte)'a' &&
+                lineSpan[4] == (byte)':' && lineSpan[5] == (byte)' ';
+
+            if (!isDataLine)
+            {
+                int skipRemaining = sseLen - lfIndex - 1;
+                if (skipRemaining > 0)
+                    Buffer.BlockCopy(sseBuffer, lfIndex + 1, sseBuffer, 0, skipRemaining);
+                sseLen = skipRemaining;
+                continue;
+            }
+
+            var payload = lineSpan[6..];
+            // Trim trailing whitespace
+            while (payload.Length > 0 && (payload[^1] == (byte)' ' || payload[^1] == (byte)'\t' || payload[^1] == (byte)'\r'))
+                payload = payload[..^1];
+            while (payload.Length > 0 && (payload[0] == (byte)' ' || payload[0] == (byte)'\t'))
+                payload = payload[1..];
+
+            // Copy payload to heap before shifting buffer
+            var payloadBytes = ArrayPool<byte>.Shared.Rent(payload.Length);
+            payload.CopyTo(payloadBytes);
+            var payloadMemory = payloadBytes.AsMemory(0, payload.Length);
+
+            int dataRemaining = sseLen - lfIndex - 1;
+            if (dataRemaining > 0)
+                Buffer.BlockCopy(sseBuffer, lfIndex + 1, sseBuffer, 0, dataRemaining);
+            sseLen = dataRemaining;
+
+            // Check for [DONE]
+            if (payloadMemory.Span.SequenceEqual("[DONE]"u8))
+            {
+                ArrayPool<byte>.Shared.Return(payloadBytes);
+                break;
+            }
+
+            var parsed = ParseChunk(payloadMemory, toolCallAccumulators);
+            ArrayPool<byte>.Shared.Return(payloadBytes);
             if (parsed is null) continue;
 
             yield return parsed;
@@ -116,35 +186,9 @@ public class AnthropicProvider : IChatProvider
         }
     }
 
-    private static async Task<ReadResult> ReadLineAsync(StreamReader reader, CancellationToken ct)
-    {
-        try
-        {
-            var line = await reader.ReadLineAsync(ct);
-            return new ReadResult { Line = line };
-        }
-        catch (Exception ex)
-        {
-            return new ReadResult
-            {
-                Error = new StreamEvent
-                {
-                    Type = StreamEventType.Error,
-                    ErrorMessage = $"Read error: {ex.Message}"
-                }
-            };
-        }
-    }
-
     private class SendResult
     {
         public Stream? Stream { get; init; }
-        public StreamEvent? Error { get; init; }
-    }
-
-    private class ReadResult
-    {
-        public string? Line { get; init; }
         public StreamEvent? Error { get; init; }
     }
 
@@ -152,7 +196,7 @@ public class AnthropicProvider : IChatProvider
     /// Parse a single SSE event from Anthropic. Returns null if no event should be emitted.
     /// </summary>
     private static StreamEvent? ParseChunk(
-        string data,
+        ReadOnlyMemory<byte> data,
         Dictionary<int, (string Id, string Name, StringBuilder Args)> toolCallAccumulators)
     {
         try
@@ -285,80 +329,88 @@ public class AnthropicProvider : IChatProvider
         return null;
     }
 
-    private static JsonObject BuildRequestBody(
+    private void WriteRequestBody(
+        Utf8JsonWriter writer,
         Model model,
         IReadOnlyList<Message> messages,
         string? systemPrompt,
         IReadOnlyList<Tool>? tools,
         ChatOptions options)
     {
-        var body = new JsonObject
-        {
-            ["model"] = model.Id,
-            ["max_tokens"] = options.MaxTokens ?? 4096,
-            ["stream"] = true
-        };
+        writer.WriteStartObject();
+        writer.WriteString("model", model.Id);
+        writer.WriteNumber("max_tokens", options.MaxTokens ?? 4096);
+        writer.WriteBoolean("stream", true);
 
         if (options.Temperature.HasValue)
-            body["temperature"] = options.Temperature.Value;
+            writer.WriteNumber("temperature", options.Temperature.Value);
 
         if (!string.IsNullOrEmpty(systemPrompt))
-            body["system"] = systemPrompt;
+            writer.WriteString("system", systemPrompt);
 
-        var msgArray = new JsonArray();
+        writer.WritePropertyName("messages");
+        writer.WriteStartArray();
+
         foreach (var msg in messages)
         {
-            msgArray.Add(msg.Role switch
+            switch (msg.Role)
             {
-                MessageRole.User => new JsonObject
-                {
-                    ["role"] = "user",
-                    ["content"] = msg.Text ?? ""
-                },
-                MessageRole.Assistant when msg.ToolCalls is { Count: > 0 } || msg.ToolCall is not null => BuildAnthropicToolCalls(msg),
-                MessageRole.Assistant => new JsonObject
-                {
-                    ["role"] = "assistant",
-                    ["content"] = msg.Text ?? ""
-                },
-                MessageRole.ToolResult => new JsonObject
-                {
-                    ["role"] = "user",
-                    ["content"] = new JsonArray
-                    {
-                        new JsonObject
-                        {
-                            ["type"] = "tool_result",
-                            ["tool_use_id"] = msg.ToolCallId ?? "",
-                            ["content"] = msg.Text ?? ""
-                        }
-                    }
-                },
-                _ => throw new ArgumentOutOfRangeException()
-            });
+                case MessageRole.User:
+                    writer.WriteStartObject();
+                    writer.WriteString("role", "user");
+                    writer.WriteString("content", msg.TextUtf8);
+                    writer.WriteEndObject();
+                    break;
+
+                case MessageRole.Assistant when msg.ToolCalls is { Count: > 0 } || msg.ToolCall is not null:
+                    WriteAnthropicToolCalls(writer, msg);
+                    break;
+
+                case MessageRole.Assistant:
+                    writer.WriteStartObject();
+                    writer.WriteString("role", "assistant");
+                    writer.WriteString("content", msg.TextUtf8);
+                    writer.WriteEndObject();
+                    break;
+
+                case MessageRole.ToolResult:
+                    writer.WriteStartObject();
+                    writer.WriteString("role", "user");
+                    writer.WritePropertyName("content");
+                    writer.WriteStartArray();
+                    writer.WriteStartObject();
+                    writer.WriteString("type", "tool_result");
+                    writer.WriteString("tool_use_id", msg.ToolCallId ?? "");
+                    writer.WriteString("content", msg.TextUtf8);
+                    writer.WriteEndObject();
+                    writer.WriteEndArray();
+                    writer.WriteEndObject();
+                    break;
+            }
         }
-        body["messages"] = msgArray;
+
+        writer.WriteEndArray();
 
         if (tools?.Count > 0)
         {
-            var toolArray = new JsonArray();
+            writer.WritePropertyName("tools");
+            writer.WriteStartArray();
             foreach (var tool in tools)
             {
-                var toolObj = new JsonObject
-                {
-                    ["name"] = tool.Name,
-                    ["description"] = tool.Description
-                };
+                writer.WriteStartObject();
+                writer.WriteString("name", tool.Name);
+                writer.WriteString("description", tool.Description);
                 if (tool.Parameters.HasValue)
                 {
-                    toolObj["input_schema"] = JsonNode.Parse(tool.Parameters.Value.GetRawText());
+                    writer.WritePropertyName("input_schema");
+                    JsonDocument.Parse(tool.Parameters.Value.GetRawText()).WriteTo(writer);
                 }
-                toolArray.Add(toolObj);
+                writer.WriteEndObject();
             }
-            body["tools"] = toolArray;
+            writer.WriteEndArray();
         }
 
-        return body;
+        writer.WriteEndObject();
     }
 
     private static StopReason MapStopReason(string? reason) => reason switch
@@ -370,21 +422,25 @@ public class AnthropicProvider : IChatProvider
         _ => StopReason.Stop
     };
 
-    private static JsonObject BuildAnthropicToolCalls(Message msg)
+    private static void WriteAnthropicToolCalls(Utf8JsonWriter writer, Message msg)
     {
         var allToolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? new List<ToolCallContent> { msg.ToolCall } : []);
-        var contentArray = new JsonArray();
+        writer.WriteStartObject();
+        writer.WriteString("role", "assistant");
+        writer.WritePropertyName("content");
+        writer.WriteStartArray();
         foreach (var tc in allToolCalls)
         {
-            contentArray.Add(new JsonObject
-            {
-                ["type"] = "tool_use",
-                ["id"] = tc.Id,
-                ["name"] = tc.Name,
-                ["input"] = JsonNode.Parse(JsonSerializer.Serialize(tc.Arguments))
-            });
+            writer.WriteStartObject();
+            writer.WriteString("type", "tool_use");
+            writer.WriteString("id", tc.Id);
+            writer.WriteString("name", tc.Name);
+            writer.WritePropertyName("input");
+            JsonDocument.Parse(JsonSerializer.Serialize(tc.Arguments)).WriteTo(writer);
+            writer.WriteEndObject();
         }
-        return new JsonObject { ["role"] = "assistant", ["content"] = contentArray };
+        writer.WriteEndArray();
+        writer.WriteEndObject();
     }
 
     private static UsageInfo ParseUsage(JsonElement el)

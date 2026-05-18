@@ -1,3 +1,4 @@
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Sessions;
 using Omicron.Core.Workspace;
@@ -62,9 +63,9 @@ public class EventSinkTests
     {
         var sessionId = SessionId.New();
         var evt = new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, sessionId), "Hello");
+                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, sessionId), "Hello"u8);
 
-        Assert.Equal("Hello", evt.Text);
+        Assert.True(evt.Text.Utf8Span.SequenceEqual("Hello"u8));
     }
 
     [Fact]
@@ -72,9 +73,9 @@ public class EventSinkTests
     {
         var sessionId = SessionId.New();
         var evt = new AssistantTextDeltaEvent(
-                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, sessionId), "Hello", null);
+                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, sessionId), "Hello"u8, null);
 
-        Assert.Equal("Hello", evt.Delta);
+        Assert.True(evt.Delta.Utf8Span.SequenceEqual("Hello"u8));
         Assert.Null(evt.ReasoningDelta);
     }
 
@@ -83,11 +84,11 @@ public class EventSinkTests
     {
         var sessionId = SessionId.New();
         var evt = new AssistantResponseCompleteEvent(
-                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, sessionId), "Full response", "reasoning",
+                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, sessionId), "Full response"u8, "reasoning"u8,
                 new TokenUsage(10, 20));
 
-        Assert.Equal("Full response", evt.FullText);
-        Assert.Equal("reasoning", evt.ReasoningText);
+        Assert.True(evt.FullText.Utf8Span.SequenceEqual("Full response"u8));
+        Assert.True(evt.ReasoningText!.Utf8Span.SequenceEqual("reasoning"u8));
         Assert.Equal(10, evt.Usage.InputTokens);
         Assert.Equal(20, evt.Usage.OutputTokens);
     }
@@ -109,9 +110,9 @@ public class EventSinkTests
         var sessionId = SessionId.New();
         var evt = new ToolInvocationCompletedEvent(
             new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId),
-            new ToolCallId("call_1"), "calculator", "42", false);
+            new ToolCallId("call_1"), "calculator", "42"u8, false);
 
-        Assert.Equal("42", evt.Result);
+        Assert.True(evt.Result.Utf8Span.SequenceEqual("42"u8));
         Assert.False(evt.IsError);
     }
 
@@ -173,7 +174,7 @@ public class EventSinkTests
         {
             new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), agentId, "m1", "p1"),
             new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), "Hello"),
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), "Hello"u8),
             new TurnStartedEvent(
                 new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), "Hello")
         };
@@ -204,9 +205,9 @@ public class EventSinkTests
         sink.Emit(new SessionStartedEvent(
             new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, s2), agentId, "m2", "p2"));
         sink.Emit(new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), "Hello"));
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), "Hello"u8));
         sink.Emit(new AssistantTextDeltaEvent(
-                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, s2), "Delta", null));
+                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, s2), "Delta"u8, null));
 
         var all = sink.GetAllEvents();
 

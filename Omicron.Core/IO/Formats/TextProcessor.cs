@@ -60,7 +60,7 @@ public sealed class TextProcessor : IContentProcessor
             {
                 if (isBinary)
                 {
-                    builder.Append($"[WARNING: binary file] {context.RelativePath}");
+                    builder.AppendFormat("[WARNING: binary file] {0}", context.RelativePath);
                     builder.AppendLine();
                 }
                 BuildTextOutputUtf8(context, span, ref builder, isBinary);
@@ -81,7 +81,7 @@ public sealed class TextProcessor : IContentProcessor
             {
                 if (isBinary)
                 {
-                    builder.Append($"[WARNING: binary file] {context.RelativePath}");
+                    builder.AppendFormat("[WARNING: binary file] {0}", context.RelativePath);
                     builder.AppendLine();
                 }
                 BuildTextOutputFallback(context, span, encoding, ref builder, isBinary);
@@ -111,7 +111,7 @@ public sealed class TextProcessor : IContentProcessor
 
         if (!isBinary)
         {
-            builder.Append($"[FILE] {context.RelativePath}  ({totalLines} lines)");
+            builder.AppendFormat("[FILE] {0}  ({1} lines)", context.RelativePath, totalLines);
             builder.AppendLine();
         }
 
@@ -128,7 +128,7 @@ public sealed class TextProcessor : IContentProcessor
         int endLine = Math.Min(startLine + limit, totalLines);
 
         int writtenLines = 0;
-        int writtenBytes = 0;
+        int writtenBytes = builder.Length; // count header bytes
         bool truncated = false;
 
         for (int i = startLine; i < endLine; i++)
@@ -143,18 +143,18 @@ public sealed class TextProcessor : IContentProcessor
             if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\r')
                 lineLength--;
 
-            // Rendered format: "     6| <line content>\n" — 8 bytes prefix + line + newline
-            int lineBytes = 8 + lineLength + 1;
+            // Format: "     6| <line content>"
+            var prefix = $"{i + 1,6}| ";
+            var prefixBytes = Encoding.UTF8.GetByteCount(prefix);
+            int lineBytes = prefixBytes + lineLength + 1; // prefix + content + newline
 
             if (writtenLines >= maxOutputLines ||
-                (writtenBytes > 0 && writtenBytes + lineBytes > maxOutputBytes))
+                writtenBytes + lineBytes > maxOutputBytes)
             {
-                truncated = i < totalLines - 1;
+                truncated = true;
                 break;
             }
 
-            // Format: "     6| <line content>"
-            var prefix = $"{i + 1,6}| ";
             builder.Append(prefix);
             builder.AppendLiteral(span.Slice(lineByteStart, lineLength));
             builder.AppendLine();
@@ -164,7 +164,7 @@ public sealed class TextProcessor : IContentProcessor
 
         if (truncated)
         {
-            builder.Append($"... output truncated ({totalLines} total lines, showing {writtenLines})");
+            builder.AppendFormat("... output truncated ({0} total lines, showing {1})", totalLines, writtenLines);
             builder.AppendLine();
         }
     }
@@ -192,7 +192,7 @@ public sealed class TextProcessor : IContentProcessor
 
         if (!isBinary)
         {
-            builder.Append($"[FILE] {context.RelativePath}  ({totalLines} lines)");
+            builder.AppendFormat("[FILE] {0}  ({1} lines)", context.RelativePath, totalLines);
             builder.AppendLine();
         }
 
@@ -209,23 +209,23 @@ public sealed class TextProcessor : IContentProcessor
         int endLine = Math.Min(startLine + limit, totalLines);
 
         int writtenLines = 0;
-        int writtenBytes = 0;
+        int writtenBytes = builder.Length; // count header bytes
         bool truncated = false;
 
         for (int i = startLine; i < endLine; i++)
         {
             var lineText = lines[i];
-            // Rendered format: "     6| <line>\n" — 8 bytes prefix + line + newline
-            var lineBytes = 8 + Encoding.UTF8.GetByteCount(lineText) + 1;
+            var prefix = $"{i + 1,6}| ";
+            var prefixBytes = Encoding.UTF8.GetByteCount(prefix);
+            int lineBytes = prefixBytes + Encoding.UTF8.GetByteCount(lineText) + 1;
 
             if (writtenLines >= maxOutputLines ||
-                (writtenBytes > 0 && writtenBytes + lineBytes > maxOutputBytes))
+                writtenBytes + lineBytes > maxOutputBytes)
             {
-                truncated = i < totalLines - 1;
+                truncated = true;
                 break;
             }
 
-            var prefix = $"{i + 1,6}| ";
             builder.Append(prefix);
             builder.Append(lineText);
             builder.AppendLine();
@@ -235,7 +235,7 @@ public sealed class TextProcessor : IContentProcessor
 
         if (truncated)
         {
-            builder.Append($"... output truncated ({totalLines} total lines, showing {writtenLines})");
+            builder.AppendFormat("... output truncated ({0} total lines, showing {1})", totalLines, writtenLines);
             builder.AppendLine();
         }
     }

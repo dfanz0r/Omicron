@@ -15,7 +15,7 @@ public sealed class OpenAiChatShapeTests
         };
         accumulators[0].Args.Append("{\"path\":\"test_lines.txt\"}");
 
-        const string finishChunk = "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}";
+        var finishChunk = "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"u8.ToArray();
 
         var first = shape.ParseSseChunk(finishChunk, accumulators);
         var second = shape.ParseSseChunk(finishChunk, accumulators);
@@ -39,7 +39,7 @@ public sealed class OpenAiChatShapeTests
         accumulators[0].Args.Append("{\"path\":\"a.txt\"}");
         accumulators[1].Args.Append("{\"content\":\"hello\"}");
 
-        const string finishChunk = "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}";
+        var finishChunk = "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"u8.ToArray();
 
         // First call emits only call_1
         var first = shape.ParseSseChunk(finishChunk, accumulators);

@@ -1,4 +1,5 @@
 using System.Text;
+using Cysharp.Text;
 using Omicron.Core.Content;
 using SharpCompress.Archives;
 using SharpCompress.Readers;
@@ -37,28 +38,33 @@ public sealed class ArchiveProcessor : IContentProcessor
             _ => "Archive"
         };
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {formatName})");
-        sb.AppendLine();
+        using var output = ZString.CreateUtf8StringBuilder();
+        output.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(bytes.Length), formatName);
+        output.AppendLine();
+        output.AppendLine();
 
-        // Try to list contents from archive (SharpCompress handles ZIP, RAR, 7z, TAR, GZip, BZip2, XZ)
+        // Try to list contents from archive
         var entries = TryListContents(bytes.Span, ext);
         if (entries is not null)
         {
-            sb.AppendLine($"Contents ({entries.Count} entries):");
-            sb.AppendLine();
+            output.AppendFormat("Contents ({0} entries):", entries.Count);
+            output.AppendLine();
+            output.AppendLine();
             foreach (var entry in entries)
             {
-                sb.AppendLine($"  {entry}");
+                output.AppendFormat("  {0}", entry);
+                output.AppendLine();
             }
         }
         else
         {
-            sb.AppendLine("(archive listing unavailable — use shell commands to inspect)");
+            output.AppendLiteral("(archive listing unavailable — use shell commands to inspect)"u8);
+            output.AppendLine();
         }
 
         return ValueTask.FromResult(new ContentProcessorResult(
-            sb.ToString().TrimEnd(), OutputModality.Text));
+            output.ToString().TrimEnd(), OutputModality.Text,
+            Utf8Data: output.AsSpan().ToArray()));
     }
 
     /// <summary>

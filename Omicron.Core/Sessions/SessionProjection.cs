@@ -85,12 +85,10 @@ public sealed class SessionProjector : ISessionProjector
                 messages.Add(new Message
                 {
                     Role = MessageRole.Assistant,
-                    Text = accumText.ToString(),
-                    Reasoning = accumReasoning.Length > 0 ? accumReasoning.ToString() : null,
+                    TextData = accumText.Length > 0 ? Utf8String.FromBuffer(accumText.ToOwnedBuffer()) : null,
+                    ReasoningData = accumReasoning.Length > 0 ? Utf8String.FromBuffer(accumReasoning.ToOwnedBuffer()) : null,
                     Timestamp = lastTimestamp?.DateTime ?? DateTime.UtcNow
                 });
-                accumText.Clear();
-                accumReasoning.Clear();
             }
         }
 
@@ -102,14 +100,12 @@ public sealed class SessionProjector : ISessionProjector
             messages.Add(new Message
             {
                 Role = MessageRole.Assistant,
-                Text = accumText.ToString(),
-                Reasoning = accumReasoning.Length > 0 ? accumReasoning.ToString() : null,
+                TextData = accumText.Length > 0 ? Utf8String.FromBuffer(accumText.ToOwnedBuffer()) : null,
+                ReasoningData = accumReasoning.Length > 0 ? Utf8String.FromBuffer(accumReasoning.ToOwnedBuffer()) : null,
                 ToolCalls = [.. pendingToolCalls],
                 ToolCall = pendingToolCalls.Count == 1 ? pendingToolCalls[0] : null,
                 Timestamp = lastTimestamp?.DateTime ?? DateTime.UtcNow
             });
-            accumText.Clear();
-            accumReasoning.Clear();
             pendingToolCalls.Clear();
 
             // Emit all buffered tool results
@@ -154,7 +150,7 @@ public sealed class SessionProjector : ISessionProjector
                     messages.Add(new Message
                     {
                         Role = MessageRole.Assistant,
-                        Text = $"[Error: {err.Message}]",
+                        TextData = Utf8String.FromString($"[Error: {err.Message}]"),
                         Timestamp = err.Timestamp.DateTime
                     });
                     break;
@@ -165,7 +161,7 @@ public sealed class SessionProjector : ISessionProjector
                     messages.Add(new Message
                     {
                         Role = MessageRole.User,
-                        Text = ue.Text,
+                        TextData = ue.Text,
                         Timestamp = lastTimestamp?.DateTime ?? ue.Timestamp.DateTime
                     });
                     break;
@@ -174,9 +170,9 @@ public sealed class SessionProjector : ISessionProjector
                     // A delta after a tool-call round means the next iteration started
                     if (toolStartCount > 0 && toolStartCount == toolEndCount)
                         FlushToolCallRun();
-                    accumText.Append(atd.Delta);
+                    accumText.AppendUtf8(atd.Delta.Utf8Span);
                     if (atd.ReasoningDelta is not null)
-                        accumReasoning.Append(atd.ReasoningDelta);
+                        accumReasoning.AppendUtf8(atd.ReasoningDelta.Utf8Span);
                     break;
 
                 case AssistantResponseCompleteEvent arc:
@@ -191,9 +187,9 @@ public sealed class SessionProjector : ISessionProjector
                     // in the next non-tool handler or final flush will emit it.
                     accumText.Clear();
                     accumReasoning.Clear();
-                    accumText.Append(arc.FullText);
+                    accumText.AppendUtf8(arc.FullText.Utf8Span);
                     if (arc.ReasoningText is not null)
-                        accumReasoning.Append(arc.ReasoningText);
+                        accumReasoning.AppendUtf8(arc.ReasoningText.Utf8Span);
                     break;
 
                 case ToolInvocationStartedEvent tis:
@@ -215,8 +211,7 @@ public sealed class SessionProjector : ISessionProjector
                     bufferedToolResults.Add(new Message
                     {
                         Role = MessageRole.ToolResult,
-                        Text = tic.ResultBytes.HasValue ? null : tic.Result,
-                        Utf8Text = tic.ResultBytes,
+                        TextData = tic.Result,
                         ToolCallId = tic.ToolCallId.Value,
                         ToolName = tic.ToolName,
                         IsError = tic.IsError,

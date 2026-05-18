@@ -62,7 +62,7 @@ public class JsonlSessionStoreTests : IDisposable
         var event1 = new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow,
             record.SessionId), AgentId.New(), "gpt-4o", "openai");
         var event2 = new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId), "Hello");
+                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId), "Hello"u8);
 
         await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent> { event1, event2 });
 
@@ -73,7 +73,7 @@ public class JsonlSessionStoreTests : IDisposable
         Assert.Equal(2, readBack.Count);
         Assert.IsType<SessionStartedEvent>(readBack[0]);
         Assert.IsType<UserMessageEvent>(readBack[1]);
-        Assert.Equal("Hello", ((UserMessageEvent)readBack[1]).Text);
+        Assert.Equal("Hello", ((UserMessageEvent)readBack[1]).Text.ToString());
     }
 
     [Fact]
@@ -116,7 +116,7 @@ public class JsonlSessionStoreTests : IDisposable
                 new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow,
                     sessionId), AgentId.New(), "gpt-4o", "openai"),
                 new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId), "Hi after reopen")
+                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId), "Hi after reopen"u8)
             });
         }
 
@@ -129,7 +129,7 @@ public class JsonlSessionStoreTests : IDisposable
         Assert.Equal(2, events.Count);
         Assert.IsType<SessionStartedEvent>(events[0]);
         var userMsg = Assert.IsType<UserMessageEvent>(events[1]);
-        Assert.Equal("Hi after reopen", userMsg.Text);
+        Assert.Equal("Hi after reopen", userMsg.Text.ToString());
     }
 
     [Fact]
@@ -147,7 +147,7 @@ public class JsonlSessionStoreTests : IDisposable
                 new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow,
                     sessionId), AgentId.New(), "gpt-4o", "openai"),
                 new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId), "Count me")
+                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId), "Count me"u8)
             });
         }
 

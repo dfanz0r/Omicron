@@ -1,3 +1,4 @@
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Providers;
@@ -16,10 +17,10 @@ public class SessionProjectionTests
         new(new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, TestSessionId), TestAgentId, "gpt-4o", "openai");
 
     private static UserMessageEvent UserMsg(string text, long seq = 2) =>
-        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId), text);
+        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId), Utf8String.FromString(text));
 
     private static AssistantResponseCompleteEvent AssistantResp(string text, int input = 10, int output = 20, long seq = 3) =>
-        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId), text, null,
+        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId), Utf8String.FromString(text), null,
             new TokenUsage(input, output));
 
     private static ToolInvocationStartedEvent ToolStart(string id, string name, long seq = 4) =>
@@ -28,7 +29,7 @@ public class SessionProjectionTests
 
     private static ToolInvocationCompletedEvent ToolEnd(string id, string name, string result, bool isError = false, long seq = 5) =>
         new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
-            new ToolCallId(id), name, result, isError);
+            new ToolCallId(id), name, Utf8String.FromString(result), isError);
 
     private static ProviderStateUpdatedEvent ProvUpdate(ProviderStateKey key, string? prevRespId, long seq = 6) =>
         new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
@@ -56,9 +57,9 @@ public class SessionProjectionTests
         Assert.Equal(TestSessionId, projection.SessionId);
         Assert.Equal(2, projection.Messages.Count);
         Assert.Equal(MessageRole.User, projection.Messages[0].Role);
-        Assert.Equal("Hello", projection.Messages[0].Text);
+        Assert.True(projection.Messages[0].TextUtf8.SequenceEqual("Hello"u8));
         Assert.Equal(MessageRole.Assistant, projection.Messages[1].Role);
-        Assert.Equal("Hi there!", projection.Messages[1].Text);
+        Assert.True(projection.Messages[1].TextUtf8.SequenceEqual("Hi there!"u8));
         Assert.Equal((10, 20), projection.TotalUsage);
         Assert.Empty(projection.Errors);
         Assert.False(projection.IsReset);
@@ -85,7 +86,7 @@ public class SessionProjectionTests
 
         // Message[0]: user
         Assert.Equal(MessageRole.User, projection.Messages[0].Role);
-        Assert.Equal("What's the weather?", projection.Messages[0].Text);
+        Assert.True(projection.Messages[0].TextUtf8.SequenceEqual("What's the weather?"u8));
 
         // Message[1]: assistant with tool call (created by ToolStart)
         Assert.Equal(MessageRole.Assistant, projection.Messages[1].Role);
@@ -98,12 +99,12 @@ public class SessionProjectionTests
         Assert.Equal(MessageRole.ToolResult, projection.Messages[2].Role);
         Assert.Equal("call_1", projection.Messages[2].ToolCallId);
         Assert.Equal("get_weather", projection.Messages[2].ToolName);
-        Assert.Equal("Sunny, 25°C", projection.Messages[2].Text);
+        Assert.True(projection.Messages[2].TextUtf8.SequenceEqual("Sunny, 25°C"u8));
         Assert.False(projection.Messages[2].IsError);
 
         // Message[3]: assistant final
         Assert.Equal(MessageRole.Assistant, projection.Messages[3].Role);
-        Assert.Equal("It's sunny!", projection.Messages[3].Text);
+        Assert.True(projection.Messages[3].TextUtf8.SequenceEqual("It's sunny!"u8));
 
         // Token usage comes only from AssistantResponseCompleteEvent
         Assert.Equal((5, 10), projection.TotalUsage);
@@ -195,8 +196,8 @@ public class SessionProjectionTests
 
         Assert.True(projection.IsReset);
         Assert.Equal(2, projection.Messages.Count); // Only messages after reset
-        Assert.Equal("Again", projection.Messages[0].Text);
-        Assert.Equal("Reset response", projection.Messages[1].Text);
+        Assert.True(projection.Messages[0].TextUtf8.SequenceEqual("Again"u8));
+        Assert.True(projection.Messages[1].TextUtf8.SequenceEqual("Reset response"u8));
         Assert.Empty(projection.ProviderStates);
     }
 
@@ -216,7 +217,7 @@ public class SessionProjectionTests
         Assert.Single(projection.Errors);
         Assert.Equal("Something went wrong", projection.Errors[0].Message);
         // Error also creates an assistant message
-        Assert.Contains(projection.Messages, m => m.Role == MessageRole.Assistant && m.Text!.Contains("Something went wrong"));
+        Assert.Contains(projection.Messages, m => m.Role == MessageRole.Assistant && m.GetTextString().Contains("Something went wrong"));
     }
 
     [Fact]
@@ -268,9 +269,9 @@ public class SessionProjectionTests
                     {
                         new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), TestAgentId, "gpt-4o", "openai"),
                         new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId), "Hello"),
+                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId), "Hello"u8),
                         new AssistantResponseCompleteEvent(
-                new EventEnvelope(EventId.New(), 3, DateTimeOffset.UtcNow, sessionId), "Hi back!", null,
+                new EventEnvelope(EventId.New(), 3, DateTimeOffset.UtcNow, sessionId), "Hi back!"u8, null,
                 new TokenUsage(5, 15))
                     };
                     await store.AppendEventsAsync(sessionId, events);
@@ -287,8 +288,8 @@ public class SessionProjectionTests
 
             Assert.Equal(sessionId, projection.SessionId);
             Assert.Equal(2, projection.Messages.Count);
-            Assert.Equal("Hello", projection.Messages[0].Text);
-            Assert.Equal("Hi back!", projection.Messages[1].Text);
+            Assert.True(projection.Messages[0].TextUtf8.SequenceEqual("Hello"u8));
+            Assert.True(projection.Messages[1].TextUtf8.SequenceEqual("Hi back!"u8));
             Assert.Equal((5, 15), projection.TotalUsage);
         }
         finally
@@ -347,10 +348,10 @@ public class SessionProjectionTests
 
         Assert.Equal(session.Id, projection.SessionId);
         Assert.Equal(4, projection.Messages.Count);
-        Assert.Equal("First message", projection.Messages[0].Text);
-        Assert.Equal("Response 1", projection.Messages[1].Text);
-        Assert.Equal("Second message", projection.Messages[2].Text);
-        Assert.Equal("Response 2", projection.Messages[3].Text);
+        Assert.True(projection.Messages[0].TextUtf8.SequenceEqual("First message"u8));
+        Assert.True(projection.Messages[1].TextUtf8.SequenceEqual("Response 1"u8));
+        Assert.True(projection.Messages[2].TextUtf8.SequenceEqual("Second message"u8));
+        Assert.True(projection.Messages[3].TextUtf8.SequenceEqual("Response 2"u8));
         Assert.Equal((40, 60), projection.TotalUsage);
     }
 
@@ -422,7 +423,7 @@ public class SessionProjectionTests
 
         // User message
         Assert.Equal(MessageRole.User, projection.Messages[0].Role);
-        Assert.Equal("Use a tool", projection.Messages[0].Text);
+        Assert.True(projection.Messages[0].TextUtf8.SequenceEqual("Use a tool"u8));
 
         // Assistant tool-call message
         Assert.Equal(MessageRole.Assistant, projection.Messages[1].Role);
@@ -433,11 +434,11 @@ public class SessionProjectionTests
         // Tool result
         Assert.Equal(MessageRole.ToolResult, projection.Messages[2].Role);
         Assert.Equal("test_tool", projection.Messages[2].ToolName);
-        Assert.Equal("Tool executed!", projection.Messages[2].Text);
+        Assert.True(projection.Messages[2].TextUtf8.SequenceEqual("Tool executed!"u8));
 
         // Final assistant answer
         Assert.Equal(MessageRole.Assistant, projection.Messages[3].Role);
-        Assert.Equal("Here is the answer.", projection.Messages[3].Text);
+        Assert.True(projection.Messages[3].TextUtf8.SequenceEqual("Here is the answer."u8));
 
         // Tool-call turn now emits usage via AssistantResponseCompleteEvent
         Assert.Equal((25, 30), projection.TotalUsage);
@@ -474,7 +475,7 @@ public class SessionProjectionTests
 
         // [1] Assistant with text AND both tool calls in one message
         Assert.Equal(MessageRole.Assistant, projection.Messages[1].Role);
-        Assert.Equal("Let me check", projection.Messages[1].Text);
+        Assert.True(projection.Messages[1].TextUtf8.SequenceEqual("Let me check"u8));
         Assert.NotNull(projection.Messages[1].ToolCalls);
         var toolCalls = projection.Messages[1].ToolCalls!;
         Assert.Equal(2, toolCalls.Count);
@@ -486,16 +487,16 @@ public class SessionProjectionTests
         // [2] ToolResult for call_1
         Assert.Equal(MessageRole.ToolResult, projection.Messages[2].Role);
         Assert.Equal("call_1", projection.Messages[2].ToolCallId);
-        Assert.Equal("Result A", projection.Messages[2].Text);
+        Assert.True(projection.Messages[2].TextUtf8.SequenceEqual("Result A"u8));
 
         // [3] ToolResult for call_2
         Assert.Equal(MessageRole.ToolResult, projection.Messages[3].Role);
         Assert.Equal("call_2", projection.Messages[3].ToolCallId);
-        Assert.Equal("Result B", projection.Messages[3].Text);
+        Assert.True(projection.Messages[3].TextUtf8.SequenceEqual("Result B"u8));
 
         // [4] Final assistant
         Assert.Equal(MessageRole.Assistant, projection.Messages[4].Role);
-        Assert.Equal("Done with tools", projection.Messages[4].Text);
+        Assert.True(projection.Messages[4].TextUtf8.SequenceEqual("Done with tools"u8));
     }
 
     [Fact]
@@ -533,7 +534,7 @@ public class SessionProjectionTests
         {
             new SessionStartedEvent(new EventEnvelope(EventId.New(), 1, ts1, TestSessionId), TestAgentId, "gpt-4o", "openai"),
             new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, ts2, TestSessionId), "Hello")
+                new EventEnvelope(EventId.New(), 2, ts2, TestSessionId), "Hello"u8)
         };
 
         var projection = projector.Project(events);
@@ -582,7 +583,7 @@ public class SessionProjectionTests
 
         // [2] First tool result
         Assert.Equal(MessageRole.ToolResult, projection.Messages[2].Role);
-        Assert.Equal("First result", projection.Messages[2].Text);
+        Assert.True(projection.Messages[2].TextUtf8.SequenceEqual("First result"u8));
 
         // [3] Second tool-call assistant (separate turn)
         Assert.Equal(MessageRole.Assistant, projection.Messages[3].Role);
@@ -591,11 +592,11 @@ public class SessionProjectionTests
 
         // [4] Second tool result
         Assert.Equal(MessageRole.ToolResult, projection.Messages[4].Role);
-        Assert.Equal("Second result", projection.Messages[4].Text);
+        Assert.True(projection.Messages[4].TextUtf8.SequenceEqual("Second result"u8));
 
         // [5] Final assistant
         Assert.Equal(MessageRole.Assistant, projection.Messages[5].Role);
-        Assert.Equal("All done", projection.Messages[5].Text);
+        Assert.True(projection.Messages[5].TextUtf8.SequenceEqual("All done"u8));
 
         // Token usage from both tool turns + final
         Assert.Equal((22, 27), projection.TotalUsage);

@@ -398,7 +398,7 @@ public class TuiSessionIntegrationTests
 
         // Add some content via events
         transcript.UpdateFromEvent(new UserMessageEvent(
-            EventEnvelope.ForSession(new SessionId(Guid.NewGuid())), "hello world"));
+            EventEnvelope.ForSession(new SessionId(Guid.NewGuid())), "hello world"u8));
 
         // Search for existing text
         int count = transcript.Find("hello");

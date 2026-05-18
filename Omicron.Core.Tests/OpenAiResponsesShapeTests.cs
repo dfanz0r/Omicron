@@ -185,7 +185,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_OutputTextDelta_ReturnsTextEvent()
     {
-        var data = """{"type":"response.output_text.delta","delta":"Hello"}""";
+        byte[] data = """{"type":"response.output_text.delta","delta":"Hello"}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -198,7 +198,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_OutputTextDelta_EmptyDelta_ReturnsNull()
     {
-        var data = """{"type":"response.output_text.delta","delta":""}""";
+        byte[] data = """{"type":"response.output_text.delta","delta":""}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -210,7 +210,7 @@ public class OpenAiResponsesShapeTests
     public void ParseSseChunk_FunctionCallArgumentsDelta_ReturnsToolCallDelta()
     {
         // JSON: {"type":"response.function_call_arguments.delta","delta":"partial","item_id":"item_1"}
-        var data = """{"type":"response.function_call_arguments.delta","delta":"partial","item_id":"item_1"}""";
+        byte[] data = """{"type":"response.function_call_arguments.delta","delta":"partial","item_id":"item_1"}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -224,7 +224,7 @@ public class OpenAiResponsesShapeTests
     public void ParseSseChunk_FunctionCallArgumentsDone_ReturnsToolCallEnd()
     {
         // Use a regular string to properly escape JSON quotes within arguments value
-        var data = "{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"call_id\":\"call_abc\",\"name\":\"get_weather\",\"arguments\":\"{\\\"location\\\":\\\"NYC\\\"}\"}";
+        byte[] data = "{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"call_id\":\"call_abc\",\"name\":\"get_weather\",\"arguments\":\"{\\\"location\\\":\\\"NYC\\\"}\"}"u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -239,7 +239,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_OutputItemAdded_FunctionCall_ReturnsToolCallStart()
     {
-        var data = """{"type":"response.output_item.added","item":{"id":"item_1","type":"function_call","call_id":"call_abc","name":"get_weather"}}""";
+        byte[] data = """{"type":"response.output_item.added","item":{"id":"item_1","type":"function_call","call_id":"call_abc","name":"get_weather"}}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -253,7 +253,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_Completed_ReturnsDoneEvent()
     {
-        var data = """{"type":"response.completed","response":{"id":"resp_123","status":"completed","usage":{"input_tokens":10,"output_tokens":20}}}""";
+        byte[] data = """{"type":"response.completed","response":{"id":"resp_123","status":"completed","usage":{"input_tokens":10,"output_tokens":20}}}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -270,7 +270,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_Completed_Failed_ReturnsErrorEvent()
     {
-        var data = """{"type":"response.completed","response":{"id":"resp_123","status":"failed","error":{"message":"Something went wrong"}}}""";
+        byte[] data = """{"type":"response.completed","response":{"id":"resp_123","status":"failed","error":{"message":"Something went wrong"}}}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -283,7 +283,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_Completed_Incomplete_ReturnsLengthStopReason()
     {
-        var data = """{"type":"response.completed","response":{"id":"resp_123","status":"incomplete","usage":{"input_tokens":10,"output_tokens":100}}}""";
+        byte[] data = """{"type":"response.completed","response":{"id":"resp_123","status":"incomplete","usage":{"input_tokens":10,"output_tokens":100}}}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -296,7 +296,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_RefusalDelta_ReturnsTextWithReasoning()
     {
-        var data = """{"type":"response.refusal.delta","delta":"I cannot answer that."}""";
+        byte[] data = """{"type":"response.refusal.delta","delta":"I cannot answer that."}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -310,7 +310,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_Error_ReturnsErrorEvent()
     {
-        var data = """{"type":"error","message":"API rate limit exceeded"}""";
+        byte[] data = """{"type":"error","message":"API rate limit exceeded"}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -323,7 +323,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_UnknownEventType_ReturnsNull()
     {
-        var data = """{"type":"unknown.event.type","data":"something"}""";
+        byte[] data = """{"type":"unknown.event.type","data":"something"}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -334,7 +334,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_InvalidJson_ReturnsError()
     {
-        var data = "this is not json";
+        byte[] data = "this is not json"u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -346,7 +346,7 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_TopLevelError_ReturnsError()
     {
-        var data = """{"error":{"message":"Authentication failed"}}""";
+        byte[] data = """{"error":{"message":"Authentication failed"}}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         var result = _shape.ParseSseChunk(data, accumulators);
@@ -385,7 +385,6 @@ public class OpenAiResponsesShapeTests
 
         // Assistant tool calls are now top-level function_call items
         Assert.Equal("function_call", input[1]!["type"]?.ToString());
-        Assert.Equal("call_1", input[1]!["id"]?.ToString());
         Assert.Equal("call_1", input[1]!["call_id"]?.ToString());
         Assert.Equal("get_weather", input[1]!["name"]?.ToString());
 
@@ -410,8 +409,8 @@ public class OpenAiResponsesShapeTests
             new()
             {
                 Role = MessageRole.Assistant,
-                Text = "Hi there",
-                Reasoning = "internal reasoning"
+                TextData = "Hi there"u8,
+                ReasoningData = "internal reasoning"u8
             }
         };
 
@@ -430,7 +429,7 @@ public class OpenAiResponsesShapeTests
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         // First function call: output_item.added
-        var chunk1 = """{"type":"response.output_item.added","item":{"id":"item_1","type":"function_call","call_id":"call_abc","name":"get_weather"}}""";
+        byte[] chunk1 = """{"type":"response.output_item.added","item":{"id":"item_1","type":"function_call","call_id":"call_abc","name":"get_weather"}}"""u8.ToArray();
         var r1 = _shape.ParseSseChunk(chunk1, accumulators);
         Assert.NotNull(r1);
         Assert.Equal(StreamEventType.ToolCallStart, r1.Type);
@@ -439,13 +438,13 @@ public class OpenAiResponsesShapeTests
         Assert.Equal(0, accumulators.Keys.First());
 
         // First function call: arguments.delta
-        var chunk2 = "{\"type\":\"response.function_call_arguments.delta\",\"delta\":\"partial\",\"item_id\":\"item_1\"}";
+        byte[] chunk2 = "{\"type\":\"response.function_call_arguments.delta\",\"delta\":\"partial\",\"item_id\":\"item_1\"}"u8.ToArray();
         var r2 = _shape.ParseSseChunk(chunk2, accumulators);
         Assert.NotNull(r2);
         Assert.Equal(StreamEventType.ToolCallDelta, r2.Type);
 
         // First function call: arguments.done
-        var chunk3 = "{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"arguments\":\"{\\\"loc\\\":\\\"NYC\\\"}\"}";
+        byte[] chunk3 = "{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"arguments\":\"{\\\"loc\\\":\\\"NYC\\\"}\"}"u8.ToArray();
         var r3 = _shape.ParseSseChunk(chunk3, accumulators);
         Assert.NotNull(r3);
         Assert.Equal(StreamEventType.ToolCallEnd, r3.Type);
@@ -453,7 +452,7 @@ public class OpenAiResponsesShapeTests
         Assert.Empty(accumulators);
 
         // Second function call starts — must not collide with cleared index 0
-        var chunk4 = """{"type":"response.output_item.added","item":{"id":"item_2","type":"function_call","call_id":"call_def","name":"get_time"}}""";
+        byte[] chunk4 = """{"type":"response.output_item.added","item":{"id":"item_2","type":"function_call","call_id":"call_def","name":"get_time"}}"""u8.ToArray();
         var r4 = _shape.ParseSseChunk(chunk4, accumulators);
         Assert.NotNull(r4);
         Assert.Equal(StreamEventType.ToolCallStart, r4.Type);

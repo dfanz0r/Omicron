@@ -1,3 +1,4 @@
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Sessions;
@@ -123,7 +124,7 @@ public class InMemorySessionStoreTests
         {
             new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId), AgentId.New(), "gpt-4o", "openai"),
             new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId), "Hello")
+                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId), "Hello"u8)
         };
 
         await store.AppendEventsAsync(record.SessionId, events);
@@ -148,7 +149,7 @@ public class InMemorySessionStoreTests
         {
             new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId), AgentId.New(), "gpt-4o", "openai"),
             new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId), "Hello"),
+                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId), "Hello"u8),
             new TurnStartedEvent(
                 new EventEnvelope(EventId.New(), 3, DateTimeOffset.UtcNow, record.SessionId), "Hello")
         });
@@ -225,7 +226,7 @@ public class InMemorySessionStoreTests
         {
             new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, r2.SessionId), AgentId.New(), "claude-3", "anthropic"),
             new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, r2.SessionId), "Hello")
+                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, r2.SessionId), "Hello"u8)
         });
 
         Assert.Equal(1, await store.GetEventCountAsync(r1.SessionId));

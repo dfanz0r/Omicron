@@ -44,7 +44,7 @@ public class SessionResumeTests
         Assert.NotNull(resumed);
         Assert.Equal(original.Id, resumed.Id);
         Assert.NotEmpty(resumed.Messages);
-        Assert.Contains(resumed.Messages, m => m.Role == MessageRole.User && m.Text == "Hello");
+        Assert.Contains(resumed.Messages, m => m.Role == MessageRole.User && m.GetTextString() == "Hello");
         Assert.Contains(resumed.Messages, m => m.Role == MessageRole.Assistant);
     }
 

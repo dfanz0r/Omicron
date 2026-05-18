@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -211,8 +213,12 @@ public abstract class ShapeBasedProvider : IChatProvider
             yield break;
         }
 
-        var body = shape.BuildRequestBody(model, messages, systemPrompt, tools, options);
-        var json = JsonSerializer.Serialize(body);
+        var requestBuffer = new ArrayBufferWriter<byte>();
+        using (var jsonWriter = new Utf8JsonWriter(requestBuffer))
+        {
+            shape.WriteRequestBody(jsonWriter, model, messages, systemPrompt, tools, options);
+        }
+        var jsonBytes = requestBuffer.WrittenSpan;
 
         var baseUrl = ResolveBaseUrl(model);
         var endpoint = model.ApiType switch
@@ -223,9 +229,11 @@ public abstract class ShapeBasedProvider : IChatProvider
             _ => $"{baseUrl.TrimEnd('/')}/chat/completions"
         };
 
+        var content = new ByteArrayContent(jsonBytes.ToArray());
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
-            Content = new StringContent(json, Encoding.UTF8, "application/json")
+            Content = content
         };
 
         // Auth header
@@ -244,30 +252,117 @@ public abstract class ShapeBasedProvider : IChatProvider
             yield break;
         }
 
-        using var reader = new StreamReader(sendResult.Stream!);
         var toolCallAccumulators = new Dictionary<int, ToolCallAccumulator>();
+        var stream = sendResult.Stream!;
+
+        // Read SSE frames using a reusable byte sseBuffer, scanning for LF-delimited lines.
+        // Avoids StreamReader and string allocation for each SSE line.
+        byte[] sseBuffer = new byte[8192];
+        int sseLen = 0;
 
         while (true)
         {
-            var lineResult = await ReadLineAsync(reader, ct);
-            if (lineResult.Error is not null)
+            // Find LF in the current sseBuffer
+            int lfIndex = -1;
+            for (int i = 0; i < sseLen; i++)
             {
-                yield return lineResult.Error;
-                yield break;
+                if (sseBuffer[i] == (byte)'\n')
+                {
+                    lfIndex = i;
+                    break;
+                }
             }
-            var line = lineResult.Line;
-            if (line is null) break;
-            if (!line.StartsWith("data: ")) continue;
 
-            var data = line[6..].Trim();
-            if (data == "[DONE]") break;
+            if (lfIndex < 0)
+            {
+                // Need more data: fill the sseBuffer
+                if (sseLen >= sseBuffer.Length)
+                {
+                    // Line too long — grow sseBuffer or skip
+                    yield return new StreamEvent { Type = StreamEventType.Error, ErrorMessage = "SSE line exceeds sseBuffer size" };
+                    yield break;
+                }
+                var read = await stream.ReadAsync(sseBuffer.AsMemory(sseLen), ct);
+                if (read == 0)
+                    break; // EOF
+                sseLen += read;
+                continue;
+            }
 
-            var parsed = shape.ParseSseChunk(data, toolCallAccumulators);
-            if (parsed is null) continue;
+            // Extract the line (without \n)
+            var lineSpan = new ReadOnlySpan<byte>(sseBuffer, 0, lfIndex);
 
-            yield return parsed;
-            if (parsed.Type == StreamEventType.Error)
-                yield break;
+            // Remove \r if present before \n
+            if (lineSpan.Length > 0 && lineSpan[^1] == (byte)'\r')
+                lineSpan = lineSpan[..^1];
+
+            // Strip UTF-8 BOM if present
+            if (lineSpan.Length >= 3 &&
+                lineSpan[0] == 0xEF && lineSpan[1] == 0xBB && lineSpan[2] == 0xBF)
+                lineSpan = lineSpan[3..];
+
+            // Check for "data: " prefix BEFORE shifting the sseBuffer
+            // (the span references the sseBuffer, so shifting would corrupt it).
+            bool isDataLine = lineSpan.StartsWith("data: "u8);
+
+            if (!isDataLine)
+            {
+                // Shift remaining data and skip
+                int skipRemaining = sseLen - lfIndex - 1;
+                if (skipRemaining > 0)
+                    Buffer.BlockCopy(sseBuffer, lfIndex + 1, sseBuffer, 0, skipRemaining);
+                sseLen = skipRemaining;
+                continue;
+            }
+
+            // Slice after "data: " and trim trailing whitespace
+            var payload = lineSpan[6..];
+            while (payload.Length > 0 && (payload[^1] == (byte)' ' || payload[^1] == (byte)'\t' || payload[^1] == (byte)'\r'))
+                payload = payload[..^1];
+            while (payload.Length > 0 && (payload[0] == (byte)' ' || payload[0] == (byte)'\t'))
+                payload = payload[1..];
+
+            // Copy payload to heap before shifting sseBuffer (span references the sseBuffer)
+            var payloadBytes = payload.Length > 0
+                ? ArrayPool<byte>.Shared.Rent(payload.Length)
+                : null;
+            if (payloadBytes is not null)
+            {
+                payload.CopyTo(payloadBytes.AsSpan());
+                // Trim to actual length (ArrayPool may return a larger sseBuffer)
+                var trimmedPayload = payloadBytes.AsSpan(0, payload.Length);
+
+                // Shift remaining data in sseBuffer
+                int dataRemaining = sseLen - lfIndex - 1;
+                if (dataRemaining > 0)
+                    Buffer.BlockCopy(sseBuffer, lfIndex + 1, sseBuffer, 0, dataRemaining);
+                sseLen = dataRemaining;
+
+                // Check for [DONE]
+                if (trimmedPayload.SequenceEqual("[DONE]"u8))
+                {
+                    ArrayPool<byte>.Shared.Return(payloadBytes);
+                    break;
+                }
+
+                var parsed = shape.ParseSseChunk(payloadBytes.AsMemory(0, payload.Length), toolCallAccumulators);
+                ArrayPool<byte>.Shared.Return(payloadBytes);
+
+                if (parsed is null) continue;
+
+                yield return parsed;
+                if (parsed.Type == StreamEventType.Error)
+                    yield break;
+            }
+            else
+            {
+                // Empty payload — shift sseBuffer and continue
+                int dataRemaining = sseLen - lfIndex - 1;
+                if (dataRemaining > 0)
+                    Buffer.BlockCopy(sseBuffer, lfIndex + 1, sseBuffer, 0, dataRemaining);
+                sseLen = dataRemaining;
+                continue;
+            }
         }
 
         // Drain remaining tool call accumulators not emitted by the final
@@ -332,35 +427,9 @@ public abstract class ShapeBasedProvider : IChatProvider
         }
     }
 
-    private static async Task<ReadResult> ReadLineAsync(StreamReader reader, CancellationToken ct)
-    {
-        try
-        {
-            var line = await reader.ReadLineAsync(ct);
-            return new ReadResult { Line = line };
-        }
-        catch (Exception ex)
-        {
-            return new ReadResult
-            {
-                Error = new StreamEvent
-                {
-                    Type = StreamEventType.Error,
-                    ErrorMessage = $"Read error: {ex.Message}"
-                }
-            };
-        }
-    }
-
     private class SendResult
     {
         public Stream? Stream { get; init; }
-        public StreamEvent? Error { get; init; }
-    }
-
-    private class ReadResult
-    {
-        public string? Line { get; init; }
         public StreamEvent? Error { get; init; }
     }
 }

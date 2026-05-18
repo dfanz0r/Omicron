@@ -347,18 +347,19 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
             switch (msg.Role)
             {
                 case MessageRole.User:
-                    Console.WriteLine($"\x1b[33mYou:\x1b[0m {msg.Text}");
+                    Console.WriteLine($"\x1b[33mYou:\x1b[0m {msg.GetTextString()}");
                     break;
                 case MessageRole.Assistant when msg.ToolCalls is { Count: > 0 }:
-                    Console.WriteLine($"\x1b[36mAssistant:\x1b[0m {msg.Text}");
+                    Console.WriteLine($"\x1b[36mAssistant:\x1b[0m {msg.GetTextString()}");
                     foreach (var tc in msg.ToolCalls)
                         Console.WriteLine($"  \x1b[90m[tool: {tc.Name}]\x1b[0m");
                     break;
                 case MessageRole.Assistant:
-                    Console.WriteLine($"\x1b[36mAssistant:\x1b[0m {msg.Text}");
+                    Console.WriteLine($"\x1b[36mAssistant:\x1b[0m {msg.GetTextString()}");
                     break;
                 case MessageRole.ToolResult:
-                    var preview = msg.Text?.Length > 80 ? msg.Text[..80] + "…" : msg.Text;
+                    var text = msg.GetTextString();
+                    var preview = text.Length > 80 ? text[..80] + "…" : text;
                     Console.WriteLine($"  \x1b[90m[result: {msg.ToolName}] {preview}\x1b[0m");
                     break;
             }
@@ -480,7 +481,7 @@ async Task ReadSessionOutput(AgentSession session, string input, CancellationTok
             case ToolInvocationCompletedEvent toolEnd:
                 Console.WriteLine("done.");
                 Console.WriteLine();
-                DisplayHelpers.DisplayTruncated(toolEnd.Result, cfg.DisplayLineWidth, cfg.DisplayMaxLines);
+                DisplayHelpers.DisplayTruncated(toolEnd.Result.ToString(), cfg.DisplayLineWidth, cfg.DisplayMaxLines);
                 Console.WriteLine();
                 break;
 

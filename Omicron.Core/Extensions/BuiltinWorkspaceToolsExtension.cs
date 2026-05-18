@@ -269,7 +269,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     var output = ZString.CreateUtf8StringBuilder();
                     try
                     {
-                        output.Append($"[FILE] {path}  ({totalLines} lines, hashline anchors)");
+                        output.AppendFormat("[FILE] {0}  ({1} lines, hashline anchors)", path, totalLines);
                     output.AppendLine();
                     output.AppendLine();
 
@@ -297,9 +297,9 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         var lineBytes = lineNumDigits + 2 + 1 + lineLength + 1;
 
                         if (writtenLines >= maxOutputLines ||
-                            (writtenBytes > 0 && writtenBytes + lineBytes > maxOutputBytes))
+                            writtenBytes + lineBytes > maxOutputBytes)
                         {
-                            truncated = i < totalLines - 1;
+                            truncated = true;
                             break;
                         }
 
@@ -310,7 +310,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
 
                     if (truncated)
                     {
-                        output.Append($"... output truncated ({totalLines} total lines, showing {writtenLines})");
+                        output.AppendFormat("... output truncated ({0} total lines, showing {1})", totalLines, writtenLines);
                         output.AppendLine();
                     }
 
@@ -472,14 +472,17 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         if (foundLine == -1)
                         {
                             // Build nearby context for error
-                            var context = new StringBuilder();
-                            context.AppendLine($"Hash mismatch at line {edit.StartLine} (expected hash '{edit.StartHash}'):");
+                            using var context = ZString.CreateUtf8StringBuilder();
+                            context.AppendFormat("Hash mismatch at line {0} (expected hash '{1}'):", edit.StartLine, edit.StartHash);
+                            context.AppendLine();
                             int ctxStart = Math.Max(1, edit.StartLine - 3);
                             int ctxEnd = Math.Min(currentLines.Length, edit.StartLine + 3);
                             for (int l = ctxStart; l <= ctxEnd; l++)
                             {
                                 var h = LineHash.ComputeAnchor(currentLines[l - 1]);
-                                context.AppendLine($"  {l}{h}|{currentLines[l - 1]}");
+                                context.AppendFormat("  {0}{1}|", l, h);
+                                context.Append(currentLines[l - 1]);
+                                context.AppendLine();
                             }
                             errors.Add(context.ToString().TrimEnd());
                             continue;
@@ -490,17 +493,22 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                             currentLines.Skip(foundLine - 1).Take(lineCount));
                         if (actualSpan != edit.OldText)
                         {
-                            var context = new StringBuilder();
-                            context.AppendLine($"old_text mismatch at resolved line {foundLine} (hash '{edit.StartHash}'):");
-                            context.AppendLine($"  Expected: {edit.OldText}");
-                            context.AppendLine($"  Actual:   {actualSpan}");
+                            using var context = ZString.CreateUtf8StringBuilder();
+                            context.AppendFormat("old_text mismatch at resolved line {0} (hash '{1}'):", foundLine, edit.StartHash);
+                            context.AppendLine();
+                            context.AppendFormat("  Expected: {0}", edit.OldText);
+                            context.AppendLine();
+                            context.AppendFormat("  Actual:   {0}", actualSpan);
+                            context.AppendLine();
                             int ctxStart = Math.Max(1, foundLine - 2);
                             int ctxEnd = Math.Min(currentLines.Length, foundLine + lineCount + 1);
                             for (int l = ctxStart; l <= ctxEnd; l++)
                             {
                                 var h = LineHash.ComputeAnchor(currentLines[l - 1]);
                                 var marker = (l >= foundLine && l < foundLine + lineCount) ? "~~" : "  ";
-                                context.AppendLine($"{marker}{l}{h}|{currentLines[l - 1]}");
+                                context.AppendFormat("{0}{1}{2}|", marker, l, h);
+                                context.Append(currentLines[l - 1]);
+                                context.AppendLine();
                             }
                             errors.Add(context.ToString().TrimEnd());
                             continue;
@@ -561,7 +569,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     var resultOutput = ZString.CreateUtf8StringBuilder();
                     try
                     {
-                        resultOutput.Append($"Edit committed: {path}");
+                        resultOutput.AppendFormat("Edit committed: {0}", path);
                         resultOutput.AppendLine();
 
                         if (diff.HasChanges)
@@ -569,17 +577,17 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                             resultOutput.AppendLine();
                             var fileDiff = diff.FileDiffs[0];
                             if (fileDiff.IsBinary)
-                                resultOutput.Append("(binary file diff omitted)");
+                                resultOutput.AppendLiteral("(binary file diff omitted)"u8);
                             else if (!string.IsNullOrEmpty(fileDiff.TextDiff))
                                 resultOutput.Append(fileDiff.TextDiff);
                             else
-                                resultOutput.Append("(no textual changes)");
+                                resultOutput.AppendLiteral("(no textual changes)"u8);
                             resultOutput.AppendLine();
                         }
 
                         // Remind the model to call read_file_hashlines for fresh anchors
                         resultOutput.AppendLine();
-                        resultOutput.Append("Call read_file_hashlines to get fresh line anchors if you need to make further edits.");
+                        resultOutput.AppendLiteral("Call read_file_hashlines to get fresh line anchors if you need to make further edits."u8);
                         resultOutput.AppendLine();
 
                         return new ToolResult(

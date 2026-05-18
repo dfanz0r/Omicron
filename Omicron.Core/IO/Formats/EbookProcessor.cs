@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using Cysharp.Text;
 using Omicron.Core.Content;
 
 namespace Omicron.Core.IO;
@@ -31,17 +32,19 @@ public sealed class EbookProcessor : IContentProcessor
                 $"[FILE] {context.RelativePath}  (empty)", OutputModality.Text));
         }
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, EPUB)");
-        sb.AppendLine();
+        using var output = ZString.CreateUtf8StringBuilder();
+        output.AppendFormat("[FILE] {0}  ({1}, EPUB)", context.RelativePath, FormatSize.Format(bytes.Length));
+        output.AppendLine();
+        output.AppendLine();
 
         // Try to extract text from EPUB (ZIP with .opf and .xhtml)
         var chapters = TryExtractEpubText(bytes.Span);
 
         if (chapters is not null && chapters.Count > 0)
         {
-            sb.AppendLine($"Chapters: {chapters.Count}");
-            sb.AppendLine();
+            output.AppendFormat("Chapters: {0}", chapters.Count);
+            output.AppendLine();
+            output.AppendLine();
 
             long totalBytes = 0;
             const long maxBytes = 50 * 1024;
@@ -54,25 +57,29 @@ public sealed class EbookProcessor : IContentProcessor
                     ? content
                     : $"## {title}\n\n{content}";
 
-                var chapterBytes = Encoding.UTF8.GetByteCount(chapterText + "\n");
+                var chapterBytes = Encoding.UTF8.GetByteCount(chapterText) + 1; // +1 for newline
                 if (totalBytes + chapterBytes > maxBytes)
                 {
-                    sb.AppendLine("... (output truncated)");
+                    output.AppendLiteral("... (output truncated)"u8);
+                    output.AppendLine();
                     break;
                 }
 
-                sb.AppendLine(chapterText);
-                sb.AppendLine();
+                output.Append(chapterText);
+                output.AppendLine();
+                output.AppendLine();
                 totalBytes += chapterBytes;
             }
         }
         else
         {
-            sb.AppendLine("(text extraction unavailable)");
+            output.AppendLiteral("(text extraction unavailable)"u8);
+            output.AppendLine();
         }
 
         return ValueTask.FromResult(new ContentProcessorResult(
-            sb.ToString().TrimEnd(), OutputModality.Text));
+            output.ToString().TrimEnd(), OutputModality.Text,
+            Utf8Data: output.AsSpan().ToArray()));
     }
 
     private static List<(string? Title, string Content)>? TryExtractEpubText(ReadOnlySpan<byte> bytes)
@@ -179,10 +186,10 @@ public sealed class EbookProcessor : IContentProcessor
         if (html.Length > 10 * 1024 * 1024) // 10 MB cap
             return "(document too large)";
 
-        var sb = new StringBuilder(html.Length);
+        using var output = ZString.CreateUtf8StringBuilder();
         bool inTag = false;
         bool inEntity = false;
-        var entityBuf = new StringBuilder();
+        var entityBuf = new System.Text.StringBuilder();
 
         for (int i = 0; i < html.Length; i++)
         {
@@ -220,11 +227,11 @@ public sealed class EbookProcessor : IContentProcessor
                     _ => '\0'
                 };
                 if (decoded != '\0')
-                    sb.Append(decoded);
+                    output.Append(decoded);
                 else if (entity.StartsWith("#x"))
-                    sb.Append((char)Convert.ToInt32(entity[2..], 16));
+                    output.Append((char)Convert.ToInt32(entity[2..], 16));
                 else if (entity.StartsWith("#"))
-                    sb.Append((char)Convert.ToInt32(entity[1..]));
+                    output.Append((char)Convert.ToInt32(entity[1..]));
                 continue;
             }
             if (inEntity)
@@ -233,10 +240,10 @@ public sealed class EbookProcessor : IContentProcessor
                 continue;
             }
 
-            sb.Append(c);
+            output.Append(c);
         }
 
-        var result = sb.ToString();
+        var result = output.ToString();
         // Collapse whitespace
         return HtmlWhitespaceRegex.Replace(result, " ").Trim();
     }

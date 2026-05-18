@@ -152,9 +152,9 @@ public sealed class AgentSession
         }
 
         // Add user message
-        _messages.Add(Message.UserMessage(text));
+        _messages.Add(Message.UserMessage(Utf8String.FromString(text)));
         yield return Emit(new UserMessageEvent(
-            _writer.Envelope(), text));
+            _writer.Envelope(), Utf8String.FromString(text)));
 
         // TurnStartedEvent marks the start of this model turn
         yield return Emit(new TurnStartedEvent(
@@ -218,7 +218,7 @@ public sealed class AgentSession
                 foreach (var tc in toolCalls)
                 {
                     _messages.Insert(i + 1, Message.ToolResultMessage(
-                        tc.Id, tc.Name, "(cancelled)", isError: true));
+                        tc.Id, tc.Name, Utf8String.FromTrustedUtf8Literal("(cancelled)"u8), isError: true));
                 }
             }
         }
@@ -287,7 +287,8 @@ public sealed class AgentSession
                             reasoningText.Append(evt.ReasoningText);
                         yield return Emit(new AssistantTextDeltaEvent(
                             _writer.Envelope(),
-                            evt.Delta ?? string.Empty, evt.ReasoningText));
+                            Utf8String.FromString(evt.Delta ?? string.Empty),
+                            evt.ReasoningText is not null ? Utf8String.FromString(evt.ReasoningText) : null));
                         break;
 
                     case StreamEventType.ToolCallEnd when evt.ToolCall is not null:
@@ -336,19 +337,23 @@ public sealed class AgentSession
                 _messages.Add(new Message
                 {
                     Role = MessageRole.Assistant,
-                    Text = $"[Error: {errMsg}]",
+                    TextData = Utf8String.FromString($"[Error: {errMsg}]"),
                     Timestamp = DateTime.UtcNow
                 });
                 yield break;
             }
 
-            var fullText = responseText.ToString();
-            var fullReasoning = reasoningText.Length > 0 ? reasoningText.ToString() : null;
-            if (reasoningText.Length == 0 && _messages.Count > 0)
+            var fullTextData = responseText.Length > 0
+                ? Utf8String.FromBuffer(responseText.ToOwnedBuffer())
+                : null;
+            var fullReasoningData = reasoningText.Length > 0
+                ? Utf8String.FromBuffer(reasoningText.ToOwnedBuffer())
+                : null;
+            if (fullReasoningData is null && _messages.Count > 0)
             {
                 var lastAssistant = _messages.LastOrDefault(m => m.Role == MessageRole.Assistant);
-                if (lastAssistant?.Reasoning is not null)
-                    fullReasoning = "";
+                if (lastAssistant?.ReasoningData is not null)
+                    fullReasoningData = Utf8String.Empty;
             }
 
             // Handle tool calls
@@ -361,8 +366,8 @@ public sealed class AgentSession
                 _messages.Add(new Message
                 {
                     Role = MessageRole.Assistant,
-                    Text = fullText,
-                    Reasoning = fullReasoning,
+                    TextData = fullTextData,
+                    ReasoningData = fullReasoningData,
                     ToolCalls = [.. normalizedToolCalls],
                     Timestamp = DateTime.UtcNow
                 });
@@ -372,7 +377,8 @@ public sealed class AgentSession
                 // tool-call batch before subsequent ToolInvocationStarted events arrive.
                 yield return Emit(new AssistantResponseCompleteEvent(
                     _writer.Envelope(),
-                    fullText, fullReasoning,
+                    fullTextData ?? Utf8String.Empty,
+                    fullReasoningData,
                     TokenUsage.From(usage)));
 
                 foreach (var toolCall in normalizedToolCalls)
@@ -431,7 +437,7 @@ public sealed class AgentSession
                                         toolCallId,
                                         toolCall.Arguments ?? new Dictionary<string, object?>(),
                                         Id, AgentId, ct, toolModelMeta));
-                                resultText = invokeResult.Text;
+                                resultText = invokeResult.Text ?? string.Empty;
                                 isError = invokeResult.IsError;
                                 resultBlocks = invokeResult.Blocks;
                                 resultUtf8Data = invokeResult.Utf8Data;
@@ -446,9 +452,9 @@ public sealed class AgentSession
                                         var bridgeImages = TryExtractBase64ContentUtf8(resultUtf8Data.Value.Span);
                                         if (bridgeImages.Count > 0)
                                         {
-                                            var bridgeMsg = Message.UserMessage(
-                                                $"read_path returned base64 content for the tool result below", bridgeImages);
-                                            _messages.Add(bridgeMsg);
+                                            _messages.Add(Message.UserMessage(
+                                                Utf8String.FromTrustedUtf8Literal("read_path returned base64 content for the tool result below"u8),
+                                                bridgeImages));
                                         }
                                     }
                                     else if (resultText is not null)
@@ -456,9 +462,9 @@ public sealed class AgentSession
                                         var bridgeImages = TryExtractBase64Content(resultText);
                                         if (bridgeImages.Count > 0)
                                         {
-                                            var bridgeMsg = Message.UserMessage(
-                                                $"read_path returned base64 content for the tool result below", bridgeImages);
-                                            _messages.Add(bridgeMsg);
+                                            _messages.Add(Message.UserMessage(
+                                                Utf8String.FromTrustedUtf8Literal("read_path returned base64 content for the tool result below"u8),
+                                                bridgeImages));
                                         }
                                     }
                                 }
@@ -473,22 +479,29 @@ public sealed class AgentSession
 
                     if (resultUtf8Data.HasValue)
                     {
-                        _messages.Add(Message.ToolResultMessageUtf8(
-                            toolCall.Id, toolCall.Name, resultUtf8Data.Value, isError));
+                        _messages.Add(Message.ToolResultMessage(
+                            toolCall.Id, toolCall.Name,
+                            Utf8String.FromUtf8(resultUtf8Data.Value.Span),
+                            isError));
 
                         yield return Emit(new ToolInvocationCompletedEvent(
                             _writer.Envelope(),
-                            toolCallId, toolCall.Name, resultText ?? "", isError, resultBlocks,
-                            ResultBytes: resultUtf8Data));
+                            toolCallId, toolCall.Name,
+                            Utf8String.FromString(resultText ?? string.Empty),
+                            isError, resultBlocks));
                     }
                     else
                     {
                         _messages.Add(Message.ToolResultMessage(
-                            toolCall.Id, toolCall.Name, resultText ?? "", isError));
+                            toolCall.Id, toolCall.Name,
+                            Utf8String.FromString(resultText ?? string.Empty),
+                            isError));
 
                         yield return Emit(new ToolInvocationCompletedEvent(
                             _writer.Envelope(),
-                            toolCallId, toolCall.Name, resultText ?? "", isError, resultBlocks));
+                            toolCallId, toolCall.Name,
+                            Utf8String.FromString(resultText ?? string.Empty),
+                            isError, resultBlocks));
                     }
                 }
 
@@ -499,14 +512,15 @@ public sealed class AgentSession
             _messages.Add(new Message
             {
                 Role = MessageRole.Assistant,
-                Text = fullText,
-                Reasoning = fullReasoning,
+                TextData = fullTextData,
+                ReasoningData = fullReasoningData,
                 Timestamp = DateTime.UtcNow
             });
 
             yield return Emit(new AssistantResponseCompleteEvent(
                 _writer.Envelope(),
-                fullText, fullReasoning,
+                fullTextData ?? Utf8String.Empty,
+                fullReasoningData,
                 TokenUsage.From(usage)));
 
             yield break;

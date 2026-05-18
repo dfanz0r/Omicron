@@ -223,11 +223,29 @@ public interface IApiShape
         ChatOptions options);
 
     /// <summary>
-    /// Parse a single SSE data line and return either a StreamEvent,
-    /// null (skip), or an error event.
+    /// Write the request body directly to a <see cref="Utf8JsonWriter"/>.
+    /// This is the long-term API; new shapes should implement this.
+    /// The default implementation delegates to <see cref="BuildRequestBody"/>.
+    /// </summary>
+    void WriteRequestBody(
+        System.Text.Json.Utf8JsonWriter writer,
+        Model model,
+        IReadOnlyList<Message> messages,
+        string? systemPrompt,
+        IReadOnlyList<Tool>? tools,
+        ChatOptions options)
+    {
+        var body = BuildRequestBody(model, messages, systemPrompt, tools, options);
+        System.Text.Json.JsonSerializer.Serialize(writer, body);
+    }
+
+    /// <summary>
+    /// Parse a single SSE data line (sans the "data: " prefix) and return
+    /// either a StreamEvent, null (skip), or an error event.
+    /// The payload is provided as raw UTF-8 bytes to avoid string allocation.
     /// </summary>
     StreamEvent? ParseSseChunk(
-        string data,
+        ReadOnlyMemory<byte> data,
         Dictionary<int, ToolCallAccumulator> toolCallAccumulators);
 }
 
@@ -253,54 +271,185 @@ public class OpenAiChatShape : IApiShape
         IReadOnlyList<Tool>? tools,
         ChatOptions options)
     {
-        var body = new JsonObject
-        {
-            ["model"] = model.Id,
-            ["stream"] = true,
-            ["stream_options"] = new JsonObject { ["include_usage"] = true }
-        };
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        using var writer = new Utf8JsonWriter(buffer);
+        WriteRequestBody(writer, model, messages, systemPrompt, tools, options);
+        writer.Flush();
+        var doc = JsonDocument.Parse(buffer.WrittenMemory);
+        var root = JsonNode.Parse(doc.RootElement.GetRawText())!;
+        return (JsonObject)root;
+    }
+
+    public void WriteRequestBody(
+        Utf8JsonWriter writer,
+        Model model,
+        IReadOnlyList<Message> messages,
+        string? systemPrompt,
+        IReadOnlyList<Tool>? tools,
+        ChatOptions options)
+    {
+        writer.WriteStartObject();
+
+        writer.WriteString("model", model.Id);
+        writer.WriteBoolean("stream", true);
+        writer.WritePropertyName("stream_options");
+        writer.WriteStartObject();
+        writer.WriteBoolean("include_usage", true);
+        writer.WriteEndObject();
 
         if (options.MaxTokens.HasValue)
-            body["max_tokens"] = options.MaxTokens.Value;
+            writer.WriteNumber("max_tokens", options.MaxTokens.Value);
         if (options.Temperature.HasValue)
-            body["temperature"] = options.Temperature.Value;
+            writer.WriteNumber("temperature", options.Temperature.Value);
         if (options.ReasoningEffort is not null)
-            body["reasoning_effort"] = options.ReasoningEffort;
+            writer.WriteString("reasoning_effort", options.ReasoningEffort);
 
-        var messageList = new JsonArray();
+        writer.WritePropertyName("messages");
+        writer.WriteStartArray();
+
         if (!string.IsNullOrEmpty(systemPrompt))
         {
-            messageList.Add(new JsonObject
-            {
-                ["role"] = "system",
-                ["content"] = systemPrompt
-            });
+            writer.WriteStartObject();
+            writer.WriteString("role", "system");
+            writer.WriteString("content", systemPrompt);
+            writer.WriteEndObject();
         }
+
         foreach (var msg in messages)
         {
-            messageList.Add(msg.Role switch
+            switch (msg.Role)
             {
-                MessageRole.User => BuildUserMessage(msg),
-                MessageRole.Assistant => BuildAssistantMessage(msg),
-                MessageRole.ToolResult => BuildToolResult(msg),
-                _ => throw new ArgumentOutOfRangeException()
-            });
+                case MessageRole.User:
+                    WriteUserMessage(writer, msg);
+                    break;
+                case MessageRole.Assistant:
+                    WriteAssistantMessage(writer, msg);
+                    break;
+                case MessageRole.ToolResult:
+                    WriteToolResult(writer, msg);
+                    break;
+            }
         }
-        body["messages"] = messageList;
+
+        writer.WriteEndArray();
 
         if (tools?.Count > 0)
         {
-            var toolArray = new JsonArray();
+            writer.WritePropertyName("tools");
+            writer.WriteStartArray();
             foreach (var tool in tools)
-                toolArray.Add(BuildToolDef(tool));
-            body["tools"] = toolArray;
+                WriteToolDef(writer, tool);
+            writer.WriteEndArray();
         }
 
-        return body;
+        writer.WriteEndObject();
+    }
+
+    private static void WriteUserMessage(Utf8JsonWriter writer, Message msg)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("role", "user");
+
+        if (msg.Images is { Count: > 0 })
+        {
+            writer.WritePropertyName("content");
+            writer.WriteStartArray();
+
+            writer.WriteStartObject();
+            writer.WriteString("type", "text");
+            writer.WriteString("text", msg.TextUtf8);
+            writer.WriteEndObject();
+
+            foreach (var img in msg.Images)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("type", "image_url");
+                writer.WritePropertyName("image_url");
+                writer.WriteStartObject();
+                writer.WriteString("url", $"data:{img.MimeType};base64,{img.Data}");
+                writer.WriteString("detail", "high");
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+        }
+        else
+        {
+            writer.WriteString("content", msg.TextUtf8);
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private static void WriteAssistantMessage(Utf8JsonWriter writer, Message msg)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("role", "assistant");
+
+        // Write reasoning directly from UTF-8 span, no string allocation
+        var reasoningSpan = msg.ReasoningUtf8;
+        if (!reasoningSpan.IsEmpty)
+            writer.WriteString("reasoning_content", reasoningSpan);
+
+        var allToolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? [msg.ToolCall] : null);
+        if (allToolCalls is { Count: > 0 })
+        {
+            writer.WriteString("content", "");
+            writer.WritePropertyName("tool_calls");
+            writer.WriteStartArray();
+
+            foreach (var tc in allToolCalls)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("id", tc.Id);
+                writer.WriteString("type", "function");
+                writer.WritePropertyName("function");
+                writer.WriteStartObject();
+                writer.WriteString("name", tc.Name);
+                writer.WriteString("arguments", JsonSerializer.Serialize(tc.Arguments, JsonOptions));
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+        }
+        else
+        {
+            writer.WriteString("content", msg.TextUtf8);
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private static void WriteToolResult(Utf8JsonWriter writer, Message msg)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("role", "tool");
+        writer.WriteString("tool_call_id", msg.ToolCallId ?? "");
+        writer.WriteString("content", msg.TextUtf8);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteToolDef(Utf8JsonWriter writer, Tool tool)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("type", "function");
+        writer.WritePropertyName("function");
+        writer.WriteStartObject();
+        writer.WriteString("name", tool.Name);
+        writer.WriteString("description", tool.Description);
+        if (tool.Parameters.HasValue)
+        {
+            writer.WritePropertyName("parameters");
+            JsonDocument.Parse(tool.Parameters.Value.GetRawText()).WriteTo(writer);
+        }
+        writer.WriteEndObject();
+        writer.WriteEndObject();
     }
 
     public StreamEvent? ParseSseChunk(
-        string data,
+        ReadOnlyMemory<byte> data,
         Dictionary<int, ToolCallAccumulator> toolCallAccumulators)
     {
         try
@@ -389,80 +538,7 @@ public class OpenAiChatShape : IApiShape
         return null;
     }
 
-    private static JsonObject BuildUserMessage(Message msg)
-    {
-        if (msg.Images is { Count: > 0 })
-        {
-            var content = new JsonArray();
-            content.Add(new JsonObject { ["type"] = "text", ["text"] = msg.EffectiveText });
-            foreach (var img in msg.Images)
-                content.Add(new JsonObject
-                {
-                    ["type"] = "image_url",
-                    ["image_url"] = new JsonObject { ["url"] = $"data:{img.MimeType};base64,{img.Data}", ["detail"] = "high" }
-                });
-            return new JsonObject { ["role"] = "user", ["content"] = content };
-        }
-        return new JsonObject { ["role"] = "user", ["content"] = msg.EffectiveText };
-    }
 
-    private static JsonObject BuildAssistantMessage(Message msg)
-    {
-        var obj = new JsonObject { ["role"] = "assistant" };
-
-        if (msg.Reasoning is not null)
-            obj["reasoning_content"] = msg.Reasoning;
-
-        var allToolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? [msg.ToolCall] : null);
-        if (allToolCalls is { Count: > 0 })
-        {
-            obj["content"] = "";
-            var tcArray = new JsonArray();
-            foreach (var tc in allToolCalls)
-            {
-                tcArray.Add(new JsonObject
-                {
-                    ["id"] = tc.Id,
-                    ["type"] = "function",
-                    ["function"] = new JsonObject
-                    {
-                        ["name"] = tc.Name,
-                        ["arguments"] = JsonSerializer.Serialize(tc.Arguments, JsonOptions)
-                    }
-                });
-            }
-            obj["tool_calls"] = tcArray;
-        }
-        else
-        {
-            obj["content"] = msg.EffectiveText;
-        }
-        return obj;
-    }
-
-    private static JsonObject BuildToolResult(Message msg) =>
-        new()
-        {
-            ["role"] = "tool",
-            ["tool_call_id"] = msg.ToolCallId ?? "",
-            ["content"] = msg.EffectiveText
-        };
-
-    private static JsonObject BuildToolDef(Tool tool)
-    {
-        var def = new JsonObject
-        {
-            ["type"] = "function",
-            ["function"] = new JsonObject
-            {
-                ["name"] = tool.Name,
-                ["description"] = tool.Description
-            }
-        };
-        if (tool.Parameters.HasValue)
-            def["function"]!["parameters"] = JsonNode.Parse(tool.Parameters.Value.GetRawText());
-        return def;
-    }
 
     private static StopReason MapFinishReason(string? r) => r switch
     {
@@ -535,76 +611,94 @@ public class OpenAiResponsesShape : IApiShape
         IReadOnlyList<Tool>? tools,
         ChatOptions options)
     {
-        // Determine storage policy: options override model
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        using var writer = new Utf8JsonWriter(buffer);
+        WriteRequestBody(writer, model, messages, systemPrompt, tools, options);
+        writer.Flush();
+        var doc = JsonDocument.Parse(buffer.WrittenMemory);
+        var root = JsonNode.Parse(doc.RootElement.GetRawText())!;
+        return (JsonObject)root;
+    }
+
+    public void WriteRequestBody(
+        Utf8JsonWriter writer,
+        Model model,
+        IReadOnlyList<Message> messages,
+        string? systemPrompt,
+        IReadOnlyList<Tool>? tools,
+        ChatOptions options)
+    {
         var storagePolicy = options.StoragePolicy ?? model.StoragePolicy;
         var compat = model.GetEffectiveCompatibility();
-
-        // Determine whether to use stateful mode
         var currentState = options.CurrentProviderState;
         bool useStateful = currentState?.IsStateful == true
             && CompatibilityDetector.SupportsStatefulContinuation(ApiType, storagePolicy)
             && compat.SupportsPreviousResponseId;
 
-        var body = new JsonObject
-        {
-            ["model"] = model.Id,
-            ["stream"] = true
-        };
+        writer.WriteStartObject();
 
-        // Check compatibility before sending optional fields
-        // compat was already resolved above for the useStateful check
+        writer.WriteString("model", model.Id);
+        writer.WriteBoolean("stream", true);
 
         if (options.MaxTokens.HasValue)
-            body["max_output_tokens"] = options.MaxTokens.Value;
+            writer.WriteNumber("max_output_tokens", options.MaxTokens.Value);
         if (options.Temperature.HasValue)
-            body["temperature"] = options.Temperature.Value;
+            writer.WriteNumber("temperature", options.Temperature.Value);
         if (options.ReasoningEffort is not null && compat.SupportsReasoningEffort)
-            body["reasoning_effort"] = options.ReasoningEffort;
+            writer.WriteString("reasoning_effort", options.ReasoningEffort);
 
-        // Instructions (system prompt)
         if (!string.IsNullOrEmpty(systemPrompt))
-            body["instructions"] = systemPrompt;
+            writer.WriteString("instructions", systemPrompt);
 
-        // Storage policy — only send store if the provider supports it
         if (compat.SupportsStore)
-            body["store"] = storagePolicy == ProviderStoragePolicy.AllowProviderStoredState;
+            writer.WriteBoolean("store", storagePolicy == ProviderStoragePolicy.AllowProviderStoredState);
 
         if (useStateful && currentState!.PreviousResponseId is not null)
         {
-            // Stateful mode: only send the latest user turn (new messages),
-            // include previous_response_id for server-side continuation.
-            body["previous_response_id"] = currentState.PreviousResponseId;
-
-            // In stateful mode, only send the most recent input items
-            // (the server already has the conversation history)
-            var lastInput = BuildInputItems(GetLastUserTurn(messages));
-            if (lastInput.Count > 0)
-                body["input"] = lastInput;
+            writer.WriteString("previous_response_id", currentState.PreviousResponseId);
+            writer.WritePropertyName("input");
+            writer.WriteStartArray();
+            WriteInputItems(writer, GetLastUserTurn(messages));
+            writer.WriteEndArray();
         }
         else
         {
-            // Stateless mode: rebuild full input from local message history
-            var input = BuildInputItems(messages);
-            if (input.Count > 0)
-                body["input"] = input;
+            writer.WritePropertyName("input");
+            writer.WriteStartArray();
+            WriteInputItems(writer, messages);
+            writer.WriteEndArray();
         }
 
-        // Tools
         if (tools?.Count > 0)
         {
-            var toolArray = new JsonArray();
+            writer.WritePropertyName("tools");
+            writer.WriteStartArray();
             foreach (var tool in tools)
-                toolArray.Add(BuildToolDef(tool));
-            body["tools"] = toolArray;
+                WriteToolDef(writer, tool);
+            writer.WriteEndArray();
         }
 
-        // Metadata
-        body["metadata"] = new JsonObject
-        {
-            ["user"] = "omicron-agent"
-        };
+        writer.WritePropertyName("metadata");
+        writer.WriteStartObject();
+        writer.WriteString("user", "omicron-agent");
+        writer.WriteEndObject();
 
-        return body;
+        writer.WriteEndObject();
+    }
+
+    private static void WriteToolDef(Utf8JsonWriter writer, Tool tool)
+    {
+        // Responses API tool format: flat, no type/function nesting.
+        // See https://platform.openai.com/docs/api-reference/responses
+        writer.WriteStartObject();
+        writer.WriteString("name", tool.Name);
+        writer.WriteString("description", tool.Description);
+        if (tool.Parameters.HasValue)
+        {
+            writer.WritePropertyName("input_schema");
+            JsonDocument.Parse(tool.Parameters.Value.GetRawText()).WriteTo(writer);
+        }
+        writer.WriteEndObject();
     }
 
     /// <summary>
@@ -636,140 +730,110 @@ public class OpenAiResponsesShape : IApiShape
     /// Build the input[] array from messages.
     /// Each message becomes a response item with role and content.
     /// </summary>
-    private static JsonArray BuildInputItems(IReadOnlyList<Message> messages)
+    private static void WriteInputItems(Utf8JsonWriter writer, IReadOnlyList<Message> messages)
     {
-        var items = new JsonArray();
-
         foreach (var msg in messages)
         {
             switch (msg.Role)
             {
                 case MessageRole.User:
                 {
-                    var item = new JsonObject { ["role"] = "user" };
+                    writer.WriteStartObject();
+                    writer.WriteString("role", "user");
+
                     if (msg.Images is { Count: > 0 })
                     {
-                        var contentArray = new JsonArray();
-                        contentArray.Add(new JsonObject
-                        {
-                            ["type"] = "input_text",
-                            ["text"] = msg.EffectiveText
-                        });
+                        writer.WritePropertyName("content");
+                        writer.WriteStartArray();
+
+                        writer.WriteStartObject();
+                        writer.WriteString("type", "input_text");
+                        writer.WriteString("text", msg.TextUtf8);
+                        writer.WriteEndObject();
+
                         foreach (var img in msg.Images)
                         {
-                            contentArray.Add(new JsonObject
-                            {
-                                ["type"] = "input_image",
-                                ["image_url"] = $"data:{img.MimeType};base64,{img.Data}"
-                            });
+                            writer.WriteStartObject();
+                            writer.WriteString("type", "input_image");
+                            writer.WriteString("image_url", $"data:{img.MimeType};base64,{img.Data}");
+                            writer.WriteEndObject();
                         }
-                        item["content"] = contentArray;
+
+                        writer.WriteEndArray();
                     }
                     else
                     {
-                        item["content"] = msg.EffectiveText;
+                        writer.WriteString("content", msg.TextUtf8);
                     }
-                    items.Add(item);
+
+                    writer.WriteEndObject();
                     break;
                 }
 
                 case MessageRole.Assistant:
                 {
-                    // For Responses API, assistant messages with function calls
-                    // are represented as top-level function_call items alongside
-                    // output_text items, not nested inside assistant message content.
-                    // We split them into separate input items.
-
                     var allToolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? [msg.ToolCall] : null);
 
                     if (allToolCalls is { Count: > 0 })
                     {
-                        // Emit text as a separate assistant message item only if there is text
-                        if (!string.IsNullOrEmpty(msg.EffectiveText))
+                        if (msg.HasText)
                         {
-                            var textItem = new JsonObject
-                            {
-                                ["type"] = "message",
-                                ["role"] = "assistant",
-                                ["content"] = new JsonArray
-                                {
-                                    new JsonObject
-                                    {
-                                        ["type"] = "output_text",
-                                        ["text"] = msg.EffectiveText
-                                    }
-                                }
-                            };
-                            items.Add(textItem);
+                            writer.WriteStartObject();
+                            writer.WriteString("type", "message");
+                            writer.WriteString("role", "assistant");
+                            writer.WritePropertyName("content");
+                            writer.WriteStartArray();
+                            writer.WriteStartObject();
+                            writer.WriteString("type", "output_text");
+                            writer.WriteString("text", msg.TextUtf8);
+                            writer.WriteEndObject();
+                            writer.WriteEndArray();
+                            writer.WriteEndObject();
                         }
 
-                        // Emit each function call as a top-level function_call item
                         foreach (var tc in allToolCalls)
                         {
-                            var fcItem = new JsonObject
+                            writer.WriteStartObject();
+                            writer.WriteString("type", "function_call");
+                            writer.WriteString("call_id", tc.Id);
+                            writer.WriteString("name", tc.Name);
+                            if (tc.Arguments is not null)
                             {
-                                ["type"] = "function_call",
-                                ["id"] = tc.Id,
-                                ["call_id"] = tc.Id,
-                                ["name"] = tc.Name,
-                                ["arguments"] = JsonSerializer.Serialize(tc.Arguments ?? new Dictionary<string, object?>(), JsonOptions)
-                            };
-                            items.Add(fcItem);
+                                writer.WriteString("arguments", JsonSerializer.Serialize(tc.Arguments, JsonOptions));
+                            }
+                            writer.WriteEndObject();
                         }
                     }
                     else
                     {
-                        // Plain assistant message (no tool calls)
-                        var item = new JsonObject
-                        {
-                            ["type"] = "message",
-                            ["role"] = "assistant"
-                        };
-                        var contentArray = new JsonArray();
-
-                        if (!string.IsNullOrEmpty(msg.EffectiveText))
-                        {
-                            contentArray.Add(new JsonObject
-                            {
-                                ["type"] = "output_text",
-                                ["text"] = msg.EffectiveText
-                            });
-                        }
-
-                        // Do not replay MVP reasoning text as Responses reasoning items yet.
-                        // The Responses schema expects a richer top-level reasoning item
-                        // shape, and OpenRouter rejects assistant message content with
-                        // ad-hoc reasoning blocks.
-
-                        if (contentArray.Count > 0)
-                            item["content"] = contentArray;
-                        else if (!string.IsNullOrEmpty(msg.EffectiveText))
-                            item["content"] = msg.EffectiveText;
-
-                        items.Add(item);
+                        writer.WriteStartObject();
+                        writer.WriteString("type", "message");
+                        writer.WriteString("role", "assistant");
+                        writer.WritePropertyName("content");
+                        writer.WriteStartArray();
+                        writer.WriteStartObject();
+                        writer.WriteString("type", "output_text");
+                        writer.WriteString("text", msg.TextUtf8);
+                        writer.WriteEndObject();
+                        writer.WriteEndArray();
+                        writer.WriteEndObject();
                     }
-
                     break;
                 }
 
                 case MessageRole.ToolResult:
                 {
-                    // Responses API uses function_call_output items for tool results,
-                    // keyed by call_id, not chat-style tool_result content inside user messages.
-                    var item = new JsonObject
-                    {
-                        ["type"] = "function_call_output",
-                        ["call_id"] = msg.ToolCallId ?? "",
-                        ["output"] = msg.EffectiveText
-                    };
-                    items.Add(item);
+                    writer.WriteStartObject();
+                    writer.WriteString("type", "function_call_output");
+                    writer.WriteString("call_id", msg.ToolCallId ?? "");
+                    writer.WriteString("output", msg.TextUtf8);
+                    writer.WriteEndObject();
                     break;
                 }
             }
         }
-
-        return items;
     }
+
 
     /// <summary>
     /// Parse a Responses API SSE chunk.
@@ -778,7 +842,7 @@ public class OpenAiResponsesShape : IApiShape
     /// accumulator values for matching ItemId. This avoids mutable instance state.
     /// </summary>
     public StreamEvent? ParseSseChunk(
-        string data,
+        ReadOnlyMemory<byte> data,
         Dictionary<int, ToolCallAccumulator> toolCallAccumulators)
     {
         try
@@ -1067,64 +1131,119 @@ public class AnthropicMessagesShape : IApiShape
         IReadOnlyList<Tool>? tools,
         ChatOptions options)
     {
-        var body = new JsonObject
-        {
-            ["model"] = model.Id,
-            ["max_tokens"] = options.MaxTokens ?? 4096,
-            ["stream"] = true
-        };
-        if (options.Temperature.HasValue)
-            body["temperature"] = options.Temperature.Value;
-        if (!string.IsNullOrEmpty(systemPrompt))
-            body["system"] = systemPrompt;
+        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        using var writer = new Utf8JsonWriter(buffer);
+        WriteRequestBody(writer, model, messages, systemPrompt, tools, options);
+        writer.Flush();
+        var doc = JsonDocument.Parse(buffer.WrittenMemory);
+        var root = JsonNode.Parse(doc.RootElement.GetRawText())!;
+        return (JsonObject)root;
+    }
 
-        var msgArray = new JsonArray();
+    public void WriteRequestBody(
+        Utf8JsonWriter writer,
+        Model model,
+        IReadOnlyList<Message> messages,
+        string? systemPrompt,
+        IReadOnlyList<Tool>? tools,
+        ChatOptions options)
+    {
+        writer.WriteStartObject();
+        writer.WriteString("model", model.Id);
+        writer.WriteNumber("max_tokens", options.MaxTokens ?? 4096);
+        writer.WriteBoolean("stream", true);
+        if (options.Temperature.HasValue)
+            writer.WriteNumber("temperature", options.Temperature.Value);
+        if (!string.IsNullOrEmpty(systemPrompt))
+            writer.WriteString("system", systemPrompt);
+
+        writer.WritePropertyName("messages");
+        writer.WriteStartArray();
         foreach (var msg in messages)
         {
-            msgArray.Add(msg.Role switch
+            switch (msg.Role)
             {
-                MessageRole.User => new JsonObject { ["role"] = "user", ["content"] = msg.EffectiveText },
-                MessageRole.Assistant when msg.ToolCalls is { Count: > 0 } || msg.ToolCall is not null => BuildAnthropicToolCalls(msg),
-                MessageRole.Assistant => new JsonObject { ["role"] = "assistant", ["content"] = msg.EffectiveText },
-                MessageRole.ToolResult => new JsonObject
-                {
-                    ["role"] = "user",
-                    ["content"] = new JsonArray
+                case MessageRole.User:
+                    writer.WriteStartObject();
+                    writer.WriteString("role", "user");
+                    writer.WriteString("content", msg.TextUtf8);
+                    writer.WriteEndObject();
+                    break;
+                case MessageRole.Assistant:
+                    if (msg.ToolCalls is { Count: > 0 } || msg.ToolCall is not null)
                     {
-                        new JsonObject
-                        {
-                            ["type"] = "tool_result",
-                            ["tool_use_id"] = msg.ToolCallId ?? "",
-                            ["content"] = msg.EffectiveText
-                        }
+                        WriteAnthropicToolCalls(writer, msg);
                     }
-                },
-                _ => throw new ArgumentOutOfRangeException()
-            });
+                    else
+                    {
+                        writer.WriteStartObject();
+                        writer.WriteString("role", "assistant");
+                        writer.WriteString("content", msg.TextUtf8);
+                        writer.WriteEndObject();
+                    }
+                    break;
+                case MessageRole.ToolResult:
+                    writer.WriteStartObject();
+                    writer.WriteString("role", "user");
+                    writer.WritePropertyName("content");
+                    writer.WriteStartArray();
+                    writer.WriteStartObject();
+                    writer.WriteString("type", "tool_result");
+                    writer.WriteString("tool_use_id", msg.ToolCallId ?? "");
+                    writer.WriteString("content", msg.TextUtf8);
+                    writer.WriteEndObject();
+                    writer.WriteEndArray();
+                    writer.WriteEndObject();
+                    break;
+            }
         }
-        body["messages"] = msgArray;
+        writer.WriteEndArray();
 
         if (tools?.Count > 0)
         {
-            var toolArray = new JsonArray();
+            writer.WritePropertyName("tools");
+            writer.WriteStartArray();
             foreach (var tool in tools)
             {
-                var def = new JsonObject
-                {
-                    ["name"] = tool.Name,
-                    ["description"] = tool.Description
-                };
+                writer.WriteStartObject();
+                writer.WriteString("name", tool.Name);
+                writer.WriteString("description", tool.Description);
                 if (tool.Parameters.HasValue)
-                    def["input_schema"] = JsonNode.Parse(tool.Parameters.Value.GetRawText());
-                toolArray.Add(def);
+                {
+                    writer.WritePropertyName("input_schema");
+                    JsonDocument.Parse(tool.Parameters.Value.GetRawText()).WriteTo(writer);
+                }
+                writer.WriteEndObject();
             }
-            body["tools"] = toolArray;
+            writer.WriteEndArray();
         }
-        return body;
+
+        writer.WriteEndObject();
+    }
+
+    private static void WriteAnthropicToolCalls(Utf8JsonWriter writer, Message msg)
+    {
+        var allToolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? new List<ToolCallContent> { msg.ToolCall } : []);
+        writer.WriteStartObject();
+        writer.WriteString("role", "assistant");
+        writer.WritePropertyName("content");
+        writer.WriteStartArray();
+        foreach (var tc in allToolCalls)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("type", "tool_use");
+            writer.WriteString("id", tc.Id);
+            writer.WriteString("name", tc.Name);
+            writer.WritePropertyName("input");
+            JsonDocument.Parse(JsonSerializer.Serialize(tc.Arguments)).WriteTo(writer);
+            writer.WriteEndObject();
+        }
+        writer.WriteEndArray();
+        writer.WriteEndObject();
     }
 
     public StreamEvent? ParseSseChunk(
-        string data,
+        ReadOnlyMemory<byte> data,
         Dictionary<int, ToolCallAccumulator> toolCallAccumulators)
     {
         try

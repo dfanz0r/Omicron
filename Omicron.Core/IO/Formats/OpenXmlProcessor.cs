@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using Cysharp.Text;
 using Omicron.Core.Content;
+
 namespace Omicron.Core.IO;
 
 /// <summary>
@@ -38,13 +40,15 @@ public sealed class OpenXmlProcessor : IContentProcessor
 
         if (text is not null)
         {
-            var sb = new StringBuilder();
-            sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {docType})");
-            sb.AppendLine();
-            sb.Append(text);
+            using var output = ZString.CreateUtf8StringBuilder();
+            output.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(bytes.Length), docType);
+            output.AppendLine();
+            output.AppendLine();
+            output.Append(text);
 
             return new ContentProcessorResult(
-                sb.ToString().TrimEnd(), OutputModality.Text);
+                output.ToString().TrimEnd(), OutputModality.Text,
+                Utf8Data: output.AsSpan().ToArray());
         }
 
         // Fallback: hex dump
@@ -56,9 +60,13 @@ public sealed class OpenXmlProcessor : IContentProcessor
 
         var hexResult = await hexDumper.ProcessAsync(hexContext, ct);
 
+        using var fallback = ZString.CreateUtf8StringBuilder();
+        fallback.AppendFormat("[FILE] {0}  ({1}, {2} — text extraction unavailable, showing hex dump)", context.RelativePath, FormatSize.Format(bytes.Length), docType);
+        fallback.AppendLine();
+        fallback.Append(hexResult.Text);
         return new ContentProcessorResult(
-            $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {docType} — text extraction unavailable, showing hex dump)\n{hexResult.Text}",
-                        OutputModality.HexDump,
+            fallback.ToString().TrimEnd(), OutputModality.HexDump,
+            Utf8Data: fallback.AsSpan().ToArray(),
             Warning: "Open XML text extraction unavailable.");
     }
 
@@ -197,10 +205,10 @@ public sealed class OpenXmlProcessor : IContentProcessor
         if (xml.Length > 10 * 1024 * 1024) // 10 MB cap
             return "(document too large)";
 
-        var sb = new StringBuilder(xml.Length);
+        using var output = ZString.CreateUtf8StringBuilder();
         bool inTag = false;
         bool inEntity = false;
-        var entityBuf = new StringBuilder();
+        var entityBuf = new System.Text.StringBuilder();
 
         for (int i = 0; i < xml.Length; i++)
         {
@@ -237,11 +245,11 @@ public sealed class OpenXmlProcessor : IContentProcessor
                     _ => '\0'
                 };
                 if (decoded != '\0')
-                    sb.Append(decoded);
+                    output.Append(decoded);
                 else if (entity.StartsWith("#x"))
-                    sb.Append((char)Convert.ToInt32(entity[2..], 16));
+                    output.Append((char)Convert.ToInt32(entity[2..], 16));
                 else if (entity.StartsWith("#"))
-                    sb.Append((char)Convert.ToInt32(entity[1..]));
+                    output.Append((char)Convert.ToInt32(entity[1..]));
                 continue;
             }
             if (inEntity)
@@ -250,11 +258,11 @@ public sealed class OpenXmlProcessor : IContentProcessor
                 continue;
             }
 
-            sb.Append(c);
+            output.Append(c);
         }
 
         // Collapse whitespace runs for cleaner output
-        var result = sb.ToString();
+        var result = output.ToString();
         return WhitespaceRegex.Replace(result, " ").Trim();
     }
 

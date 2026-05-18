@@ -1,4 +1,5 @@
 using System.Text;
+using Cysharp.Text;
 using Omicron.Core.Content;
 
 namespace Omicron.Core.IO;
@@ -28,9 +29,10 @@ public sealed class EmailProcessor : IContentProcessor
                 $"[FILE] {context.RelativePath}  (empty)", OutputModality.Text));
         }
 
-        var sb = new StringBuilder();
-        sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, email)");
-        sb.AppendLine();
+        using var output = ZString.CreateUtf8StringBuilder();
+        output.AppendFormat("[FILE] {0}  ({1}, email)", context.RelativePath, FormatSize.Format(bytes.Length));
+        output.AppendLine();
+        output.AppendLine();
 
         // Try MimeKit first
         try
@@ -38,18 +40,26 @@ public sealed class EmailProcessor : IContentProcessor
             using var ms = new MemoryStream(bytes.ToArray());
             using var mimeMessage = MimeKit.MimeMessage.Load(ms);
 
-            sb.AppendLine("--- Headers ---");
-            sb.AppendLine($"From: {mimeMessage.From}");
-            sb.AppendLine($"To: {mimeMessage.To}");
-            sb.AppendLine($"Subject: {mimeMessage.Subject}");
-            sb.AppendLine($"Date: {mimeMessage.Date}");
-            sb.AppendLine();
+            output.AppendLiteral("--- Headers ---"u8);
+            output.AppendLine();
+            output.AppendFormat("From: {0}", mimeMessage.From);
+            output.AppendLine();
+            output.AppendFormat("To: {0}", mimeMessage.To);
+            output.AppendLine();
+            output.AppendFormat("Subject: {0}", mimeMessage.Subject);
+            output.AppendLine();
+            output.AppendFormat("Date: {0}", mimeMessage.Date);
+            output.AppendLine();
+            output.AppendLine();
 
-            sb.AppendLine("--- Body ---");
-            sb.AppendLine(mimeMessage.Body?.ToString() ?? "(no text body)");
+            output.AppendLiteral("--- Body ---"u8);
+            output.AppendLine();
+            output.Append(mimeMessage.Body?.ToString() ?? "(no text body)");
+            output.AppendLine();
 
             return ValueTask.FromResult(new ContentProcessorResult(
-                sb.ToString().TrimEnd(), OutputModality.Text));
+                output.ToString().TrimEnd(), OutputModality.Text,
+                Utf8Data: output.AsSpan().ToArray()));
         }
         catch
         {
@@ -62,22 +72,27 @@ public sealed class EmailProcessor : IContentProcessor
 
         if (headers.Count > 0)
         {
-            sb.AppendLine("--- Headers ---");
+            output.AppendLiteral("--- Headers ---"u8);
+            output.AppendLine();
             foreach (var (key, value) in headers)
             {
-                sb.AppendLine($"{key}: {value}");
+                output.AppendFormat("{0}: {1}", key, value);
+                output.AppendLine();
             }
-            sb.AppendLine();
+            output.AppendLine();
         }
 
         if (!string.IsNullOrEmpty(body))
         {
-            sb.AppendLine("--- Body ---");
-            sb.AppendLine(body);
+            output.AppendLiteral("--- Body ---"u8);
+            output.AppendLine();
+            output.Append(body);
+            output.AppendLine();
         }
 
         return ValueTask.FromResult(new ContentProcessorResult(
-            sb.ToString().TrimEnd(), OutputModality.Text));
+            output.ToString().TrimEnd(), OutputModality.Text,
+            Utf8Data: output.AsSpan().ToArray()));
     }
 
     /// <summary>

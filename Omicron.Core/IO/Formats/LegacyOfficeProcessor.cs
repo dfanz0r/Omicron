@@ -1,4 +1,5 @@
 using System.Text;
+using Cysharp.Text;
 using Omicron.Core.Content;
 
 namespace Omicron.Core.IO;
@@ -66,15 +67,18 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
 
                 var openXmlResult = await openXmlProcessor.ProcessAsync(openXmlContext, ct);
 
-                var sb = new StringBuilder();
-                sb.AppendLine($"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {docType})");
-                sb.AppendLine($"[CONVERTED] {conversion.Method} -> {conversion.ConvertedExtension}");
-                sb.AppendLine();
-                sb.Append(openXmlResult.Text);
+                using var output = ZString.CreateUtf8StringBuilder();
+                output.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(bytes.Length), docType);
+                output.AppendLine();
+                output.AppendFormat("[CONVERTED] {0} -> {1}", conversion.Method, conversion.ConvertedExtension);
+                output.AppendLine();
+                output.AppendLine();
+                output.Append(openXmlResult.Text);
 
                 return new ContentProcessorResult(
-                    sb.ToString().TrimEnd(),
+                    output.ToString().TrimEnd(),
                     openXmlResult.ActualModality,
+                    Utf8Data: output.AsSpan().ToArray(),
                     Warning: conversion.Warning ?? openXmlResult.Warning);
             }
             catch
@@ -89,10 +93,7 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
         {
             var warning = "Legacy Office extraction used best-effort OLE2 binary text scanning." +
                           " Formatting, tables, slides, and embedded objects may be missing or noisy.";
-            return new ContentProcessorResult(
-                BuildTextResult(context.RelativePath, bytes.Length, docType, "OLE2 text scan", oleText, warning),
-                OutputModality.Text,
-                Warning: warning);
+            return BuildUtf8Result(context.RelativePath, bytes.Length, docType, "OLE2 text scan", oleText, warning, OutputModality.Text);
         }
 
         // Stage 3: Hex dump last resort
@@ -254,7 +255,7 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
             if (bytes.Length < 8) return null;
             if (bytes[0] != 0xD0 || bytes[1] != 0xCF) return null;
 
-            var sb = new StringBuilder();
+            using var output = ZString.CreateUtf8StringBuilder();
             bool inText = false;
 
             for (int i = 0; i < bytes.Length - 2; i += 2)
@@ -264,24 +265,25 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
 
                 if (high == 0 && low >= 0x20 && low <= 0x7E)
                 {
-                    sb.Append(low);
+                    output.Append(low);
                     inText = true;
                 }
                 else if (high == 0 && (low == '\r' || low == '\n'))
                 {
-                    if (inText) sb.Append(low);
+                    if (inText) output.Append(low);
                 }
                 else
                 {
-                    if (inText && sb.Length > 20)
+                    if (inText && output.Length > 20)
                     {
-                        if (sb[^1] != '\n') sb.Append('\n');
+                        var lastChar = output.AsSpan()[^1];
+                        if (lastChar != (byte)'\n') output.Append('\n');
                     }
                     inText = false;
                 }
             }
 
-            var result = sb.ToString().Trim();
+            var result = output.ToString().Trim();
             return result.Length > 50 ? result : null;
         }
         catch
@@ -302,18 +304,27 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
         _ => "Legacy Office"
     };
 
-    private static string BuildTextResult(
+    private static ContentProcessorResult BuildUtf8Result(
         string relativePath, long size, string docType,
-        string method, string text, string? warning)
+        string method, string text, string? warning,
+        OutputModality modality)
     {
-        var sb = new StringBuilder();
-        sb.AppendLine($"[FILE] {relativePath}  ({FormatSize.Format(size)}, {docType})");
-        sb.AppendLine($"[METHOD] {method}");
+        using var output = ZString.CreateUtf8StringBuilder();
+        output.AppendFormat("[FILE] {0}  ({1}, {2})", relativePath, FormatSize.Format(size), docType);
+        output.AppendLine();
+        output.AppendFormat("[METHOD] {0}", method);
+        output.AppendLine();
         if (warning is not null)
-            sb.AppendLine($"[WARNING] {warning}");
-        sb.AppendLine();
-        sb.Append(text);
-        return sb.ToString().TrimEnd();
+        {
+            output.AppendFormat("[WARNING] {0}", warning);
+            output.AppendLine();
+        }
+        output.AppendLine();
+        output.Append(text);
+        return new ContentProcessorResult(
+            output.ToString().TrimEnd(), modality,
+            Utf8Data: output.AsSpan().ToArray(),
+            Warning: warning);
     }
 
     private static async ValueTask<ContentProcessorResult> HexDumpFallbackAsync(
@@ -334,10 +345,15 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
         var reason = extraReason is not null ? $" ({extraReason})" : "";
         var warning = $"Legacy Office text extraction unavailable{reason}; showing hex dump.";
 
+        using var output2 = ZString.CreateUtf8StringBuilder();
+        output2.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(bytes.Length), docType);
+        output2.AppendLine();
+        output2.AppendFormat("[WARNING] {0}", warning);
+        output2.AppendLine();
+        output2.Append(hexResult.Text);
         return new ContentProcessorResult(
-            $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {docType})\n" +
-            $"[WARNING] {warning}\n{hexResult.Text}",
-            OutputModality.HexDump,
+            output2.ToString().TrimEnd(), OutputModality.HexDump,
+            Utf8Data: output2.AsSpan().ToArray(),
             Warning: warning);
     }
 

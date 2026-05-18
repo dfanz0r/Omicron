@@ -172,6 +172,34 @@ Potential follow-up:
 
 ---
 
+### FH-0029: Improve model feedback for invalid tool-call arguments
+
+Status: Open
+Area: `Omicron.Core/Extensions/BuiltinExecutionToolsExtension.cs`, `Omicron.Core/Tools/`, provider tool-call handling
+Priority: Medium.
+
+Current state:
+
+- The `shell` tool schema marks both `shell` and `command` as required, but models can still emit malformed calls such as an empty `shell` value.
+- Current feedback is technically correct but not model-repair-friendly:
+  `Error: unknown shell ''.`
+- The result wrapper echoes `[shell: ]`, which reinforces the malformed value but does not clearly tell the model how to fix the next call.
+
+Risk:
+
+- Models may repeatedly retry invalid tool calls because the error does not include a concise correction, valid values, or an example repaired call.
+- Similar issues will apply to other tools as schemas grow more structured.
+
+Potential follow-up:
+
+- Add a tool-argument validation layer that returns structured, model-facing repair hints before invoking tool implementations.
+- For enum-like parameters, include valid values and defaults, e.g. `shell is required; use one of: bash, sh, zsh, fish, pwsh, powershell, cmd. Example: { "shell": "bash", "command": "ls -la" }`.
+- Consider making `shell` optional and defaulting it in `LocalExecutionBroker` when omitted, while still warning on empty/invalid values.
+- Surface validation failures as structured `ToolResult` content blocks so TUI/GUI/Web frontends can display them separately from command stderr/stdout.
+- Add regression tests for malformed tool calls: missing required argument, empty string, wrong type, unknown enum value, invalid cwd, and timeout out of range.
+
+---
+
 ## Model Hardening
 
 ### FH-0016: Adopt `ConversationTurn` canonical model in `AgentSession` (long-term)

@@ -52,7 +52,7 @@ public sealed record SessionErrorEvent(
 
 public sealed record UserMessageEvent(
     EventEnvelope Envelope,
-    string Text) : OmicronEvent(Envelope);
+    Utf8String Text) : OmicronEvent(Envelope);
 
 // ============================================================
 // Assistant stream events
@@ -60,13 +60,13 @@ public sealed record UserMessageEvent(
 
 public sealed record AssistantTextDeltaEvent(
     EventEnvelope Envelope,
-    string Delta,
-    string? ReasoningDelta) : OmicronEvent(Envelope);
+    Utf8String Delta,
+    Utf8String? ReasoningDelta) : OmicronEvent(Envelope);
 
 public sealed record AssistantResponseCompleteEvent(
     EventEnvelope Envelope,
-    string FullText,
-    string? ReasoningText,
+    Utf8String FullText,
+    Utf8String? ReasoningText,
     TokenUsage Usage) : OmicronEvent(Envelope);
 
 // ============================================================
@@ -83,10 +83,9 @@ public sealed record ToolInvocationCompletedEvent(
     EventEnvelope Envelope,
     ToolCallId ToolCallId,
     string ToolName,
-    string Result,
+    Utf8String Result,
     bool IsError,
-    List<IContentBlock>? Blocks = null,
-    ReadOnlyMemory<byte>? ResultBytes = null) : OmicronEvent(Envelope);
+    List<IContentBlock>? Blocks = null) : OmicronEvent(Envelope);
 
 // ============================================================
 // Permission events
