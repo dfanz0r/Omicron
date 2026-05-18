@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Providers;
 
@@ -36,9 +37,9 @@ public readonly record struct MessageId(Guid Value)
 public abstract record ConversationContent;
 
 /// <summary>
-/// Text content item.
+/// Text content item backed by UTF-8 data.
 /// </summary>
-public sealed record TextContentItem(string Text) : ConversationContent;
+public sealed record TextContentItem(Utf8String Text) : ConversationContent;
 
 /// <summary>
 /// Image content item (base64-encoded data).
@@ -47,10 +48,12 @@ public sealed record ImageContentItem(string Data, string MimeType) : Conversati
 
 /// <summary>
 /// Reasoning / thinking content from the model.
+/// <c>Summary</c> is <c>null</c> when no reasoning was produced, and
+/// <c>Utf8String.Empty</c> when reasoning was explicitly empty.
 /// ProviderMetadata carries provider-specific reasoning data.
 /// </summary>
 public sealed record ReasoningContentItem(
-    string? Summary,
+    Utf8String? Summary,
     string? EncryptedContent,
     JsonElement? ProviderMetadata) : ConversationContent;
 
@@ -70,7 +73,7 @@ public sealed record ToolCallContentItem(
 public sealed record ToolResultContentItem(
     string ToolCallId,
     string ToolName,
-    string Text,
+    Utf8String Text,
     bool IsError) : ConversationContent;
 
 /// <summary>
@@ -108,6 +111,8 @@ public static class ConversationConverter
 
     /// <summary>
     /// Convert a single Message to a canonical ConversationTurn.
+    /// Preserves UTF-8 text and reasoning data directly without
+    /// materializing intermediate strings.
     /// </summary>
     public static ConversationTurn ToCanonical(Message msg)
     {
@@ -119,7 +124,7 @@ public static class ConversationConverter
             content.Add(new ToolResultContentItem(
                 msg.ToolCallId,
                 msg.ToolName ?? "",
-                msg.GetTextString(),
+                msg.TextData ?? Utf8String.Empty,
                 msg.IsError));
 
             ProviderOrigin? toolResultOrigin = null;
@@ -132,17 +137,16 @@ public static class ConversationConverter
                 msg.Timestamp);
         }
 
-        // Add text content
-        if (!string.IsNullOrEmpty(msg.GetTextString()))
+        // Add text content — keep Utf8String throughout
+        if (msg.HasText)
         {
-            content.Add(new TextContentItem(msg.GetTextString()));
+            content.Add(new TextContentItem(msg.TextData!));
         }
 
         // Add reasoning content (preserve null-vs-empty distinction)
-        var reasoning = msg.GetReasoningStringOrNull();
-        if (reasoning is not null)
+        if (msg.ReasoningData is not null)
         {
-            content.Add(new ReasoningContentItem(reasoning, null, null));
+            content.Add(new ReasoningContentItem(msg.ReasoningData, null, null));
         }
 
         // Add images
@@ -192,13 +196,16 @@ public static class ConversationConverter
 
     /// <summary>
     /// Convert a single ConversationTurn to a Message.
+    /// Reconstructs Utf8String-backed fields directly from the
+    /// content items, avoiding unnecessary string materialization.
     /// </summary>
     public static Message FromCanonical(ConversationTurn turn)
     {
-        var textParts = new List<string>();
+        // Collect Utf8String text parts for joining
+        var textParts = new List<Utf8String>();
         var toolCalls = new List<ToolCallContent>();
         var images = new List<ImageContent>();
-        string? reasoning = null;
+        Utf8String? reasoningUtf8 = null;
         string? toolCallId = null;
         string? toolName = null;
         bool isError = false;
@@ -212,7 +219,7 @@ public static class ConversationConverter
                     break;
 
                 case ReasoningContentItem reasoningItem:
-                    reasoning = reasoningItem.Summary;
+                    reasoningUtf8 = reasoningItem.Summary;
                     break;
 
                 case ImageContentItem imageItem:
@@ -236,9 +243,9 @@ public static class ConversationConverter
             }
         }
 
-        var text = string.Join("\n", textParts);
-        // Normalize: empty string becomes null to match Message default
-        if (text.Length == 0) text = null!;
+        // Join text parts into a single Utf8String
+        Utf8String? textData = JoinTextParts(textParts);
+
         bool hasToolCalls = toolCalls.Count > 0;
 
         if (turn.Role == MessageRole.ToolResult)
@@ -246,7 +253,7 @@ public static class ConversationConverter
             return new Message
             {
                 Role = MessageRole.ToolResult,
-                TextData = string.IsNullOrEmpty(text) ? null : Utf8String.FromString(text),
+                TextData = textData,
                 ToolCallId = toolCallId,
                 ToolName = toolName,
                 IsError = isError,
@@ -259,8 +266,8 @@ public static class ConversationConverter
             return new Message
             {
                 Role = MessageRole.Assistant,
-                TextData = string.IsNullOrEmpty(text) ? null : Utf8String.FromString(text),
-                ReasoningData = reasoning is not null ? Utf8String.FromString(reasoning) : null,
+                TextData = textData,
+                ReasoningData = reasoningUtf8,
                 ToolCalls = toolCalls,
                 ToolCall = toolCalls.Count == 1 ? toolCalls[0] : null,
                 Timestamp = turn.Timestamp.DateTime
@@ -270,10 +277,29 @@ public static class ConversationConverter
         return new Message
         {
             Role = turn.Role,
-            TextData = string.IsNullOrEmpty(text) ? null : Utf8String.FromString(text),
-            ReasoningData = reasoning is not null ? Utf8String.FromString(reasoning) : null,
+            TextData = textData,
+            ReasoningData = reasoningUtf8,
             Images = images.Count > 0 ? images : null,
             Timestamp = turn.Timestamp.DateTime
         };
+    }
+
+    /// <summary>Join a list of Utf8String parts separated by newlines.</summary>
+    private static Utf8String? JoinTextParts(List<Utf8String> parts)
+    {
+        if (parts.Count == 0)
+            return null;
+
+        if (parts.Count == 1)
+            return parts[0];
+
+        using var sb = ZString.CreateUtf8StringBuilder();
+        sb.AppendLiteral(parts[0].Utf8Span);
+        for (int i = 1; i < parts.Count; i++)
+        {
+            sb.AppendLiteral("\n"u8);
+            sb.AppendLiteral(parts[i].Utf8Span);
+        }
+        return Utf8String.FromUtf8(sb.AsSpan());
     }
 }

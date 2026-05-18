@@ -1,4 +1,3 @@
-using System.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;

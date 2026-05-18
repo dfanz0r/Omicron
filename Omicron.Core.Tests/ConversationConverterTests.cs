@@ -1,5 +1,4 @@
 using Omicron.Core.Content;
-using System.Text.Json;
 using Omicron.Core.Models;
 using Xunit;
 
@@ -17,7 +16,7 @@ public class ConversationConverterTests
         Assert.Equal(MessageRole.User, turn.Role);
         Assert.Single(turn.Content);
         var textItem = Assert.IsType<TextContentItem>(turn.Content[0]);
-        Assert.Equal("Hello, world!", textItem.Text);
+        Assert.Equal("Hello, world!", textItem.Text.ToString());
     }
 
     [Fact]
@@ -34,8 +33,11 @@ public class ConversationConverterTests
 
         Assert.Equal(MessageRole.Assistant, turn.Role);
         Assert.Equal(2, turn.Content.Count);
-        Assert.IsType<TextContentItem>(turn.Content[0]);
-        Assert.IsType<ReasoningContentItem>(turn.Content[1]);
+        var textItem = Assert.IsType<TextContentItem>(turn.Content[0]);
+        Assert.Equal("Hello back!", textItem.Text.ToString());
+        var reasoningItem = Assert.IsType<ReasoningContentItem>(turn.Content[1]);
+        Assert.Equal("Thinking...", reasoningItem.Summary!.ToString());
+        Assert.Null(reasoningItem.EncryptedContent);
     }
 
     [Fact]
@@ -66,7 +68,7 @@ public class ConversationConverterTests
         var resultItem = Assert.IsType<ToolResultContentItem>(turn.Content[0]);
         Assert.Equal("call_1", resultItem.ToolCallId);
         Assert.Equal("get_weather", resultItem.ToolName);
-        Assert.Equal("Sunny, 25°C", resultItem.Text);
+        Assert.Equal("Sunny, 25°C", resultItem.Text.ToString());
         Assert.False(resultItem.IsError);
     }
 
@@ -192,5 +194,78 @@ public class ConversationConverterTests
             Assert.Equal(original[i].Role, result[i].Role);
             Assert.Equal(original[i].GetTextString(), result[i].GetTextString());
         }
+    }
+
+    [Fact]
+    public void RoundTrip_EmptyReasoningPreserved()
+    {
+        // Explicit empty reasoning must remain non-null after round-trip
+        var original = new Message
+        {
+            Role = MessageRole.Assistant,
+            ReasoningData = Utf8String.Empty
+        };
+
+        var turn = ConversationConverter.ToCanonical(original);
+        var result = ConversationConverter.FromCanonical(turn);
+
+        Assert.Equal(MessageRole.Assistant, result.Role);
+        Assert.NotNull(result.ReasoningData);
+        Assert.True(result.ReasoningData.IsEmpty);
+    }
+
+    [Fact]
+    public void RoundTrip_NullReasoningStaysNull()
+    {
+        var original = new Message
+        {
+            Role = MessageRole.Assistant,
+            TextData = "No reasoning here"u8
+        };
+
+        var turn = ConversationConverter.ToCanonical(original);
+        var result = ConversationConverter.FromCanonical(turn);
+
+        Assert.Equal(MessageRole.Assistant, result.Role);
+        Assert.Null(result.ReasoningData);
+    }
+
+    [Fact]
+    public void RoundTrip_NonAsciiToolResult()
+    {
+        var original = Message.ToolResultMessage(
+            "call_1", "get_weather", "25°C — 天気良好 ☀️");
+
+        var turn = ConversationConverter.ToCanonical(original);
+        var result = ConversationConverter.FromCanonical(turn);
+
+        Assert.Equal(original.Role, result.Role);
+        Assert.Equal(original.ToolCallId, result.ToolCallId);
+        Assert.Equal(original.ToolName, result.ToolName);
+        Assert.Equal("25°C — 天気良好 ☀️", result.GetTextString());
+    }
+
+    [Fact]
+    public void RoundTrip_MultipleTextContentJoined()
+    {
+        // Simulate a turn with multiple TextContentItems (e.g. mixed text +
+        // tool result without a dedicated role, exercising the JoinTextParts path)
+        var textUtf8 = (Utf8String)"Hello "u8;
+        var resultUtf8 = (Utf8String)"World!"u8;
+        var turn = new ConversationTurn(
+            MessageId.New(),
+            MessageRole.User,
+            new List<ConversationContent>
+            {
+                new TextContentItem(textUtf8),
+                new TextContentItem(resultUtf8)
+            },
+            null,
+            DateTimeOffset.UtcNow);
+
+        var msg = ConversationConverter.FromCanonical(turn);
+
+        Assert.Equal(MessageRole.User, msg.Role);
+        Assert.Equal("Hello \nWorld!", msg.GetTextString());
     }
 }
