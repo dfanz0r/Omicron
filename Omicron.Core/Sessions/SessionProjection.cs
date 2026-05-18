@@ -71,6 +71,7 @@ public sealed class SessionProjector : ISessionProjector
         // Accumulator state for assistant text deltas
         using var accumText = new Utf8TextAccumulator();
         using var accumReasoning = new Utf8TextAccumulator();
+        bool hadAnyReasoning = false;
 
         // Tool-call run tracking
         var pendingToolCalls = new List<ToolCallContent>();
@@ -80,13 +81,15 @@ public sealed class SessionProjector : ISessionProjector
 
         void FlushAssistantText()
         {
-            if (accumText.Length > 0 || accumReasoning.Length > 0)
+            if (accumText.Length > 0 || hadAnyReasoning)
             {
                 messages.Add(new Message
                 {
                     Role = MessageRole.Assistant,
                     TextData = accumText.Length > 0 ? Utf8String.FromBuffer(accumText.ToOwnedBuffer()) : null,
-                    ReasoningData = accumReasoning.Length > 0 ? Utf8String.FromBuffer(accumReasoning.ToOwnedBuffer()) : null,
+                    ReasoningData = hadAnyReasoning
+                        ? (accumReasoning.Length > 0 ? Utf8String.FromBuffer(accumReasoning.ToOwnedBuffer()) : Utf8String.Empty)
+                        : null,
                     Timestamp = lastTimestamp?.DateTime ?? DateTime.UtcNow
                 });
             }
@@ -101,7 +104,9 @@ public sealed class SessionProjector : ISessionProjector
             {
                 Role = MessageRole.Assistant,
                 TextData = accumText.Length > 0 ? Utf8String.FromBuffer(accumText.ToOwnedBuffer()) : null,
-                ReasoningData = accumReasoning.Length > 0 ? Utf8String.FromBuffer(accumReasoning.ToOwnedBuffer()) : null,
+                ReasoningData = hadAnyReasoning
+                    ? (accumReasoning.Length > 0 ? Utf8String.FromBuffer(accumReasoning.ToOwnedBuffer()) : Utf8String.Empty)
+                    : null,
                 ToolCalls = [.. pendingToolCalls],
                 ToolCall = pendingToolCalls.Count == 1 ? pendingToolCalls[0] : null,
                 Timestamp = lastTimestamp?.DateTime ?? DateTime.UtcNow
@@ -137,6 +142,7 @@ public sealed class SessionProjector : ISessionProjector
                     outputTokens = 0;
                     accumText.Clear();
                     accumReasoning.Clear();
+                    hadAnyReasoning = false;
                     pendingToolCalls.Clear();
                     bufferedToolResults.Clear();
                     toolStartCount = 0;
@@ -172,7 +178,10 @@ public sealed class SessionProjector : ISessionProjector
                         FlushToolCallRun();
                     accumText.AppendUtf8(atd.Delta.Utf8Span);
                     if (atd.ReasoningDelta is not null)
+                    {
+                        hadAnyReasoning = true;
                         accumReasoning.AppendUtf8(atd.ReasoningDelta.Utf8Span);
+                    }
                     break;
 
                 case AssistantResponseCompleteEvent arc:
@@ -187,9 +196,13 @@ public sealed class SessionProjector : ISessionProjector
                     // in the next non-tool handler or final flush will emit it.
                     accumText.Clear();
                     accumReasoning.Clear();
+                    hadAnyReasoning = false;
                     accumText.AppendUtf8(arc.FullText.Utf8Span);
                     if (arc.ReasoningText is not null)
+                    {
+                        hadAnyReasoning = true;
                         accumReasoning.AppendUtf8(arc.ReasoningText.Utf8Span);
+                    }
                     break;
 
                 case ToolInvocationStartedEvent tis:

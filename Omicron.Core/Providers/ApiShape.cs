@@ -388,9 +388,11 @@ public class OpenAiChatShape : IApiShape
         writer.WriteString("role", "assistant");
 
         // Write reasoning directly from UTF-8 span, no string allocation
-        var reasoningSpan = msg.ReasoningUtf8;
-        if (!reasoningSpan.IsEmpty)
+        if (msg.ReasoningData is not null)
+        {
+            var reasoningSpan = msg.ReasoningUtf8;
             writer.WriteString("reasoning_content", reasoningSpan);
+        }
 
         var allToolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? [msg.ToolCall] : null);
         if (allToolCalls is { Count: > 0 })

@@ -418,13 +418,15 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
             try
             {
                 using var stream = new FileStream(eventPath, FileMode.Append, FileAccess.Write, FileShare.Read, 4096);
-                await using var writer = new StreamWriter(stream);
 
                 foreach (var evt in events)
                 {
-                    var json = SerializeEvent(evt);
-                    await writer.WriteLineAsync(json);
+                    var bytes = OmicronEventJson.SerializeEvent(evt);
+                    stream.Write(bytes);
+                    stream.WriteByte((byte)'\n');
                 }
+
+                await stream.FlushAsync(ct);
             }
             catch (Exception ex)
             {
@@ -452,22 +454,41 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
         if (!File.Exists(eventPath))
             yield break;
 
-        string[] lines;
+        byte[] fileBytes;
         try
         {
-            lines = await File.ReadAllLinesAsync(eventPath, ct);
+            fileBytes = await File.ReadAllBytesAsync(eventPath, ct);
         }
         catch
         {
             yield break;
         }
 
-        foreach (var line in lines)
+        int offset = 0;
+        while (offset < fileBytes.Length)
         {
-            if (string.IsNullOrWhiteSpace(line)) continue;
             ct.ThrowIfCancellationRequested();
 
-            var evt = DeserializeEvent(line);
+            // Find the next newline (or end of file for the last line)
+            int remaining = fileBytes.Length - offset;
+            int newlinePos = Array.IndexOf(fileBytes, (byte)'\n', offset, remaining);
+
+            ReadOnlyMemory<byte> lineMem;
+            if (newlinePos >= 0)
+            {
+                lineMem = fileBytes.AsMemory(offset, newlinePos - offset);
+                offset = newlinePos + 1;
+            }
+            else
+            {
+                lineMem = fileBytes.AsMemory(offset);
+                offset = fileBytes.Length;
+            }
+
+            // Skip empty lines
+            if (lineMem.IsEmpty) continue;
+
+            var evt = OmicronEventJson.DeserializeEvent(lineMem);
             if (evt is null) continue;
 
             if (range.FromExclusive.HasValue && evt.Sequence <= range.FromExclusive.Value)
@@ -479,21 +500,40 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
         }
     }
 
-    public ValueTask<long> GetEventCountAsync(SessionId sessionId, CancellationToken ct = default)
+    public async ValueTask<long> GetEventCountAsync(SessionId sessionId, CancellationToken ct = default)
     {
         var eventPath = EventPath(sessionId);
         if (!File.Exists(eventPath))
-            return ValueTask.FromResult(0L);
+            return 0L;
 
         try
         {
-            var count = File.ReadLines(eventPath).Count(l => !string.IsNullOrWhiteSpace(l));
-            return ValueTask.FromResult((long)count);
+            var bytes = await File.ReadAllBytesAsync(eventPath, ct);
+            return CountNonEmptyLines(bytes);
         }
         catch
         {
-            return ValueTask.FromResult(0L);
+            return 0L;
         }
+    }
+
+    private static int CountNonEmptyLines(byte[] bytes)
+    {
+        int count = 0;
+        var span = bytes.AsSpan();
+        int start = 0;
+        while (start < span.Length)
+        {
+            int end = span.Slice(start).IndexOf((byte)'\n');
+            if (end < 0)
+            {
+                if (start < span.Length) count++;
+                break;
+            }
+            if (end > 0) count++; // non-empty line
+            start = start + end + 1;
+        }
+        return count;
     }
 
     public void Dispose()
@@ -540,7 +580,8 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
 
         try
         {
-            return File.ReadLines(eventPath).Count(l => !string.IsNullOrWhiteSpace(l));
+            var bytes = File.ReadAllBytes(eventPath);
+            return CountNonEmptyLines(bytes);
         }
         catch
         {
@@ -548,44 +589,5 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
         }
     }
 
-    // ============================================================
-    // JSONL serialization helpers
-    // ============================================================
 
-    /// <summary>Serialize an OmicronEvent to JSON with a $type discriminator.</summary>
-    private string SerializeEvent(OmicronEvent evt)
-    {
-        var json = JsonSerializer.Serialize((object)evt, evt.GetType(), _jsonOptions);
-        var node = JsonNode.Parse(json)!;
-        node["$type"] = evt.GetType().Name;
-        return node.ToJsonString(_jsonOptions);
-    }
-
-    private static readonly JsonSerializerOptions _eventJsonOptions = OmicronEventJson.CreateOptions();
-
-    /// <summary>Deserialize a JSON line to an OmicronEvent using the $type discriminator.</summary>
-    private static OmicronEvent? DeserializeEvent(string line)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(line);
-            var root = doc.RootElement;
-
-            if (!root.TryGetProperty("$type", out var typeEl))
-                return null;
-
-            var typeName = typeEl.GetString();
-            if (typeName is null) return null;
-
-            var type = OmicronEventRegistry.GetType(typeName);
-            if (type is not null)
-                return (OmicronEvent?)JsonSerializer.Deserialize(line, type, _eventJsonOptions);
-
-            return null;
-        }
-        catch
-        {
-            return null;
-        }
-    }
 }

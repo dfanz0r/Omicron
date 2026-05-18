@@ -479,15 +479,16 @@ public sealed class AgentSession
 
                     if (resultUtf8Data.HasValue)
                     {
+                        var utf8Result = Utf8String.FromUtf8(resultUtf8Data.Value.Span);
                         _messages.Add(Message.ToolResultMessage(
                             toolCall.Id, toolCall.Name,
-                            Utf8String.FromUtf8(resultUtf8Data.Value.Span),
+                            utf8Result,
                             isError));
 
                         yield return Emit(new ToolInvocationCompletedEvent(
                             _writer.Envelope(),
                             toolCallId, toolCall.Name,
-                            Utf8String.FromString(resultText ?? string.Empty),
+                            utf8Result,
                             isError, resultBlocks));
                     }
                     else
