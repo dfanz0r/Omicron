@@ -44,7 +44,7 @@ public interface IExecutionBroker
 
 /// <summary>
 /// Default execution broker that runs commands on the local machine.
-/// Implementation adapted from ShellTools with timeout, truncation, and output merging.
+/// Executes commands via direct process spawn with timeout, truncation, and output merging.
 /// </summary>
 public sealed class LocalExecutionBroker : IExecutionBroker
 {
