@@ -2,6 +2,7 @@ using System.Text;
 using Omicron.Core.Models;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
+using Omicron.Core.Text;
 
 namespace Omicron.CLI.Tui;
 
@@ -88,9 +89,11 @@ public sealed class TuiModelPicker : ITuiWidget
         // Show scroll indicator if scrolled
         if (_scrollOffset > 0)
         {
-            context.DrawText(_bounds.X + 1,
-                y,
-                Encoding.UTF8.GetBytes($" \u2191 {_scrollOffset} more..."),
+            using var scrollUpBuilder = new Utf8Builder();
+            scrollUpBuilder.AppendLiteral(" \xe2\x86\x91 "u8);
+            scrollUpBuilder.Append(_scrollOffset);
+            scrollUpBuilder.AppendLiteral(" more..."u8);
+            context.DrawText(_bounds.X + 1, y, scrollUpBuilder.AsSpan(),
                 TextStyle.ForegroundOnly(120, 120, 130));
             y++;
             visibleRows--;
@@ -125,9 +128,11 @@ public sealed class TuiModelPicker : ITuiWidget
         if (endIndex < count)
         {
             int remaining = count - endIndex;
-            context.DrawText(_bounds.X + 1,
-                y,
-                Encoding.UTF8.GetBytes($" \u2193 {remaining} more..."),
+            using var scrollDownBuilder = new Utf8Builder();
+            scrollDownBuilder.AppendLiteral(" \xe2\x86\x93 "u8);
+            scrollDownBuilder.Append(remaining);
+            scrollDownBuilder.AppendLiteral(" more..."u8);
+            context.DrawText(_bounds.X + 1, y, scrollDownBuilder.AsSpan(),
                 TextStyle.ForegroundOnly(120, 120, 130));
         }
     }

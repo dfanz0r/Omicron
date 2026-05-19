@@ -921,28 +921,33 @@ public sealed class InputEditorWidget : ITuiWidget
         context.FillRect(new Rect(popupX, popupStart, popupWidth, maxItems + 1), popupBg);
 
         // Title
-        context.DrawText(popupX + 1,
-            popupStart,
-            Encoding.UTF8.GetBytes($" Completions ({PendingCompletions.Count}): "),
+        using var titleBuilder = new Utf8Builder();
+        titleBuilder.AppendLiteral(" Completions ("u8);
+        titleBuilder.Append(PendingCompletions.Count);
+        titleBuilder.AppendLiteral("): "u8);
+        context.DrawText(popupX + 1, popupStart, titleBuilder.AsSpan(),
             TextStyle.ForegroundOnly(150, 150, 160));
 
         // Items (first item highlighted)
         for (int i = 0; i < maxItems; i++)
         {
-            string line = $" {PendingCompletions[i]}";
-            TextStyle itemStyle = i == 0 ? TextStyle.Inverted : TextStyle.ForegroundOnly(200, 200, 200);
-            context.DrawText(popupX + 1,
-                popupStart + 1 + i,
-                Encoding.UTF8.GetBytes(line),
-                itemStyle);
+            var itemStyle = (i == 0)
+                ? TextStyle.Inverted
+                : TextStyle.ForegroundOnly(200, 200, 200);
+            using var itemBuilder = new Utf8Builder();
+            itemBuilder.AppendLiteral(" "u8);
+            itemBuilder.Append(PendingCompletions[i]);
+            context.DrawText(popupX + 1, popupStart + 1 + i, itemBuilder.AsSpan(), itemStyle);
         }
 
         // If there are more items than we can show, indicate that
         if (PendingCompletions.Count > maxItems)
         {
-            context.DrawText(popupX + 1,
-                popupStart + 1 + maxItems - 1,
-                Encoding.UTF8.GetBytes($" ... and {PendingCompletions.Count - maxItems + 1} more"),
+            using var moreBuilder = new Utf8Builder();
+            moreBuilder.AppendLiteral(" ... and "u8);
+            moreBuilder.Append(PendingCompletions.Count - maxItems + 1);
+            moreBuilder.AppendLiteral(" more"u8);
+            context.DrawText(popupX + 1, popupStart + 1 + maxItems - 1, moreBuilder.AsSpan(),
                 TextStyle.ForegroundOnly(120, 120, 130));
         }
     }

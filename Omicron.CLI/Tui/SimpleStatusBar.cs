@@ -39,8 +39,11 @@ public static class SimpleStatusBar
         // Left: model name
         if (!string.IsNullOrEmpty(modelName))
         {
-            byte[] leftBytes = Encoding.UTF8.GetBytes($" {modelName} ");
-            frame.SetText(row, 0, leftBytes, style);
+            using var leftBuilder = new Utf8Builder();
+            leftBuilder.AppendLiteral(" "u8);
+            leftBuilder.Append(modelName);
+            leftBuilder.AppendLiteral(" "u8);
+            frame.SetText(row, 0, leftBuilder.AsSpan(), style);
         }
 
         // Center: provider (using display width, not string length)
@@ -62,13 +65,12 @@ public static class SimpleStatusBar
         {
             int rightWidth = GetDisplayWidth(rightText);
             int rightCol = frame.Width - rightWidth - 1;
-            if (rightCol < 0)
-            {
-                rightCol = 0;
-            }
-
-            byte[] rightBytes = Encoding.UTF8.GetBytes($" {rightText} ");
-            frame.SetText(row, rightCol, rightBytes, style);
+            if (rightCol < 0) rightCol = 0;
+            using var rightBuilder = new Utf8Builder();
+            rightBuilder.AppendLiteral(" "u8);
+            rightBuilder.Append(rightText);
+            rightBuilder.AppendLiteral(" "u8);
+            frame.SetText(row, rightCol, rightBuilder.AsSpan(), style);
         }
     }
 

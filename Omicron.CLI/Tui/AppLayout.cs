@@ -4,6 +4,7 @@ using Omicron.Core.Models;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
 using Omicron.Core.Sessions;
+using Omicron.Core.Text;
 
 namespace Omicron.CLI.Tui;
 
@@ -463,9 +464,11 @@ public sealed class AppLayout : IDisposable
         context.FillRect(new Rect(toastX, toastY, toastWidth, 1), toastBg);
 
         // Draw text
-        context.DrawText(toastX + 2,
-            toastY,
-            Encoding.UTF8.GetBytes($" {toast} "),
+        using var toastBuilder = new Utf8Builder();
+        toastBuilder.AppendLiteral(" "u8);
+        toastBuilder.Append(toast);
+        toastBuilder.AppendLiteral(" "u8);
+        context.DrawText(toastX + 2, toastY, toastBuilder.AsSpan(),
             TextStyle.ForegroundOnly(200, 200, 200));
     }
 
