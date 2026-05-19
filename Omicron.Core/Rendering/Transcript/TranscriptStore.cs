@@ -79,9 +79,14 @@ public sealed class TranscriptStore
     {
         var id = BlockId.New();
         // Write a placeholder text
-        using var tempBuilder = ZString.CreateUtf8StringBuilder();
-        tempBuilder.AppendFormat("[tool: {0}]", toolName);
-        var textBytes = tempBuilder.AsSpan().ToArray();
+        byte[] textBytes;
+        var tempBuilder = ZString.CreateUtf8StringBuilder();
+        try
+        {
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref tempBuilder, "[tool: {0}]"u8, toolName);
+            textBytes = tempBuilder.AsSpan().ToArray();
+        }
+        finally { tempBuilder.Dispose(); }
         var pos = Text.Append(textBytes);
         var block = new ToolCallBlock(id, pos, textBytes.Length, toolName, toolCallId, ToolCallState.Running);
         _blocks.Add(block);

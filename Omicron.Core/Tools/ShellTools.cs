@@ -162,7 +162,7 @@ public static class ShellTools
         {
             var fallback = isWindows
                 ? new ShellInfo { Id = "cmd", Name = "cmd.exe", Path = "cmd.exe", Args = "/c" }
-                : new ShellInfo { Id = "sh",   Name = "/bin/sh",   Path = "/bin/sh",   Args = "-c" };
+                : new ShellInfo { Id = "sh", Name = "/bin/sh", Path = "/bin/sh", Args = "-c" };
 
             _detected.Add(fallback);
         }

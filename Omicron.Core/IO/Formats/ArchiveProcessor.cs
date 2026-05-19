@@ -1,6 +1,7 @@
 using System.Text;
 using Cysharp.Text;
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 using SharpCompress.Archives;
 using SharpCompress.Readers;
 
@@ -38,33 +39,37 @@ public sealed class ArchiveProcessor : IContentProcessor
             _ => "Archive"
         };
 
-        using var output = ZString.CreateUtf8StringBuilder();
-        output.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(bytes.Length), formatName);
-        output.AppendLine();
-        output.AppendLine();
-
-        // Try to list contents from archive
-        var entries = TryListContents(bytes.Span, ext);
-        if (entries is not null)
+        var output = ZString.CreateUtf8StringBuilder();
+        try
         {
-            output.AppendFormat("Contents ({0} entries):", entries.Count);
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(bytes.Length), formatName);
             output.AppendLine();
             output.AppendLine();
-            foreach (var entry in entries)
+
+            // Try to list contents from archive
+            var entries = TryListContents(bytes.Span, ext);
+            if (entries is not null)
             {
-                output.AppendFormat("  {0}", entry);
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "Contents ({0} entries):"u8, entries.Count);
+                output.AppendLine();
+                output.AppendLine();
+                foreach (var entry in entries)
+                {
+                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "  {0}"u8, entry);
+                    output.AppendLine();
+                }
+            }
+            else
+            {
+                output.AppendLiteral("(archive listing unavailable — use shell commands to inspect)"u8);
                 output.AppendLine();
             }
-        }
-        else
-        {
-            output.AppendLiteral("(archive listing unavailable — use shell commands to inspect)"u8);
-            output.AppendLine();
-        }
 
-        return ValueTask.FromResult(new ContentProcessorResult(
-            output.ToString().TrimEnd(), OutputModality.Text,
-            Utf8Data: output.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(
+                output.ToString().TrimEnd(), OutputModality.Text,
+                Utf8Data: output.AsSpan().ToArray()));
+        }
+        finally { output.Dispose(); }
     }
 
     /// <summary>

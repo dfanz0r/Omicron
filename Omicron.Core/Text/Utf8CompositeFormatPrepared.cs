@@ -46,7 +46,7 @@ public sealed class PreparedUtf8CompositeFormat<T1>
     internal PreparedUtf8CompositeFormat(ReadOnlySpan<byte> format)
     {
         (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, maxIndex: 0);
-    _formatBuffer = format.ToArray();
+        _formatBuffer = format.ToArray();
     }
 
     /// <summary>Format into a fixed buffer.</summary>
@@ -112,7 +112,7 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2>
     internal PreparedUtf8CompositeFormat(ReadOnlySpan<byte> format)
     {
         (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, maxIndex: 1);
-    _formatBuffer = format.ToArray();
+        _formatBuffer = format.ToArray();
     }
 
     /// <summary>Format into a fixed buffer.</summary>
@@ -186,7 +186,7 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2, T3>
     internal PreparedUtf8CompositeFormat(ReadOnlySpan<byte> format)
     {
         (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, maxIndex: 2);
-    _formatBuffer = format.ToArray();
+        _formatBuffer = format.ToArray();
     }
 
     /// <summary>Format into a fixed buffer.</summary>
@@ -264,7 +264,7 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2, T3, T4>
     internal PreparedUtf8CompositeFormat(ReadOnlySpan<byte> format)
     {
         (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, maxIndex: 3);
-    _formatBuffer = format.ToArray();
+        _formatBuffer = format.ToArray();
     }
 
     /// <summary>Format into a fixed buffer.</summary>
@@ -501,7 +501,7 @@ public static partial class Utf8CompositeFormat
         }
         if (!hasDigit)
             throw new FormatException("Empty placeholder.");
-        
+
         alignment = 0;
         if (i < format.Length && format[i] == (byte)',')
         {
@@ -516,7 +516,7 @@ public static partial class Utf8CompositeFormat
             }
             if (neg) alignment = -alignment;
         }
-        
+
         specStart = -1;
         specLength = 0;
         if (i < format.Length && format[i] == (byte)':')
@@ -532,7 +532,7 @@ public static partial class Utf8CompositeFormat
                 i++;
             }
         }
-        
+
         if (i >= format.Length || format[i] != (byte)'}')
             throw new FormatException("Missing closing '}' in placeholder.");
         // Note: for loop caller increments i past '}'

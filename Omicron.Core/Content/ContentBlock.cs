@@ -694,14 +694,14 @@ public sealed class ContentBlockJsonConverter : JsonConverter<IContentBlock>
         var kind = kindEl.GetString() ?? "";
         return kind switch
         {
-            "plain_text"    => PlainTextContentBlock.FromJson(root),
-            "markdown"      => MarkdownContentBlock.FromJson(root),
-            "code"          => CodeContentBlock.FromJson(root),
-            "diff"          => DiffContentBlock.FromJson(root),
-            "file_preview"  => FilePreviewContentBlock.FromJson(root),
-            "error"         => ErrorContentBlock.FromJson(root),
-            "tool_call"     => ToolCallContentBlock.FromJson(root),
-            _               => throw new JsonException($"Unknown content block kind: {kind}")
+            "plain_text" => PlainTextContentBlock.FromJson(root),
+            "markdown" => MarkdownContentBlock.FromJson(root),
+            "code" => CodeContentBlock.FromJson(root),
+            "diff" => DiffContentBlock.FromJson(root),
+            "file_preview" => FilePreviewContentBlock.FromJson(root),
+            "error" => ErrorContentBlock.FromJson(root),
+            "tool_call" => ToolCallContentBlock.FromJson(root),
+            _ => throw new JsonException($"Unknown content block kind: {kind}")
         };
     }
 }

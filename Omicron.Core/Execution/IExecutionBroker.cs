@@ -1,8 +1,10 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Cysharp.Text;
 using Omicron.Core.Events;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Execution;
 
@@ -140,20 +142,10 @@ public sealed class LocalExecutionBroker : IExecutionBroker
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-        var outputLock = new object();
-
-        process.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-                lock (outputLock) stdout.AppendLine(e.Data);
-        };
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-                lock (outputLock) stderr.AppendLine(e.Data);
-        };
+        // Byte-oriented output capture: read from base streams instead of
+        // using BeginOutputReadLine (which always produces strings).
+        var stdoutBytes = new ArrayBufferWriter<byte>();
+        var stderrBytes = new ArrayBufferWriter<byte>();
 
         var stopwatch = Stopwatch.StartNew();
         int exitCode = -1;
@@ -164,27 +156,53 @@ public sealed class LocalExecutionBroker : IExecutionBroker
         try
         {
             process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
+
+            // Drain a process stream into an ArrayBufferWriter<byte>
+            async Task DrainStreamAsync(Stream stream, ArrayBufferWriter<byte> writer, CancellationToken token)
+            {
+                byte[] buf = ArrayPool<byte>.Shared.Rent(8192);
+                try
+                {
+                    while (true)
+                    {
+                        var read = await stream.ReadAsync(buf.AsMemory(0, buf.Length), token);
+                        if (read == 0) break;
+                        writer.Write(buf.AsSpan(0, read));
+                    }
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buf);
+                }
+            }
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
 
+            var drainToken = cts.Token;
+            var stdoutTask = DrainStreamAsync(process.StandardOutput.BaseStream, stdoutBytes, drainToken);
+            var stderrTask = DrainStreamAsync(process.StandardError.BaseStream, stderrBytes, drainToken);
+
             try
             {
-                await process.WaitForExitAsync(cts.Token);
+                await Task.WhenAll(stdoutTask, stderrTask, process.WaitForExitAsync(drainToken));
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                timedOut = true;
             }
             catch (OperationCanceledException)
             {
-                if (ct.IsCancellationRequested)
-                    cancelled = true;
-                else
-                    timedOut = true;
-                KillProcessTree(process);
+                cancelled = true;
             }
 
-            if (!timedOut && !cancelled)
+            if (timedOut || cancelled)
+                KillProcessTree(process);
+            else
+            {
+                // Drain any remaining data after WaitForExit (process may close streams before fully exiting)
                 process.WaitForExit(1000);
+            }
 
             exitCode = timedOut ? -1 : process.ExitCode;
         }
@@ -197,80 +215,104 @@ public sealed class LocalExecutionBroker : IExecutionBroker
 
         stopwatch.Stop();
 
-        // Build output using Utf8ValueStringBuilder.
-        var outputStr = stdout.ToString();
-        var errorStr = stderr.ToString();
-
-        // Merge stderr into output if stdout is empty
-        if (outputStr.Length == 0 && errorStr.Length > 0)
-        {
-            outputStr = errorStr;
-            errorStr = "";
-        }
-
-        // Truncate
-        var truncated = false;
-        var lines = new List<string>();
-        string? lineStr;
-        using (var outputReader = new StringReader(outputStr))
-        {
-            while ((lineStr = outputReader.ReadLine()) is not null)
-                lines.Add(lineStr);
-        }
-        var totalLines = lines.Count;
-
-        if (totalLines > MaxOutputLines)
-        {
-            lines = lines.GetRange(0, MaxOutputLines);
-            truncated = true;
-        }
-
+        // Build output using Utf8ValueStringBuilder with byte-oriented line handling.
         var builder = ZString.CreateUtf8StringBuilder();
         try
         {
-            // Append truncated output
-            int bytesUsed = 0;
-            foreach (var line in lines)
+            var stdoutSpan = stdoutBytes.WrittenSpan;
+            var stderrSpan = stderrBytes.WrittenSpan;
+
+            // Helper: count \n occurrences in a byte span
+            static int CountLines(ReadOnlySpan<byte> span)
             {
-                var lineBytes = Encoding.UTF8.GetByteCount(line) + 1;
-                if (bytesUsed + lineBytes > MaxOutputBytes)
-                {
-                    truncated = true;
-                    break;
-                }
-                builder.Append(line);
-                builder.AppendLine();
-                bytesUsed += lineBytes;
+                int count = 0;
+                for (int i = 0; i < span.Length; i++)
+                    if (span[i] == (byte)'\n') count++;
+                return count;
             }
+
+            // Merge stderr into stdout if stdout is empty
+            if (stdoutSpan.IsEmpty && !stderrSpan.IsEmpty)
+            {
+                stdoutSpan = stderrSpan;
+                stderrSpan = default;
+            }
+
+            int totalLines = CountLines(stdoutSpan);
+            int writtenBytes = 0;
+            int linesWritten = 0;
+            bool truncated = false;
+
+            // Scan and copy stdout lines up to the limits
+            int lineStart = 0;
+            for (int i = 0; i <= stdoutSpan.Length && linesWritten < MaxOutputLines && writtenBytes < MaxOutputBytes; i++)
+            {
+                if (i == stdoutSpan.Length || stdoutSpan[i] == (byte)'\n')
+                {
+                    int lineLen = i - lineStart;
+                    // Strip trailing \r
+                    if (lineLen > 0 && stdoutSpan[lineStart + lineLen - 1] == (byte)'\r')
+                        lineLen--;
+
+                    int lineCost = lineLen + 1; // +1 for \n we'll append
+                    if (writtenBytes + lineCost > MaxOutputBytes)
+                    {
+                        truncated = true;
+                        break;
+                    }
+
+                    if (lineLen > 0)
+                        builder.AppendLiteral(stdoutSpan.Slice(lineStart, lineLen));
+                    builder.AppendLine();
+                    writtenBytes += lineCost;
+                    linesWritten++;
+                    lineStart = i + 1;
+                }
+            }
+
+            // If we didn't reach the end of stdoutSpan, we truncated
+            if (lineStart < stdoutSpan.Length)
+                truncated = true;
 
             if (truncated)
             {
                 builder.AppendLine();
-                builder.AppendFormat("[Output truncated. Full: {0:N0} lines, {1:N0} bytes.]", totalLines, Encoding.UTF8.GetByteCount(outputStr));
+                Utf8CompositeFormat.AppendFormatUtf8(
+                    ref builder,
+                    "[Output truncated. Full: {0:N0} lines, {1:N0} bytes.]"u8,
+                    totalLines, stdoutBytes.WrittenCount);
                 builder.AppendLine();
             }
 
             // Append stderr (first 50 lines)
-            if (errorStr.Length > 0)
+            if (stderrSpan.Length > 0)
             {
                 builder.AppendLine();
                 builder.AppendLiteral("--- stderr ---"u8);
                 builder.AppendLine();
                 int stderrLineCount = 0;
-                using var stderrReader = new StringReader(errorStr);
-                string? stderrLine;
-                while ((stderrLine = stderrReader.ReadLine()) is not null)
+                int stderrLineStart = 0;
+                for (int i = 0; i <= stderrSpan.Length && stderrLineCount < 50; i++)
                 {
-                    stderrLineCount++;
-                    if (stderrLineCount <= 50)
+                    if (i == stderrSpan.Length || stderrSpan[i] == (byte)'\n')
                     {
-                        builder.Append(stderrLine);
+                        int lineLen = i - stderrLineStart;
+                        if (lineLen > 0 && stderrSpan[stderrLineStart + lineLen - 1] == (byte)'\r')
+                            lineLen--;
+                        stderrLineCount++;
+                        if (lineLen > 0)
+                            builder.AppendLiteral(stderrSpan.Slice(stderrLineStart, lineLen));
                         builder.AppendLine();
+                        stderrLineStart = i + 1;
                     }
                 }
-                if (stderrLineCount > 50)
+                int totalStderrLines = CountLines(stderrSpan);
+                if (totalStderrLines > 50)
                 {
-                    builder.AppendFormat("... and {0} more stderr lines", stderrLineCount - 50);
+                    Utf8CompositeFormat.AppendFormatUtf8(
+                        ref builder,
+                        "... and {0} more stderr lines"u8,
+                        totalStderrLines - 50);
                     builder.AppendLine();
                 }
             }
@@ -278,11 +320,11 @@ public sealed class LocalExecutionBroker : IExecutionBroker
             // Status line
             builder.AppendLine();
             if (timedOut)
-                builder.AppendFormat("--- (timed out after {0}s) ---", timeoutSec);
+                Utf8CompositeFormat.AppendFormatUtf8(ref builder, "--- (timed out after {0}s) ---"u8, timeoutSec);
             else if (cancelled)
                 builder.AppendLiteral("--- (cancelled) ---"u8);
             else
-                builder.AppendFormat("--- (exit {0}, {1:F1}s) ---", exitCode, stopwatch.Elapsed.TotalSeconds);
+                Utf8CompositeFormat.AppendFormatUtf8(ref builder, "--- (exit {0}, {1:F1}s) ---"u8, exitCode, stopwatch.Elapsed.TotalSeconds);
             builder.AppendLine();
 
             var resultBytes = builder.AsSpan().ToArray();
@@ -290,10 +332,7 @@ public sealed class LocalExecutionBroker : IExecutionBroker
                 Encoding.UTF8.GetString(resultBytes).TrimEnd(), errorMessage,
                 utf8Output: resultBytes);
         }
-        finally
-        {
-            builder.Dispose();
-        }
+        finally { builder.Dispose(); }
     }
 
     private static string DetectDefaultShell()

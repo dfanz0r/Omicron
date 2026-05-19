@@ -1,5 +1,6 @@
 using System.Text;
 using Cysharp.Text;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
 
@@ -60,7 +61,7 @@ public sealed class TextProcessor : IContentProcessor
             {
                 if (isBinary)
                 {
-                    builder.AppendFormat("[WARNING: binary file] {0}", context.RelativePath);
+                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref builder, "[WARNING: binary file] {0}"u8, context.RelativePath);
                     builder.AppendLine();
                 }
                 BuildTextOutputUtf8(context, span, ref builder, isBinary);
@@ -81,7 +82,7 @@ public sealed class TextProcessor : IContentProcessor
             {
                 if (isBinary)
                 {
-                    builder.AppendFormat("[WARNING: binary file] {0}", context.RelativePath);
+                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref builder, "[WARNING: binary file] {0}"u8, context.RelativePath);
                     builder.AppendLine();
                 }
                 BuildTextOutputFallback(context, span, encoding, ref builder, isBinary);
@@ -111,7 +112,7 @@ public sealed class TextProcessor : IContentProcessor
 
         if (!isBinary)
         {
-            builder.AppendFormat("[FILE] {0}  ({1} lines)", context.RelativePath, totalLines);
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref builder, "[FILE] {0}  ({1} lines)"u8, context.RelativePath, totalLines);
             builder.AppendLine();
         }
 
@@ -143,10 +144,10 @@ public sealed class TextProcessor : IContentProcessor
             if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\r')
                 lineLength--;
 
-            // Format: "     6| <line content>"
-            var prefix = $"{i + 1,6}| ";
-            var prefixBytes = Encoding.UTF8.GetByteCount(prefix);
-            int lineBytes = prefixBytes + lineLength + 1; // prefix + content + newline
+            // Format: "     6| <line content>"  — build prefix without string allocation
+            // "{0,6}| " is always 8 bytes for 0-999999
+            const int RowPrefixBytes = 8;
+            int lineBytes = RowPrefixBytes + lineLength + 1; // prefix + content + newline
 
             if (writtenLines >= maxOutputLines ||
                 writtenBytes + lineBytes > maxOutputBytes)
@@ -155,7 +156,10 @@ public sealed class TextProcessor : IContentProcessor
                 break;
             }
 
-            builder.Append(prefix);
+            int digits = (i + 1) < 10 ? 1 : (i + 1) < 100 ? 2 : (i + 1) < 1000 ? 3 : (i + 1) < 10000 ? 4 : 5;
+            for (int s = 0; s < 6 - digits; s++) builder.Append(' ');
+            builder.Append(i + 1);
+            builder.AppendLiteral("| "u8);
             builder.AppendLiteral(span.Slice(lineByteStart, lineLength));
             builder.AppendLine();
             writtenLines++;
@@ -164,7 +168,7 @@ public sealed class TextProcessor : IContentProcessor
 
         if (truncated)
         {
-            builder.AppendFormat("... output truncated ({0} total lines, showing {1})", totalLines, writtenLines);
+            Utf8CompositeFormat.AppendFormatUtf8(ref builder, "... output truncated ({0} total lines, showing {1})"u8, totalLines, writtenLines);
             builder.AppendLine();
         }
     }
@@ -192,7 +196,7 @@ public sealed class TextProcessor : IContentProcessor
 
         if (!isBinary)
         {
-            builder.AppendFormat("[FILE] {0}  ({1} lines)", context.RelativePath, totalLines);
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref builder, "[FILE] {0}  ({1} lines)"u8, context.RelativePath, totalLines);
             builder.AppendLine();
         }
 
@@ -215,9 +219,9 @@ public sealed class TextProcessor : IContentProcessor
         for (int i = startLine; i < endLine; i++)
         {
             var lineText = lines[i];
-            var prefix = $"{i + 1,6}| ";
-            var prefixBytes = Encoding.UTF8.GetByteCount(prefix);
-            int lineBytes = prefixBytes + Encoding.UTF8.GetByteCount(lineText) + 1;
+            // Build prefix without allocation: "{0,6}| " = 8 bytes for 0-999999
+            const int RowPrefixBytes = 8;
+            int lineBytes = RowPrefixBytes + Encoding.UTF8.GetByteCount(lineText) + 1;
 
             if (writtenLines >= maxOutputLines ||
                 writtenBytes + lineBytes > maxOutputBytes)
@@ -226,7 +230,10 @@ public sealed class TextProcessor : IContentProcessor
                 break;
             }
 
-            builder.Append(prefix);
+            int digits = (i + 1) < 10 ? 1 : (i + 1) < 100 ? 2 : (i + 1) < 1000 ? 3 : (i + 1) < 10000 ? 4 : 5;
+            for (int s = 0; s < 6 - digits; s++) builder.Append(' ');
+            builder.Append(i + 1);
+            builder.AppendLiteral("| "u8);
             builder.Append(lineText);
             builder.AppendLine();
             writtenLines++;
@@ -235,7 +242,7 @@ public sealed class TextProcessor : IContentProcessor
 
         if (truncated)
         {
-            builder.AppendFormat("... output truncated ({0} total lines, showing {1})", totalLines, writtenLines);
+            Utf8CompositeFormat.AppendFormatUtf8(ref builder, "... output truncated ({0} total lines, showing {1})"u8, totalLines, writtenLines);
             builder.AppendLine();
         }
     }

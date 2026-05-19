@@ -152,58 +152,58 @@ public sealed class WorkspaceTransaction : IWorkspaceTransaction
             switch (entry.Action)
             {
                 case StagedAction.Write:
-                {
-                    var fileDiff = await BuildDiff(wsPath, entry, ct);
-                    if (fileDiff is not null)
-                        fileDiffs.Add(fileDiff);
-                    break;
-                }
+                    {
+                        var fileDiff = await BuildDiff(wsPath, entry, ct);
+                        if (fileDiff is not null)
+                            fileDiffs.Add(fileDiff);
+                        break;
+                    }
                 case StagedAction.Delete:
-                {
-                    var oldStat = await _host.StatAsync(wsPath, ct);
-                    if (oldStat is null) break;
-                    if (oldStat.IsBinary)
                     {
-                        fileDiffs.Add(new WorkspaceFileDiff(wsPath, WorkspaceChangeKind.Deleted, pathStr, null, true, false));
+                        var oldStat = await _host.StatAsync(wsPath, ct);
+                        if (oldStat is null) break;
+                        if (oldStat.IsBinary)
+                        {
+                            fileDiffs.Add(new WorkspaceFileDiff(wsPath, WorkspaceChangeKind.Deleted, pathStr, null, true, false));
+                        }
+                        else
+                        {
+                            var oldBytes = await _host.ReadFileAsync(wsPath, ct);
+                            var oldLines = TextLineSplitter.CreateUtf8LineIndex(oldBytes);
+                            var diff = TextDiffEngine.DiffLines(oldLines, Utf8LineIndex.Empty);
+                            var textDiff = UnifiedDiffRenderer.Render(pathStr, "/dev/null", oldLines, Utf8LineIndex.Empty, diff);
+                            fileDiffs.Add(new WorkspaceFileDiff(wsPath, WorkspaceChangeKind.Deleted, pathStr, textDiff, false, false));
+                        }
+                        break;
                     }
-                    else
-                    {
-                        var oldBytes = await _host.ReadFileAsync(wsPath, ct);
-                        var oldLines = TextLineSplitter.CreateUtf8LineIndex(oldBytes);
-                        var diff = TextDiffEngine.DiffLines(oldLines, Utf8LineIndex.Empty);
-                        var textDiff = UnifiedDiffRenderer.Render(pathStr, "/dev/null", oldLines, Utf8LineIndex.Empty, diff);
-                        fileDiffs.Add(new WorkspaceFileDiff(wsPath, WorkspaceChangeKind.Deleted, pathStr, textDiff, false, false));
-                    }
-                    break;
-                }
                 case StagedAction.MoveTo:
-                {
-                    handled.Add(entry.MoveFromPath!);
-                    var fromPath = entry.MoveFromPath!;
-                    var fromWsPath = new WorkspacePath(fromPath);
-                    var oldStat = await _host.StatAsync(fromWsPath, ct);
-                    bool isBinary = oldStat?.IsBinary ?? false;
-
-                    if (isBinary)
                     {
-                        fileDiffs.Add(new WorkspaceFileDiff(wsPath, WorkspaceChangeKind.Moved, fromPath, null, true, false));
-                    }
-                    else
-                    {
-                        var oldBytes = await _host.ReadFileAsync(fromWsPath, ct);
-                        var newContent = entry.Content.IsEmpty ? oldBytes : entry.Content;
+                        handled.Add(entry.MoveFromPath!);
+                        var fromPath = entry.MoveFromPath!;
+                        var fromWsPath = new WorkspacePath(fromPath);
+                        var oldStat = await _host.StatAsync(fromWsPath, ct);
+                        bool isBinary = oldStat?.IsBinary ?? false;
 
-                        var oldLines = TextLineSplitter.CreateUtf8LineIndex(oldBytes);
-                        var newLines = TextLineSplitter.CreateUtf8LineIndex(newContent);
-                        var diff = TextDiffEngine.DiffLines(oldLines, newLines);
-                        var textDiff = diff.HasChanges || diff.IsTruncated
-                            ? UnifiedDiffRenderer.Render(fromPath, pathStr, oldLines, newLines, diff)
-                            : null;
+                        if (isBinary)
+                        {
+                            fileDiffs.Add(new WorkspaceFileDiff(wsPath, WorkspaceChangeKind.Moved, fromPath, null, true, false));
+                        }
+                        else
+                        {
+                            var oldBytes = await _host.ReadFileAsync(fromWsPath, ct);
+                            var newContent = entry.Content.IsEmpty ? oldBytes : entry.Content;
 
-                        fileDiffs.Add(new WorkspaceFileDiff(wsPath, WorkspaceChangeKind.Moved, fromPath, textDiff, false, false));
+                            var oldLines = TextLineSplitter.CreateUtf8LineIndex(oldBytes);
+                            var newLines = TextLineSplitter.CreateUtf8LineIndex(newContent);
+                            var diff = TextDiffEngine.DiffLines(oldLines, newLines);
+                            var textDiff = diff.HasChanges || diff.IsTruncated
+                                ? UnifiedDiffRenderer.Render(fromPath, pathStr, oldLines, newLines, diff)
+                                : null;
+
+                            fileDiffs.Add(new WorkspaceFileDiff(wsPath, WorkspaceChangeKind.Moved, fromPath, textDiff, false, false));
+                        }
+                        break;
                     }
-                    break;
-                }
             }
         }
 

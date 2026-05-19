@@ -259,13 +259,13 @@ public class SessionProjectionTests
         {
             SessionId sessionId;
             using (var store = new JsonlSessionStore(tempDir))
-                {
-                    var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat,
-                        SystemPrompt: "You are helpful.");
-                    var record = await store.CreateSessionAsync(request);
-                    sessionId = record.SessionId;
+            {
+                var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat,
+                    SystemPrompt: "You are helpful.");
+                var record = await store.CreateSessionAsync(request);
+                sessionId = record.SessionId;
 
-                    var events = new List<OmicronEvent>
+                var events = new List<OmicronEvent>
                     {
                         new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), TestAgentId, "gpt-4o", "openai"),
                         new UserMessageEvent(
@@ -274,8 +274,8 @@ public class SessionProjectionTests
                 new EventEnvelope(EventId.New(), 3, DateTimeOffset.UtcNow, sessionId), "Hi back!"u8, null,
                 new TokenUsage(5, 15))
                     };
-                    await store.AppendEventsAsync(sessionId, events);
-                }
+                await store.AppendEventsAsync(sessionId, events);
+            }
 
             // Reopen and replay
             using var reopened = new JsonlSessionStore(tempDir);

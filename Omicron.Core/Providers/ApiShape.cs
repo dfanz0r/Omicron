@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Omicron.Core.Models;
 
@@ -213,19 +212,8 @@ public interface IApiShape
     ApiType ApiType { get; }
 
     /// <summary>
-    /// Build the JSON body for a streaming request.
-    /// </summary>
-    JsonObject BuildRequestBody(
-        Model model,
-        IReadOnlyList<Message> messages,
-        string? systemPrompt,
-        IReadOnlyList<Tool>? tools,
-        ChatOptions options);
-
-    /// <summary>
     /// Write the request body directly to a <see cref="Utf8JsonWriter"/>.
-    /// This is the long-term API; new shapes should implement this.
-    /// The default implementation delegates to <see cref="BuildRequestBody"/>.
+    /// All shapes must implement this; there is no default.
     /// </summary>
     void WriteRequestBody(
         System.Text.Json.Utf8JsonWriter writer,
@@ -233,11 +221,7 @@ public interface IApiShape
         IReadOnlyList<Message> messages,
         string? systemPrompt,
         IReadOnlyList<Tool>? tools,
-        ChatOptions options)
-    {
-        var body = BuildRequestBody(model, messages, systemPrompt, tools, options);
-        System.Text.Json.JsonSerializer.Serialize(writer, body);
-    }
+        ChatOptions options);
 
     /// <summary>
     /// Parse a single SSE data line (sans the "data: " prefix) and return
@@ -263,22 +247,6 @@ public class OpenAiChatShape : IApiShape
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
-
-    public JsonObject BuildRequestBody(
-        Model model,
-        IReadOnlyList<Message> messages,
-        string? systemPrompt,
-        IReadOnlyList<Tool>? tools,
-        ChatOptions options)
-    {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        using var writer = new Utf8JsonWriter(buffer);
-        WriteRequestBody(writer, model, messages, systemPrompt, tools, options);
-        writer.Flush();
-        var doc = JsonDocument.Parse(buffer.WrittenMemory);
-        var root = JsonNode.Parse(doc.RootElement.GetRawText())!;
-        return (JsonObject)root;
-    }
 
     public void WriteRequestBody(
         Utf8JsonWriter writer,
@@ -606,22 +574,6 @@ public class OpenAiResponsesShape : IApiShape
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public JsonObject BuildRequestBody(
-        Model model,
-        IReadOnlyList<Message> messages,
-        string? systemPrompt,
-        IReadOnlyList<Tool>? tools,
-        ChatOptions options)
-    {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        using var writer = new Utf8JsonWriter(buffer);
-        WriteRequestBody(writer, model, messages, systemPrompt, tools, options);
-        writer.Flush();
-        var doc = JsonDocument.Parse(buffer.WrittenMemory);
-        var root = JsonNode.Parse(doc.RootElement.GetRawText())!;
-        return (JsonObject)root;
-    }
-
     public void WriteRequestBody(
         Utf8JsonWriter writer,
         Model model,
@@ -739,46 +691,74 @@ public class OpenAiResponsesShape : IApiShape
             switch (msg.Role)
             {
                 case MessageRole.User:
-                {
-                    writer.WriteStartObject();
-                    writer.WriteString("role", "user");
-
-                    if (msg.Images is { Count: > 0 })
                     {
-                        writer.WritePropertyName("content");
-                        writer.WriteStartArray();
-
                         writer.WriteStartObject();
-                        writer.WriteString("type", "input_text");
-                        writer.WriteString("text", msg.TextUtf8);
-                        writer.WriteEndObject();
+                        writer.WriteString("role", "user");
 
-                        foreach (var img in msg.Images)
+                        if (msg.Images is { Count: > 0 })
                         {
+                            writer.WritePropertyName("content");
+                            writer.WriteStartArray();
+
                             writer.WriteStartObject();
-                            writer.WriteString("type", "input_image");
-                            writer.WriteString("image_url", $"data:{img.MimeType};base64,{img.Data}");
+                            writer.WriteString("type", "input_text");
+                            writer.WriteString("text", msg.TextUtf8);
                             writer.WriteEndObject();
+
+                            foreach (var img in msg.Images)
+                            {
+                                writer.WriteStartObject();
+                                writer.WriteString("type", "input_image");
+                                writer.WriteString("image_url", $"data:{img.MimeType};base64,{img.Data}");
+                                writer.WriteEndObject();
+                            }
+
+                            writer.WriteEndArray();
+                        }
+                        else
+                        {
+                            writer.WriteString("content", msg.TextUtf8);
                         }
 
-                        writer.WriteEndArray();
+                        writer.WriteEndObject();
+                        break;
                     }
-                    else
-                    {
-                        writer.WriteString("content", msg.TextUtf8);
-                    }
-
-                    writer.WriteEndObject();
-                    break;
-                }
 
                 case MessageRole.Assistant:
-                {
-                    var allToolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? [msg.ToolCall] : null);
-
-                    if (allToolCalls is { Count: > 0 })
                     {
-                        if (msg.HasText)
+                        var allToolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? [msg.ToolCall] : null);
+
+                        if (allToolCalls is { Count: > 0 })
+                        {
+                            if (msg.HasText)
+                            {
+                                writer.WriteStartObject();
+                                writer.WriteString("type", "message");
+                                writer.WriteString("role", "assistant");
+                                writer.WritePropertyName("content");
+                                writer.WriteStartArray();
+                                writer.WriteStartObject();
+                                writer.WriteString("type", "output_text");
+                                writer.WriteString("text", msg.TextUtf8);
+                                writer.WriteEndObject();
+                                writer.WriteEndArray();
+                                writer.WriteEndObject();
+                            }
+
+                            foreach (var tc in allToolCalls)
+                            {
+                                writer.WriteStartObject();
+                                writer.WriteString("type", "function_call");
+                                writer.WriteString("call_id", tc.Id);
+                                writer.WriteString("name", tc.Name);
+                                if (tc.Arguments is not null)
+                                {
+                                    writer.WriteString("arguments", JsonSerializer.Serialize(tc.Arguments, JsonOptions));
+                                }
+                                writer.WriteEndObject();
+                            }
+                        }
+                        else
                         {
                             writer.WriteStartObject();
                             writer.WriteString("type", "message");
@@ -792,46 +772,18 @@ public class OpenAiResponsesShape : IApiShape
                             writer.WriteEndArray();
                             writer.WriteEndObject();
                         }
-
-                        foreach (var tc in allToolCalls)
-                        {
-                            writer.WriteStartObject();
-                            writer.WriteString("type", "function_call");
-                            writer.WriteString("call_id", tc.Id);
-                            writer.WriteString("name", tc.Name);
-                            if (tc.Arguments is not null)
-                            {
-                                writer.WriteString("arguments", JsonSerializer.Serialize(tc.Arguments, JsonOptions));
-                            }
-                            writer.WriteEndObject();
-                        }
+                        break;
                     }
-                    else
-                    {
-                        writer.WriteStartObject();
-                        writer.WriteString("type", "message");
-                        writer.WriteString("role", "assistant");
-                        writer.WritePropertyName("content");
-                        writer.WriteStartArray();
-                        writer.WriteStartObject();
-                        writer.WriteString("type", "output_text");
-                        writer.WriteString("text", msg.TextUtf8);
-                        writer.WriteEndObject();
-                        writer.WriteEndArray();
-                        writer.WriteEndObject();
-                    }
-                    break;
-                }
 
                 case MessageRole.ToolResult:
-                {
-                    writer.WriteStartObject();
-                    writer.WriteString("type", "function_call_output");
-                    writer.WriteString("call_id", msg.ToolCallId ?? "");
-                    writer.WriteString("output", msg.TextUtf8);
-                    writer.WriteEndObject();
-                    break;
-                }
+                    {
+                        writer.WriteStartObject();
+                        writer.WriteString("type", "function_call_output");
+                        writer.WriteString("call_id", msg.ToolCallId ?? "");
+                        writer.WriteString("output", msg.TextUtf8);
+                        writer.WriteEndObject();
+                        break;
+                    }
             }
         }
     }
@@ -873,201 +825,201 @@ public class OpenAiResponsesShape : IApiShape
             switch (eventType)
             {
                 case "response.output_item.added":
-                {
-                    var item = root.GetProperty("item");
-                    var itemType = item.GetProperty("type").GetString();
-                    var itemId = item.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
-
-                    if (itemType == "function_call" && itemId is not null)
                     {
-                        var name = item.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : "";
-                        var callId = item.TryGetProperty("call_id", out var callIdEl) ? callIdEl.GetString() : itemId;
+                        var item = root.GetProperty("item");
+                        var itemType = item.GetProperty("type").GetString();
+                        var itemId = item.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
 
-                        // Find the next available index (avoid overwriting active entries)
-                        var accIndex = toolCallAccumulators.Keys.Count > 0
-                            ? toolCallAccumulators.Keys.Max() + 1
-                            : 0;
-                        toolCallAccumulators[accIndex] = new ToolCallAccumulator
+                        if (itemType == "function_call" && itemId is not null)
                         {
-                            Id = callId ?? itemId,
-                            ItemId = itemId,
-                            Name = name ?? ""
-                        };
+                            var name = item.TryGetProperty("name", out var nameEl) ? nameEl.GetString() : "";
+                            var callId = item.TryGetProperty("call_id", out var callIdEl) ? callIdEl.GetString() : itemId;
 
-                        return new StreamEvent
-                        {
-                            Type = StreamEventType.ToolCallStart,
-                            ToolCallId = callId ?? itemId,
-                            ToolName = name
-                        };
+                            // Find the next available index (avoid overwriting active entries)
+                            var accIndex = toolCallAccumulators.Keys.Count > 0
+                                ? toolCallAccumulators.Keys.Max() + 1
+                                : 0;
+                            toolCallAccumulators[accIndex] = new ToolCallAccumulator
+                            {
+                                Id = callId ?? itemId,
+                                ItemId = itemId,
+                                Name = name ?? ""
+                            };
+
+                            return new StreamEvent
+                            {
+                                Type = StreamEventType.ToolCallStart,
+                                ToolCallId = callId ?? itemId,
+                                ToolName = name
+                            };
+                        }
+                        break;
                     }
-                    break;
-                }
 
                 case "response.output_text.delta":
-                {
-                    var delta = root.GetProperty("delta").GetString();
-                    if (!string.IsNullOrEmpty(delta))
                     {
-                        return new StreamEvent
+                        var delta = root.GetProperty("delta").GetString();
+                        if (!string.IsNullOrEmpty(delta))
                         {
-                            Type = StreamEventType.TextDelta,
-                            Delta = delta
-                        };
+                            return new StreamEvent
+                            {
+                                Type = StreamEventType.TextDelta,
+                                Delta = delta
+                            };
+                        }
+                        break;
                     }
-                    break;
-                }
 
                 case "response.refusal.delta":
-                {
-                    var delta = root.GetProperty("delta").GetString();
-                    if (!string.IsNullOrEmpty(delta))
                     {
-                        return new StreamEvent
+                        var delta = root.GetProperty("delta").GetString();
+                        if (!string.IsNullOrEmpty(delta))
                         {
-                            Type = StreamEventType.TextDelta,
-                            Delta = delta,
-                            ReasoningText = delta
-                        };
+                            return new StreamEvent
+                            {
+                                Type = StreamEventType.TextDelta,
+                                Delta = delta,
+                                ReasoningText = delta
+                            };
+                        }
+                        break;
                     }
-                    break;
-                }
 
                 case "response.function_call_arguments.delta":
-                {
-                    var delta = root.GetProperty("delta").GetString();
-                    var itemId = root.TryGetProperty("item_id", out var itemIdEl) ? itemIdEl.GetString() : null;
-
-                    if (!string.IsNullOrEmpty(delta) && itemId is not null)
                     {
-                        // Find accumulator by ItemId (scan values — dictionaries are small)
-                        var acc = toolCallAccumulators.Values
-                            .FirstOrDefault(a => a.ItemId == itemId);
-                        if (acc is not null)
+                        var delta = root.GetProperty("delta").GetString();
+                        var itemId = root.TryGetProperty("item_id", out var itemIdEl) ? itemIdEl.GetString() : null;
+
+                        if (!string.IsNullOrEmpty(delta) && itemId is not null)
                         {
-                            acc.Args.Append(delta);
+                            // Find accumulator by ItemId (scan values — dictionaries are small)
+                            var acc = toolCallAccumulators.Values
+                                .FirstOrDefault(a => a.ItemId == itemId);
+                            if (acc is not null)
+                            {
+                                acc.Args.Append(delta);
+                            }
+
+                            return new StreamEvent
+                            {
+                                Type = StreamEventType.ToolCallDelta,
+                                Delta = delta
+                            };
+                        }
+                        break;
+                    }
+
+                case "response.function_call_arguments.done":
+                    {
+                        var itemId = root.TryGetProperty("item_id", out var itemIdEl) ? itemIdEl.GetString() : null;
+                        var argsJson = root.GetProperty("arguments").GetString() ?? "{}";
+
+                        // Try to get stored info from accumulators by scanning ItemId
+                        string callId = itemId ?? "";
+                        string name = "";
+
+                        if (itemId is not null)
+                        {
+                            var kv = toolCallAccumulators
+                                .FirstOrDefault(kv => kv.Value.ItemId == itemId);
+                            if (kv.Value is not null)
+                            {
+                                var acc = kv.Value;
+                                callId = acc.Id ?? callId;
+                                name = acc.Name;
+                                if (acc.Args.Length > 0)
+                                    argsJson = acc.Args.ToString();
+                                toolCallAccumulators.Remove(kv.Key);
+                            }
+                        }
+
+                        // Fall back to event-level fields if accumulators didn't have them
+                        if (string.IsNullOrEmpty(name))
+                            name = root.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
+                        if (string.IsNullOrEmpty(callId) || callId == itemId)
+                            callId = root.TryGetProperty("call_id", out var callIdEl) ? callIdEl.GetString() ?? callId : callId;
+
+                        Dictionary<string, object?>? args = null;
+                        try
+                        {
+                            args = JsonSerializer.Deserialize<Dictionary<string, object?>>(argsJson);
+                        }
+                        catch
+                        {
+                            args = new();
                         }
 
                         return new StreamEvent
                         {
-                            Type = StreamEventType.ToolCallDelta,
-                            Delta = delta
+                            Type = StreamEventType.ToolCallEnd,
+                            ToolCall = new ToolCallContent(callId, name, args ?? new())
                         };
                     }
-                    break;
-                }
-
-                case "response.function_call_arguments.done":
-                {
-                    var itemId = root.TryGetProperty("item_id", out var itemIdEl) ? itemIdEl.GetString() : null;
-                    var argsJson = root.GetProperty("arguments").GetString() ?? "{}";
-
-                    // Try to get stored info from accumulators by scanning ItemId
-                    string callId = itemId ?? "";
-                    string name = "";
-
-                    if (itemId is not null)
-                    {
-                        var kv = toolCallAccumulators
-                            .FirstOrDefault(kv => kv.Value.ItemId == itemId);
-                        if (kv.Value is not null)
-                        {
-                            var acc = kv.Value;
-                            callId = acc.Id ?? callId;
-                            name = acc.Name;
-                            if (acc.Args.Length > 0)
-                                argsJson = acc.Args.ToString();
-                            toolCallAccumulators.Remove(kv.Key);
-                        }
-                    }
-
-                    // Fall back to event-level fields if accumulators didn't have them
-                    if (string.IsNullOrEmpty(name))
-                        name = root.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? "" : "";
-                    if (string.IsNullOrEmpty(callId) || callId == itemId)
-                        callId = root.TryGetProperty("call_id", out var callIdEl) ? callIdEl.GetString() ?? callId : callId;
-
-                    Dictionary<string, object?>? args = null;
-                    try
-                    {
-                        args = JsonSerializer.Deserialize<Dictionary<string, object?>>(argsJson);
-                    }
-                    catch
-                    {
-                        args = new();
-                    }
-
-                    return new StreamEvent
-                    {
-                        Type = StreamEventType.ToolCallEnd,
-                        ToolCall = new ToolCallContent(callId, name, args ?? new())
-                    };
-                }
 
                 case "response.output_text.done":
                 case "response.refusal.done":
-                {
-                    break;
-                }
+                    {
+                        break;
+                    }
 
                 case "response.output_item.done":
-                {
-                    break;
-                }
+                    {
+                        break;
+                    }
 
                 case "response.completed":
-                {
-                    var response = root.GetProperty("response");
-                    var responseId = response.TryGetProperty("id", out var respIdEl) ? respIdEl.GetString() : null;
-                    var status = response.TryGetProperty("status", out var statusEl) ? statusEl.GetString() : "completed";
-
-                    if (status == "failed")
                     {
-                        var errMsg = "Response failed";
-                        if (response.TryGetProperty("error", out var respErr))
+                        var response = root.GetProperty("response");
+                        var responseId = response.TryGetProperty("id", out var respIdEl) ? respIdEl.GetString() : null;
+                        var status = response.TryGetProperty("status", out var statusEl) ? statusEl.GetString() : "completed";
+
+                        if (status == "failed")
                         {
-                            errMsg = respErr.TryGetProperty("message", out var respMsgEl)
-                                ? respMsgEl.GetString() ?? errMsg
-                                : respErr.GetRawText();
+                            var errMsg = "Response failed";
+                            if (response.TryGetProperty("error", out var respErr))
+                            {
+                                errMsg = respErr.TryGetProperty("message", out var respMsgEl)
+                                    ? respMsgEl.GetString() ?? errMsg
+                                    : respErr.GetRawText();
+                            }
+                            return new StreamEvent
+                            {
+                                Type = StreamEventType.Error,
+                                ErrorMessage = errMsg
+                            };
                         }
+
+                        UsageInfo? usage = null;
+                        if (response.TryGetProperty("usage", out var usageEl))
+                            usage = ParseUsage(usageEl);
+
+                        var stopReason = status switch
+                        {
+                            "completed" => StopReason.Stop,
+                            "incomplete" => StopReason.Length,
+                            _ => StopReason.Stop
+                        };
+
                         return new StreamEvent
                         {
-                            Type = StreamEventType.Error,
-                            ErrorMessage = errMsg
+                            Type = StreamEventType.Done,
+                            StopReason = stopReason,
+                            Delta = responseId,
+                            Usage = usage
                         };
                     }
 
-                    UsageInfo? usage = null;
-                    if (response.TryGetProperty("usage", out var usageEl))
-                        usage = ParseUsage(usageEl);
-
-                    var stopReason = status switch
-                    {
-                        "completed" => StopReason.Stop,
-                        "incomplete" => StopReason.Length,
-                        _ => StopReason.Stop
-                    };
-
-                    return new StreamEvent
-                    {
-                        Type = StreamEventType.Done,
-                        StopReason = stopReason,
-                        Delta = responseId,
-                        Usage = usage
-                    };
-                }
-
                 case "error":
-                {
-                    var errMsg = root.TryGetProperty("message", out var errMsgEl)
-                        ? errMsgEl.GetString()
-                        : "Unknown Responses API error";
-                    return new StreamEvent
                     {
-                        Type = StreamEventType.Error,
-                        ErrorMessage = errMsg ?? "Unknown error"
-                    };
-                }
+                        var errMsg = root.TryGetProperty("message", out var errMsgEl)
+                            ? errMsgEl.GetString()
+                            : "Unknown Responses API error";
+                        return new StreamEvent
+                        {
+                            Type = StreamEventType.Error,
+                            ErrorMessage = errMsg ?? "Unknown error"
+                        };
+                    }
             }
         }
         catch (JsonException)
@@ -1080,19 +1032,6 @@ public class OpenAiResponsesShape : IApiShape
         }
 
         return null;
-    }
-
-    private static JsonObject BuildToolDef(Tool tool)
-    {
-        var def = new JsonObject
-        {
-            ["type"] = "function",
-            ["name"] = tool.Name,
-            ["description"] = tool.Description
-        };
-        if (tool.Parameters.HasValue)
-            def["parameters"] = JsonNode.Parse(tool.Parameters.Value.GetRawText());
-        return def;
     }
 
     private static UsageInfo ParseUsage(JsonElement el)
@@ -1125,22 +1064,6 @@ public class AnthropicMessagesShape : IApiShape
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
-
-    public JsonObject BuildRequestBody(
-        Model model,
-        IReadOnlyList<Message> messages,
-        string? systemPrompt,
-        IReadOnlyList<Tool>? tools,
-        ChatOptions options)
-    {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
-        using var writer = new Utf8JsonWriter(buffer);
-        WriteRequestBody(writer, model, messages, systemPrompt, tools, options);
-        writer.Flush();
-        var doc = JsonDocument.Parse(buffer.WrittenMemory);
-        var root = JsonNode.Parse(doc.RootElement.GetRawText())!;
-        return (JsonObject)root;
-    }
 
     public void WriteRequestBody(
         Utf8JsonWriter writer,
@@ -1257,72 +1180,72 @@ public class AnthropicMessagesShape : IApiShape
             switch (type)
             {
                 case "content_block_start":
-                {
-                    var blockType = root.GetProperty("content_block").GetProperty("type").GetString();
-                    var index = root.GetProperty("index").GetInt32();
-                    if (blockType == "tool_use")
                     {
-                        var id = root.GetProperty("content_block").GetProperty("id").GetString() ?? "";
-                        var name = root.GetProperty("content_block").GetProperty("name").GetString() ?? "";
-                        toolCallAccumulators[index] = new ToolCallAccumulator { Id = id, Name = name };
-                        return new StreamEvent { Type = StreamEventType.ToolCallStart, ToolCallId = id, ToolName = name };
+                        var blockType = root.GetProperty("content_block").GetProperty("type").GetString();
+                        var index = root.GetProperty("index").GetInt32();
+                        if (blockType == "tool_use")
+                        {
+                            var id = root.GetProperty("content_block").GetProperty("id").GetString() ?? "";
+                            var name = root.GetProperty("content_block").GetProperty("name").GetString() ?? "";
+                            toolCallAccumulators[index] = new ToolCallAccumulator { Id = id, Name = name };
+                            return new StreamEvent { Type = StreamEventType.ToolCallStart, ToolCallId = id, ToolName = name };
+                        }
+                        break;
                     }
-                    break;
-                }
                 case "content_block_delta":
-                {
-                    var delta = root.GetProperty("delta");
-                    var dt = delta.GetProperty("type").GetString();
-                    var index = root.GetProperty("index").GetInt32();
-                    if (dt == "text_delta")
                     {
-                        var text = delta.GetProperty("text").GetString();
-                        if (!string.IsNullOrEmpty(text))
-                            return new StreamEvent { Type = StreamEventType.TextDelta, Delta = text };
-                    }
-                    else if (dt == "input_json_delta" && toolCallAccumulators.TryGetValue(index, out var acc))
-                    {
-                        var partial = delta.GetProperty("partial_json").GetString();
-                        if (!string.IsNullOrEmpty(partial))
+                        var delta = root.GetProperty("delta");
+                        var dt = delta.GetProperty("type").GetString();
+                        var index = root.GetProperty("index").GetInt32();
+                        if (dt == "text_delta")
                         {
-                            acc.Args.Append(partial);
-                            return new StreamEvent { Type = StreamEventType.ToolCallDelta, Delta = partial };
+                            var text = delta.GetProperty("text").GetString();
+                            if (!string.IsNullOrEmpty(text))
+                                return new StreamEvent { Type = StreamEventType.TextDelta, Delta = text };
                         }
+                        else if (dt == "input_json_delta" && toolCallAccumulators.TryGetValue(index, out var acc))
+                        {
+                            var partial = delta.GetProperty("partial_json").GetString();
+                            if (!string.IsNullOrEmpty(partial))
+                            {
+                                acc.Args.Append(partial);
+                                return new StreamEvent { Type = StreamEventType.ToolCallDelta, Delta = partial };
+                            }
+                        }
+                        break;
                     }
-                    break;
-                }
                 case "content_block_stop":
-                {
-                    var index = root.GetProperty("index").GetInt32();
-                    if (toolCallAccumulators.TryGetValue(index, out var acc))
                     {
-                        Dictionary<string, object?>? args = null;
-                        try
+                        var index = root.GetProperty("index").GetInt32();
+                        if (toolCallAccumulators.TryGetValue(index, out var acc))
                         {
-                            args = JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString());
+                            Dictionary<string, object?>? args = null;
+                            try
+                            {
+                                args = JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString());
+                            }
+                            catch
+                            {
+                                args = new();
+                            }
+                            toolCallAccumulators.Remove(index);
+                            return new StreamEvent { Type = StreamEventType.ToolCallEnd, ToolCall = new ToolCallContent(acc.Id ?? "", acc.Name, args ?? new()) };
                         }
-                        catch
-                        {
-                            args = new();
-                        }
-                        toolCallAccumulators.Remove(index);
-                        return new StreamEvent { Type = StreamEventType.ToolCallEnd, ToolCall = new ToolCallContent(acc.Id ?? "", acc.Name, args ?? new()) };
+                        break;
                     }
-                    break;
-                }
                 case "message_delta":
-                {
-                    var stopReason = root.GetProperty("delta").GetProperty("stop_reason").GetString();
-                    var usage = root.TryGetProperty("usage", out var ue) ? ParseUsage(ue) : null;
-                    var responseId = root.TryGetProperty("id", out var ie) ? ie.GetString() : null;
-                    return new StreamEvent { Type = StreamEventType.Done, StopReason = MapStopReason(stopReason), Delta = responseId, Usage = usage };
-                }
+                    {
+                        var stopReason = root.GetProperty("delta").GetProperty("stop_reason").GetString();
+                        var usage = root.TryGetProperty("usage", out var ue) ? ParseUsage(ue) : null;
+                        var responseId = root.TryGetProperty("id", out var ie) ? ie.GetString() : null;
+                        return new StreamEvent { Type = StreamEventType.Done, StopReason = MapStopReason(stopReason), Delta = responseId, Usage = usage };
+                    }
                 case "error":
-                {
-                    var error = root.GetProperty("error");
-                    var msg = error.TryGetProperty("message", out var me) ? me.GetString() : error.GetRawText();
-                    return new StreamEvent { Type = StreamEventType.Error, ErrorMessage = msg ?? "Unknown Anthropic error" };
-                }
+                    {
+                        var error = root.GetProperty("error");
+                        var msg = error.TryGetProperty("message", out var me) ? me.GetString() : error.GetRawText();
+                        return new StreamEvent { Type = StreamEventType.Error, ErrorMessage = msg ?? "Unknown Anthropic error" };
+                    }
             }
         }
         catch (JsonException)
@@ -1340,23 +1263,6 @@ public class AnthropicMessagesShape : IApiShape
         "error" => StopReason.Error,
         _ => StopReason.Stop
     };
-
-    private static JsonObject BuildAnthropicToolCalls(Message msg)
-    {
-        var allToolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? new List<ToolCallContent> { msg.ToolCall } : []);
-        var contentArray = new JsonArray();
-        foreach (var tc in allToolCalls)
-        {
-            contentArray.Add(new JsonObject
-            {
-                ["type"] = "tool_use",
-                ["id"] = tc.Id,
-                ["name"] = tc.Name,
-                ["input"] = JsonNode.Parse(JsonSerializer.Serialize(tc.Arguments))
-            });
-        }
-        return new JsonObject { ["role"] = "assistant", ["content"] = contentArray };
-    }
 
     private static UsageInfo ParseUsage(JsonElement el)
     {

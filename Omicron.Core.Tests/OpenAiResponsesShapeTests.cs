@@ -1,5 +1,5 @@
+using System.Buffers;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using Omicron.Core.Models;
 using Omicron.Core.Providers;
 using Omicron.Core.Sessions;
@@ -11,8 +11,25 @@ public class OpenAiResponsesShapeTests
 {
     private readonly OpenAiResponsesShape _shape = new();
 
+    /// <summary>
+    /// Helper that serializes via <see cref="IApiShape.WriteRequestBody"/> and returns
+    /// a <see cref="JsonDocument"/> for assertion.  Replaces legacy BuildRequestBody tests.
+    /// </summary>
+    private JsonDocument WriteAndParse(
+        Model model,
+        IReadOnlyList<Message> messages,
+        string? systemPrompt,
+        IReadOnlyList<Tool>? tools,
+        ChatOptions options)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+            _shape.WriteRequestBody(writer, model, messages, systemPrompt, tools, options);
+        return JsonDocument.Parse(buffer.WrittenMemory);
+    }
+
     [Fact]
-    public void BuildRequestBody_BasicRequest_HasRequiredFields()
+    public void WriteRequestBody_BasicRequest_HasRequiredFields()
     {
         var model = new Model
         {
@@ -23,16 +40,17 @@ public class OpenAiResponsesShapeTests
         var messages = new List<Message> { Message.UserMessage("Hello") };
         var options = new ChatOptions();
 
-        var body = _shape.BuildRequestBody(model, messages, null, null, options);
+        using var doc = WriteAndParse(model, messages, null, null, options);
+        var root = doc.RootElement;
 
-        Assert.Equal("gpt-5.5", body["model"]?.ToString());
-        Assert.True((bool)body["stream"]!);
-        Assert.NotNull(body["input"]);
-        Assert.NotNull(body["metadata"]);
+        Assert.Equal("gpt-5.5", root.GetProperty("model").GetString());
+        Assert.True(root.GetProperty("stream").GetBoolean());
+        Assert.True(root.TryGetProperty("input", out _));
+        Assert.True(root.TryGetProperty("metadata", out _));
     }
 
     [Fact]
-    public void BuildRequestBody_WithSystemPrompt_SetsInstructions()
+    public void WriteRequestBody_WithSystemPrompt_SetsInstructions()
     {
         var model = new Model
         {
@@ -43,13 +61,14 @@ public class OpenAiResponsesShapeTests
         var messages = new List<Message> { Message.UserMessage("Hello") };
         var options = new ChatOptions();
 
-        var body = _shape.BuildRequestBody(model, messages, "You are a helpful assistant.", null, options);
+        using var doc = WriteAndParse(model, messages, "You are a helpful assistant.", null, options);
+        var root = doc.RootElement;
 
-        Assert.Equal("You are a helpful assistant.", body["instructions"]?.ToString());
+        Assert.Equal("You are a helpful assistant.", root.GetProperty("instructions").GetString());
     }
 
     [Fact]
-    public void BuildRequestBody_WithTools_IncludesToolArray()
+    public void WriteRequestBody_WithTools_IncludesToolArray()
     {
         var model = new Model
         {
@@ -64,16 +83,16 @@ public class OpenAiResponsesShapeTests
             new() { Name = "get_weather", Description = "Get the weather" }
         };
 
-        var body = _shape.BuildRequestBody(model, messages, null, tools, options);
+        using var doc = WriteAndParse(model, messages, null, tools, options);
+        var root = doc.RootElement;
 
-        Assert.NotNull(body["tools"]);
-        var toolArray = body["tools"]!.AsArray();
+        var toolArray = root.GetProperty("tools").EnumerateArray().ToArray();
         Assert.Single(toolArray);
-        Assert.Equal("get_weather", toolArray[0]!["name"]?.ToString());
+        Assert.Equal("get_weather", toolArray[0].GetProperty("name").GetString());
     }
 
     [Fact]
-    public void BuildRequestBody_WithMaxTokens_SetsMaxOutputTokens()
+    public void WriteRequestBody_WithMaxTokens_SetsMaxOutputTokens()
     {
         var model = new Model
         {
@@ -84,13 +103,14 @@ public class OpenAiResponsesShapeTests
         var messages = new List<Message> { Message.UserMessage("Hello") };
         var options = new ChatOptions { MaxTokens = 4096 };
 
-        var body = _shape.BuildRequestBody(model, messages, null, null, options);
+        using var doc = WriteAndParse(model, messages, null, null, options);
+        var root = doc.RootElement;
 
-        Assert.Equal(4096, (int)body["max_output_tokens"]!);
+        Assert.Equal(4096, root.GetProperty("max_output_tokens").GetInt32());
     }
 
     [Fact]
-    public void BuildRequestBody_WithReasoningEffort()
+    public void WriteRequestBody_WithReasoningEffort()
     {
         var model = new Model
         {
@@ -101,13 +121,14 @@ public class OpenAiResponsesShapeTests
         var messages = new List<Message> { Message.UserMessage("Hello") };
         var options = new ChatOptions { ReasoningEffort = "high" };
 
-        var body = _shape.BuildRequestBody(model, messages, null, null, options);
+        using var doc = WriteAndParse(model, messages, null, null, options);
+        var root = doc.RootElement;
 
-        Assert.Equal("high", body["reasoning_effort"]?.ToString());
+        Assert.Equal("high", root.GetProperty("reasoning_effort").GetString());
     }
 
     [Fact]
-    public void BuildRequestBody_StoragePolicy_AllowProviderStoredState_SetsStoreTrue()
+    public void WriteRequestBody_StoragePolicy_AllowProviderStoredState_SetsStoreTrue()
     {
         var model = new Model
         {
@@ -119,13 +140,14 @@ public class OpenAiResponsesShapeTests
         var messages = new List<Message> { Message.UserMessage("Hello") };
         var options = new ChatOptions();
 
-        var body = _shape.BuildRequestBody(model, messages, null, null, options);
+        using var doc = WriteAndParse(model, messages, null, null, options);
+        var root = doc.RootElement;
 
-        Assert.True((bool)body["store"]!);
+        Assert.True(root.GetProperty("store").GetBoolean());
     }
 
     [Fact]
-    public void BuildRequestBody_StoragePolicy_AllowProviderStateNoStore_SetsStoreFalse()
+    public void WriteRequestBody_StoragePolicy_AllowProviderStateNoStore_SetsStoreFalse()
     {
         var model = new Model
         {
@@ -137,13 +159,14 @@ public class OpenAiResponsesShapeTests
         var messages = new List<Message> { Message.UserMessage("Hello") };
         var options = new ChatOptions();
 
-        var body = _shape.BuildRequestBody(model, messages, null, null, options);
+        using var doc = WriteAndParse(model, messages, null, null, options);
+        var root = doc.RootElement;
 
-        Assert.False((bool)body["store"]!);
+        Assert.False(root.GetProperty("store").GetBoolean());
     }
 
     [Fact]
-    public void BuildRequestBody_StoragePolicy_PreferStateless_SetsStoreFalse()
+    public void WriteRequestBody_StoragePolicy_PreferStateless_SetsStoreFalse()
     {
         var model = new Model
         {
@@ -155,13 +178,14 @@ public class OpenAiResponsesShapeTests
         var messages = new List<Message> { Message.UserMessage("Hello") };
         var options = new ChatOptions();
 
-        var body = _shape.BuildRequestBody(model, messages, null, null, options);
+        using var doc = WriteAndParse(model, messages, null, null, options);
+        var root = doc.RootElement;
 
-        Assert.False((bool)body["store"]!);
+        Assert.False(root.GetProperty("store").GetBoolean());
     }
 
     [Fact]
-    public void BuildRequestBody_WithStatefulContext_IncludesPreviousResponseId()
+    public void WriteRequestBody_WithStatefulContext_IncludesPreviousResponseId()
     {
         var model = new Model
         {
@@ -177,9 +201,10 @@ public class OpenAiResponsesShapeTests
                 default, "resp_123", null, null, null)
         };
 
-        var body = _shape.BuildRequestBody(model, messages, null, null, options);
+        using var doc = WriteAndParse(model, messages, null, null, options);
+        var root = doc.RootElement;
 
-        Assert.Equal("resp_123", body["previous_response_id"]?.ToString());
+        Assert.Equal("resp_123", root.GetProperty("previous_response_id").GetString());
     }
 
     [Fact]
@@ -357,7 +382,7 @@ public class OpenAiResponsesShapeTests
     }
 
     [Fact]
-    public void BuildRequestBody_AssistantWithToolCallInput()
+    public void WriteRequestBody_AssistantWithToolCallInput()
     {
         var model = new Model
         {
@@ -375,27 +400,28 @@ public class OpenAiResponsesShapeTests
         };
 
         var options = new ChatOptions();
-        var body = _shape.BuildRequestBody(model, messages, null, null, options);
+        using var doc = WriteAndParse(model, messages, null, null, options);
+        var root = doc.RootElement;
 
-        var input = body["input"]!.AsArray();
-        Assert.Equal(3, input.Count);
+        var input = root.GetProperty("input").EnumerateArray().ToArray();
+        Assert.Equal(3, input.Length);
 
-        Assert.Equal("user", input[0]!["role"]?.ToString());
-        Assert.Equal("What's the weather in NYC?", input[0]!["content"]?.ToString());
+        Assert.Equal("user", input[0].GetProperty("role").GetString());
+        Assert.Equal("What's the weather in NYC?", input[0].GetProperty("content").GetString());
 
         // Assistant tool calls are now top-level function_call items
-        Assert.Equal("function_call", input[1]!["type"]?.ToString());
-        Assert.Equal("call_1", input[1]!["call_id"]?.ToString());
-        Assert.Equal("get_weather", input[1]!["name"]?.ToString());
+        Assert.Equal("function_call", input[1].GetProperty("type").GetString());
+        Assert.Equal("call_1", input[1].GetProperty("call_id").GetString());
+        Assert.Equal("get_weather", input[1].GetProperty("name").GetString());
 
         // Tool result — Responses API uses function_call_output items
-        Assert.Equal("function_call_output", input[2]!["type"]?.ToString());
-        Assert.Equal("call_1", input[2]!["call_id"]?.ToString());
-        Assert.Equal("Sunny, 25°C", input[2]!["output"]?.ToString());
+        Assert.Equal("function_call_output", input[2].GetProperty("type").GetString());
+        Assert.Equal("call_1", input[2].GetProperty("call_id").GetString());
+        Assert.Equal("Sunny, 25°C", input[2].GetProperty("output").GetString());
     }
 
     [Fact]
-    public void BuildRequestBody_AssistantTextUsesResponsesMessageItemAndOmitsReasoning()
+    public void WriteRequestBody_AssistantTextUsesResponsesMessageItemAndOmitsReasoning()
     {
         var model = new Model
         {
@@ -414,13 +440,16 @@ public class OpenAiResponsesShapeTests
             }
         };
 
-        var body = _shape.BuildRequestBody(model, messages, null, null, new ChatOptions());
+        using var doc = WriteAndParse(model, messages, null, null, new ChatOptions());
+        var root = doc.RootElement;
+        var input = root.GetProperty("input").EnumerateArray().ToArray();
 
-        var input = body["input"]!.AsArray();
-        Assert.Equal("message", input[1]!["type"]?.ToString());
-        Assert.Equal("assistant", input[1]!["role"]?.ToString());
-        Assert.Equal("output_text", input[1]!["content"]!.AsArray()[0]!["type"]?.ToString());
-        Assert.DoesNotContain(input[1]!["content"]!.AsArray(), item => item!["type"]?.ToString() == "reasoning");
+        Assert.Equal("message", input[1].GetProperty("type").GetString());
+        Assert.Equal("assistant", input[1].GetProperty("role").GetString());
+        Assert.Equal("output_text", input[1].GetProperty("content")[0].GetProperty("type").GetString());
+        // Verify no reasoning content type appears
+        foreach (var item in input[1].GetProperty("content").EnumerateArray())
+            Assert.NotEqual("reasoning", item.GetProperty("type").GetString());
     }
 
     [Fact]

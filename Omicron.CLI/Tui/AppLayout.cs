@@ -341,15 +341,15 @@ public sealed class AppLayout : IDisposable
                 return true;
 
             case Key.Character when (ke.ResolvedText ?? ke.Text?.ToString()) is string text:
-            {
-                char c = text[0];
-                if (c >= 32 && c != 127)
                 {
-                    _input.Insert(text);
-                    UpdateFindQuery();
+                    char c = text[0];
+                    if (c >= 32 && c != 127)
+                    {
+                        _input.Insert(text);
+                        UpdateFindQuery();
+                    }
+                    return true;
                 }
-                return true;
-            }
 
             case Key.Backspace:
                 _input.Backspace();

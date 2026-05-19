@@ -16,14 +16,14 @@ namespace Omicron.Core.IO;
 [Flags]
 public enum OutputModality
 {
-    None        = 0,
-    Text        = 1 << 0,  // Plain text or Markdown — works with any model
+    None = 0,
+    Text = 1 << 0,  // Plain text or Markdown — works with any model
     ImageBase64 = 1 << 1,  // base64-encoded image inline — requires vision
-    PdfBase64   = 1 << 2,  // base64-encoded PDF inline — requires pdf modality
+    PdfBase64 = 1 << 2,  // base64-encoded PDF inline — requires pdf modality
     AudioBase64 = 1 << 3,  // base64-encoded audio inline — requires audio modality
     VideoBase64 = 1 << 4,  // base64-encoded video inline — requires video modality
-    HexDump     = 1 << 5,  // Structured hex dump — always works (text)
-    Metadata    = 1 << 6,  // File metadata only (dimensions, codec, size, etc.)
+    HexDump = 1 << 5,  // Structured hex dump — always works (text)
+    Metadata = 1 << 6,  // File metadata only (dimensions, codec, size, etc.)
 }
 
 /// <summary>

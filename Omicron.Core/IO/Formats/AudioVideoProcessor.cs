@@ -2,6 +2,7 @@ using System.Text;
 using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Models;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
 
@@ -31,55 +32,63 @@ public sealed class AudioProcessor : IContentProcessor
         if (audioCapable)
         {
             var b64 = Convert.ToBase64String(context.Bytes.Span);
-            using var output = ZString.CreateUtf8StringBuilder();
-            output.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
-            output.AppendLine();
-            if (meta is not null)
+            var output = ZString.CreateUtf8StringBuilder();
+            try
             {
-                output.AppendFormat("Format: {0}, Duration: {1:F1}s, Bitrate: {2} kbps, Sample Rate: {3} Hz", meta.Format, meta.Duration, meta.Bitrate, meta.SampleRate);
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
                 output.AppendLine();
-            }
-            output.AppendLiteral("Data: "u8);
-            output.Append(b64);
+                if (meta is not null)
+                {
+                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "Format: {0}, Duration: {1:F1}s, Bitrate: {2} kbps, Sample Rate: {3} Hz"u8, meta.Format, meta.Duration, meta.Bitrate, meta.SampleRate);
+                    output.AppendLine();
+                }
+                output.AppendLiteral("Data: "u8);
+                output.Append(b64);
 
-            return ValueTask.FromResult(new ContentProcessorResult(
-                output.ToString(), OutputModality.AudioBase64, MimeType: mimeType,
-                Utf8Data: output.AsSpan().ToArray()));
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    output.ToString(), OutputModality.AudioBase64, MimeType: mimeType,
+                    Utf8Data: output.AsSpan().ToArray()));
+            }
+            finally { output.Dispose(); }
         }
 
         // Text-only model: metadata only
-        using var audioMeta = ZString.CreateUtf8StringBuilder();
-        audioMeta.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
-        audioMeta.AppendLine();
-        if (meta is not null)
+        var audioMeta = ZString.CreateUtf8StringBuilder();
+        try
         {
-            audioMeta.AppendFormat("Format: {0}", meta.Format);
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref audioMeta, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
             audioMeta.AppendLine();
-            if (meta.Duration > 0)
+            if (meta is not null)
             {
-                audioMeta.AppendFormat("Duration: {0:F1}s", meta.Duration);
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref audioMeta, "Format: {0}"u8, meta.Format);
+                audioMeta.AppendLine();
+                if (meta.Duration > 0)
+                {
+                    Utf8CompositeFormat.AppendFormatUtf8(ref audioMeta, "Duration: {0:F1}s"u8, meta.Duration);
+                    audioMeta.AppendLine();
+                }
+                if (meta.Bitrate > 0)
+                {
+                    Utf8CompositeFormat.AppendFormatUtf8(ref audioMeta, "Bitrate: {0} kbps"u8, meta.Bitrate);
+                    audioMeta.AppendLine();
+                }
+                if (meta.SampleRate > 0)
+                {
+                    Utf8CompositeFormat.AppendFormatUtf8(ref audioMeta, "Sample Rate: {0} Hz"u8, meta.SampleRate);
+                    audioMeta.AppendLine();
+                }
+            }
+            else
+            {
+                audioMeta.AppendLiteral("(metadata extraction unavailable)"u8);
                 audioMeta.AppendLine();
             }
-            if (meta.Bitrate > 0)
-            {
-                audioMeta.AppendFormat("Bitrate: {0} kbps", meta.Bitrate);
-                audioMeta.AppendLine();
-            }
-            if (meta.SampleRate > 0)
-            {
-                audioMeta.AppendFormat("Sample Rate: {0} Hz", meta.SampleRate);
-                audioMeta.AppendLine();
-            }
-        }
-        else
-        {
-            audioMeta.AppendLiteral("(metadata extraction unavailable)"u8);
-            audioMeta.AppendLine();
-        }
 
-        return ValueTask.FromResult(new ContentProcessorResult(
-            audioMeta.ToString().TrimEnd(), OutputModality.Metadata,
-            Utf8Data: audioMeta.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(
+                audioMeta.ToString().TrimEnd(), OutputModality.Metadata,
+                Utf8Data: audioMeta.AsSpan().ToArray()));
+        }
+        finally { audioMeta.Dispose(); }
     }
 
     internal static AudioMeta? ParseAudioMetadata(string path, ReadOnlySpan<byte> bytes)
@@ -290,65 +299,73 @@ public sealed class VideoProcessor : IContentProcessor
         if (videoCapable)
         {
             var b64 = Convert.ToBase64String(context.Bytes.Span);
-            using var output = ZString.CreateUtf8StringBuilder();
-            output.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
-            output.AppendLine();
-            if (meta is not null)
+            var output = ZString.CreateUtf8StringBuilder();
+            try
             {
-                output.AppendFormat("Format: {0}, Duration: {1:F1}s", meta.Format, meta.Duration);
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
                 output.AppendLine();
-                if (meta.Width > 0)
+                if (meta is not null)
                 {
-                    output.AppendFormat("Resolution: {0}×{1}", meta.Width, meta.Height);
+                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "Format: {0}, Duration: {1:F1}s"u8, meta.Format, meta.Duration);
                     output.AppendLine();
+                    if (meta.Width > 0)
+                    {
+                        Utf8CompositeFormat.AppendFormatUtf8(ref output, "Resolution: {0}×{1}"u8, meta.Width, meta.Height);
+                        output.AppendLine();
+                    }
+                    if (meta.Bitrate > 0)
+                    {
+                        Utf8CompositeFormat.AppendFormatUtf8(ref output, "Bitrate: {0} kbps"u8, meta.Bitrate);
+                        output.AppendLine();
+                    }
                 }
-                if (meta.Bitrate > 0)
-                {
-                    output.AppendFormat("Bitrate: {0} kbps", meta.Bitrate);
-                    output.AppendLine();
-                }
-            }
-            output.AppendLiteral("Data: "u8);
-            output.Append(b64);
+                output.AppendLiteral("Data: "u8);
+                output.Append(b64);
 
-            return ValueTask.FromResult(new ContentProcessorResult(
-                output.ToString(), OutputModality.VideoBase64, MimeType: mimeType,
-                Utf8Data: output.AsSpan().ToArray()));
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    output.ToString(), OutputModality.VideoBase64, MimeType: mimeType,
+                    Utf8Data: output.AsSpan().ToArray()));
+            }
+            finally { output.Dispose(); }
         }
 
         // Text-only model: metadata only
-        using var videoMeta = ZString.CreateUtf8StringBuilder();
-        videoMeta.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
-        videoMeta.AppendLine();
-        if (meta is not null)
+        var videoMeta = ZString.CreateUtf8StringBuilder();
+        try
         {
-            videoMeta.AppendFormat("Format: {0}", meta.Format);
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref videoMeta, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
             videoMeta.AppendLine();
-            if (meta.Duration > 0)
+            if (meta is not null)
             {
-                videoMeta.AppendFormat("Duration: {0:F1}s", meta.Duration);
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref videoMeta, "Format: {0}"u8, meta.Format);
+                videoMeta.AppendLine();
+                if (meta.Duration > 0)
+                {
+                    Utf8CompositeFormat.AppendFormatUtf8(ref videoMeta, "Duration: {0:F1}s"u8, meta.Duration);
+                    videoMeta.AppendLine();
+                }
+                if (meta.Width > 0)
+                {
+                    Utf8CompositeFormat.AppendFormatUtf8(ref videoMeta, "Resolution: {0}×{1}"u8, meta.Width, meta.Height);
+                    videoMeta.AppendLine();
+                }
+                if (meta.Bitrate > 0)
+                {
+                    Utf8CompositeFormat.AppendFormatUtf8(ref videoMeta, "Bitrate: {0} kbps"u8, meta.Bitrate);
+                    videoMeta.AppendLine();
+                }
+            }
+            else
+            {
+                videoMeta.AppendLiteral("(metadata extraction unavailable)"u8);
                 videoMeta.AppendLine();
             }
-            if (meta.Width > 0)
-            {
-                videoMeta.AppendFormat("Resolution: {0}×{1}", meta.Width, meta.Height);
-                videoMeta.AppendLine();
-            }
-            if (meta.Bitrate > 0)
-            {
-                videoMeta.AppendFormat("Bitrate: {0} kbps", meta.Bitrate);
-                videoMeta.AppendLine();
-            }
-        }
-        else
-        {
-            videoMeta.AppendLiteral("(metadata extraction unavailable)"u8);
-            videoMeta.AppendLine();
-        }
 
-        return ValueTask.FromResult(new ContentProcessorResult(
-            videoMeta.ToString().TrimEnd(), OutputModality.Metadata,
-            Utf8Data: videoMeta.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(
+                videoMeta.ToString().TrimEnd(), OutputModality.Metadata,
+                Utf8Data: videoMeta.AsSpan().ToArray()));
+        }
+        finally { videoMeta.Dispose(); }
     }
 
     internal static VideoMeta? ParseVideoMetadata(string path, ReadOnlySpan<byte> bytes)

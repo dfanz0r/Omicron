@@ -425,26 +425,26 @@ public sealed class OmicronHost : IDisposable
                     break;
 
                 case MessageRole.Assistant:
-                {
-                    var toolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? new List<ToolCallContent> { msg.ToolCall } : null);
-                    if (toolCalls is { Count: > 0 })
                     {
-                        foreach (var tc in toolCalls)
+                        var toolCalls = msg.ToolCalls ?? (msg.ToolCall is not null ? new List<ToolCallContent> { msg.ToolCall } : null);
+                        if (toolCalls is { Count: > 0 })
                         {
-                            replayEvents.Add(new ToolInvocationStartedEvent(
-                                EventEnvelope.ForSession(session.Id),
-                                new ToolCallId(tc.Id), tc.Name,
-                                tc.Arguments ?? new Dictionary<string, object?>()));
+                            foreach (var tc in toolCalls)
+                            {
+                                replayEvents.Add(new ToolInvocationStartedEvent(
+                                    EventEnvelope.ForSession(session.Id),
+                                    new ToolCallId(tc.Id), tc.Name,
+                                    tc.Arguments ?? new Dictionary<string, object?>()));
+                            }
                         }
-                    }
 
-                    replayEvents.Add(new AssistantResponseCompleteEvent(
-                        EventEnvelope.ForSession(session.Id),
-                        msg.TextData ?? Utf8String.Empty,
-                        msg.ReasoningData,
-                        new TokenUsage(0, 0)));
-                    break;
-                }
+                        replayEvents.Add(new AssistantResponseCompleteEvent(
+                            EventEnvelope.ForSession(session.Id),
+                            msg.TextData ?? Utf8String.Empty,
+                            msg.ReasoningData,
+                            new TokenUsage(0, 0)));
+                        break;
+                    }
 
                 case MessageRole.ToolResult:
                     replayEvents.Add(new ToolInvocationCompletedEvent(

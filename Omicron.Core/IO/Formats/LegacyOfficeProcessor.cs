@@ -1,6 +1,7 @@
 using System.Text;
 using Cysharp.Text;
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
 
@@ -67,19 +68,23 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
 
                 var openXmlResult = await openXmlProcessor.ProcessAsync(openXmlContext, ct);
 
-                using var output = ZString.CreateUtf8StringBuilder();
-                output.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(bytes.Length), docType);
-                output.AppendLine();
-                output.AppendFormat("[CONVERTED] {0} -> {1}", conversion.Method, conversion.ConvertedExtension);
-                output.AppendLine();
-                output.AppendLine();
-                output.Append(openXmlResult.Text);
+                var output = ZString.CreateUtf8StringBuilder();
+                try
+                {
+                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(bytes.Length), docType);
+                    output.AppendLine();
+                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[CONVERTED] {0} -> {1}"u8, conversion.Method, conversion.ConvertedExtension);
+                    output.AppendLine();
+                    output.AppendLine();
+                    output.Append(openXmlResult.Text);
 
-                return new ContentProcessorResult(
-                    output.ToString().TrimEnd(),
-                    openXmlResult.ActualModality,
-                    Utf8Data: output.AsSpan().ToArray(),
-                    Warning: conversion.Warning ?? openXmlResult.Warning);
+                    return new ContentProcessorResult(
+                        output.ToString().TrimEnd(),
+                        openXmlResult.ActualModality,
+                        Utf8Data: output.AsSpan().ToArray(),
+                        Warning: conversion.Warning ?? openXmlResult.Warning);
+                }
+                finally { output.Dispose(); }
             }
             catch
             {
@@ -309,22 +314,26 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
         string method, string text, string? warning,
         OutputModality modality)
     {
-        using var output = ZString.CreateUtf8StringBuilder();
-        output.AppendFormat("[FILE] {0}  ({1}, {2})", relativePath, FormatSize.Format(size), docType);
-        output.AppendLine();
-        output.AppendFormat("[METHOD] {0}", method);
-        output.AppendLine();
-        if (warning is not null)
+        var output = ZString.CreateUtf8StringBuilder();
+        try
         {
-            output.AppendFormat("[WARNING] {0}", warning);
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, relativePath, FormatSize.Format(size), docType);
             output.AppendLine();
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[METHOD] {0}"u8, method);
+            output.AppendLine();
+            if (warning is not null)
+            {
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[WARNING] {0}"u8, warning);
+                output.AppendLine();
+            }
+            output.AppendLine();
+            output.Append(text);
+            return new ContentProcessorResult(
+                output.ToString().TrimEnd(), modality,
+                Utf8Data: output.AsSpan().ToArray(),
+                Warning: warning);
         }
-        output.AppendLine();
-        output.Append(text);
-        return new ContentProcessorResult(
-            output.ToString().TrimEnd(), modality,
-            Utf8Data: output.AsSpan().ToArray(),
-            Warning: warning);
+        finally { output.Dispose(); }
     }
 
     private static async ValueTask<ContentProcessorResult> HexDumpFallbackAsync(
@@ -345,16 +354,20 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
         var reason = extraReason is not null ? $" ({extraReason})" : "";
         var warning = $"Legacy Office text extraction unavailable{reason}; showing hex dump.";
 
-        using var output2 = ZString.CreateUtf8StringBuilder();
-        output2.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(bytes.Length), docType);
-        output2.AppendLine();
-        output2.AppendFormat("[WARNING] {0}", warning);
-        output2.AppendLine();
-        output2.Append(hexResult.Text);
-        return new ContentProcessorResult(
-            output2.ToString().TrimEnd(), OutputModality.HexDump,
-            Utf8Data: output2.AsSpan().ToArray(),
-            Warning: warning);
+        var output2 = ZString.CreateUtf8StringBuilder();
+        try
+        {
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output2, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(bytes.Length), docType);
+            output2.AppendLine();
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output2, "[WARNING] {0}"u8, warning);
+            output2.AppendLine();
+            output2.Append(hexResult.Text);
+            return new ContentProcessorResult(
+                output2.ToString().TrimEnd(), OutputModality.HexDump,
+                Utf8Data: output2.AsSpan().ToArray(),
+                Warning: warning);
+        }
+        finally { output2.Dispose(); }
     }
 
 

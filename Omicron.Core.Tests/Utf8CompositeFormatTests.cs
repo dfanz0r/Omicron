@@ -472,7 +472,7 @@ public class Utf8CompositeFormatTests
     {
         Span<byte> dest = stackalloc byte[16];
         Assert.True(Utf8CompositeFormat.TryFormat("{{{{}}}}"u8, dest, out var written, 0));
-        Assert.Equal("{{}}",  Encoding.UTF8.GetString(dest[..written]));
+        Assert.Equal("{{}}", Encoding.UTF8.GetString(dest[..written]));
     }
     // ──────────────────────────────────────────────
     //  Writer/builder API (Phase 2)

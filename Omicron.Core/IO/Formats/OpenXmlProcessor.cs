@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Cysharp.Text;
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
 
@@ -40,15 +41,19 @@ public sealed class OpenXmlProcessor : IContentProcessor
 
         if (text is not null)
         {
-            using var output = ZString.CreateUtf8StringBuilder();
-            output.AppendFormat("[FILE] {0}  ({1}, {2})", context.RelativePath, FormatSize.Format(bytes.Length), docType);
-            output.AppendLine();
-            output.AppendLine();
-            output.Append(text);
+            var output = ZString.CreateUtf8StringBuilder();
+            try
+            {
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(bytes.Length), docType);
+                output.AppendLine();
+                output.AppendLine();
+                output.Append(text);
 
-            return new ContentProcessorResult(
-                output.ToString().TrimEnd(), OutputModality.Text,
-                Utf8Data: output.AsSpan().ToArray());
+                return new ContentProcessorResult(
+                    output.ToString().TrimEnd(), OutputModality.Text,
+                    Utf8Data: output.AsSpan().ToArray());
+            }
+            finally { output.Dispose(); }
         }
 
         // Fallback: hex dump
@@ -60,14 +65,18 @@ public sealed class OpenXmlProcessor : IContentProcessor
 
         var hexResult = await hexDumper.ProcessAsync(hexContext, ct);
 
-        using var fallback = ZString.CreateUtf8StringBuilder();
-        fallback.AppendFormat("[FILE] {0}  ({1}, {2} — text extraction unavailable, showing hex dump)", context.RelativePath, FormatSize.Format(bytes.Length), docType);
-        fallback.AppendLine();
-        fallback.Append(hexResult.Text);
-        return new ContentProcessorResult(
-            fallback.ToString().TrimEnd(), OutputModality.HexDump,
-            Utf8Data: fallback.AsSpan().ToArray(),
-            Warning: "Open XML text extraction unavailable.");
+        var fallback = ZString.CreateUtf8StringBuilder();
+        try
+        {
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref fallback, "[FILE] {0}  ({1}, {2} — text extraction unavailable, showing hex dump)"u8, context.RelativePath, FormatSize.Format(bytes.Length), docType);
+            fallback.AppendLine();
+            fallback.Append(hexResult.Text);
+            return new ContentProcessorResult(
+                fallback.ToString().TrimEnd(), OutputModality.HexDump,
+                Utf8Data: fallback.AsSpan().ToArray(),
+                Warning: "Open XML text extraction unavailable.");
+        }
+        finally { fallback.Dispose(); }
     }
 
     /// <summary>

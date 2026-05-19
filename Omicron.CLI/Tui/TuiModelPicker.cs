@@ -108,22 +108,22 @@ public sealed class TuiModelPicker : ITuiWidget
                 return true;
 
             case Key.PageUp:
-            {
-                int pageSize = GetVisibleRowCount() - 2;
-                if (pageSize < 1) pageSize = 1;
-                _selectedIndex = Math.Max(0, _selectedIndex - pageSize);
-                EnsureSelectedVisible();
-                return true;
-            }
+                {
+                    int pageSize = GetVisibleRowCount() - 2;
+                    if (pageSize < 1) pageSize = 1;
+                    _selectedIndex = Math.Max(0, _selectedIndex - pageSize);
+                    EnsureSelectedVisible();
+                    return true;
+                }
 
             case Key.PageDown:
-            {
-                int pageSize = GetVisibleRowCount() - 2;
-                if (pageSize < 1) pageSize = 1;
-                _selectedIndex = Math.Min(count - 1, _selectedIndex + pageSize);
-                EnsureSelectedVisible();
-                return true;
-            }
+                {
+                    int pageSize = GetVisibleRowCount() - 2;
+                    if (pageSize < 1) pageSize = 1;
+                    _selectedIndex = Math.Min(count - 1, _selectedIndex + pageSize);
+                    EnsureSelectedVisible();
+                    return true;
+                }
 
             case Key.Home:
                 _selectedIndex = 0;
@@ -164,31 +164,31 @@ public sealed class TuiModelPicker : ITuiWidget
                 return true;
 
             case Key.Character when ke.Text.HasValue:
-            {
-                char c = (char)ke.Text.Value.Value;
-
-                // Number keys 1-9: jump to that item in the list
-                if (c >= '1' && c <= '9')
                 {
-                    int idx = c - '1';
-                    if (idx < count)
+                    char c = (char)ke.Text.Value.Value;
+
+                    // Number keys 1-9: jump to that item in the list
+                    if (c >= '1' && c <= '9')
                     {
-                        _selectedIndex = idx;
-                        EnsureSelectedVisible();
+                        int idx = c - '1';
+                        if (idx < count)
+                        {
+                            _selectedIndex = idx;
+                            EnsureSelectedVisible();
+                        }
+                        return true;
                     }
-                    return true;
-                }
 
-                // Alphanumeric: add to filter
-                if (char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '_' || c == '/' || c == '.')
-                {
-                    _filterText.Append(c);
-                    _filterDirty = true;
-                    return true;
-                }
+                    // Alphanumeric: add to filter
+                    if (char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '_' || c == '/' || c == '.')
+                    {
+                        _filterText.Append(c);
+                        _filterDirty = true;
+                        return true;
+                    }
 
-                return false;
-            }
+                    return false;
+                }
         }
 
         return false;

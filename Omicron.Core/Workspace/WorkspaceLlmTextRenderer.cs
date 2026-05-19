@@ -1,5 +1,6 @@
 using Cysharp.Text;
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Workspace;
 
@@ -68,12 +69,12 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         sb.AppendLine(file.RequestedPath);
         sb.AppendLiteral("  Size: "u8);
         FormatSize.AppendUtf8To(ref sb, file.Stat.Size);
-        sb.AppendFormat("  |  Lines: {0:N0}", file.TotalLines);
+        Utf8CompositeFormat.AppendFormatUtf8(ref sb, "  |  Lines: {0:N0}"u8, file.TotalLines);
         sb.AppendLine();
 
         if (file.Lines.Count > 0)
         {
-            sb.AppendFormat("  Showing: lines {0}-{1} of {2:N0}", file.Lines[0].Number, file.Lines[^1].Number, file.TotalLines);
+            Utf8CompositeFormat.AppendFormatUtf8(ref sb, "  Showing: lines {0}-{1} of {2:N0}"u8, file.Lines[0].Number, file.Lines[^1].Number, file.TotalLines);
             sb.AppendLine();
         }
 
@@ -92,11 +93,11 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
             sb.AppendLine();
             sb.AppendLiteral("---"u8);
             sb.AppendLine();
-            sb.AppendFormat("[Output truncated to {0:N0} lines / {1:N0} KB.]", WorkspaceReadService.MaxOutputLines, WorkspaceReadService.MaxOutputBytes / 1024);
+            Utf8CompositeFormat.AppendFormatUtf8(ref sb, "[Output truncated to {0:N0} lines / {1:N0} KB.]"u8, WorkspaceReadService.MaxOutputLines, WorkspaceReadService.MaxOutputBytes / 1024);
             if (file.NextOffset.HasValue)
             {
                 sb.AppendLine();
-                sb.AppendFormat("[Use offset={0} to continue.]", file.NextOffset.Value);
+                Utf8CompositeFormat.AppendFormatUtf8(ref sb, "[Use offset={0} to continue.]"u8, file.NextOffset.Value);
             }
         }
     }
@@ -115,7 +116,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
     {
         sb.AppendLiteral("[DIR] "u8);
         sb.Append(dir.RequestedPath);
-        sb.AppendFormat("  ({0} files, {1} dirs)", dir.TotalFileCount, dir.TotalDirCount);
+        Utf8CompositeFormat.AppendFormatUtf8(ref sb, "  ({0} files, {1} dirs)"u8, dir.TotalFileCount, dir.TotalDirCount);
 
         foreach (var e in dir.Entries)
         {
@@ -148,7 +149,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         if (dir.Truncated)
         {
             sb.AppendLine();
-            sb.AppendFormat("  ... (listing truncated at {0} entries)", WorkspaceReadService.MaxDirEntries);
+            Utf8CompositeFormat.AppendFormatUtf8(ref sb, "  ... (listing truncated at {0} entries)"u8, WorkspaceReadService.MaxDirEntries);
         }
     }
 
@@ -192,9 +193,9 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         if (file.Truncated)
         {
             var sb = ZString.CreateUtf8StringBuilder();
-            sb.AppendFormat("Output truncated — showing {0} of {1:N0} lines.", file.Lines.Count, file.TotalLines);
+            Utf8CompositeFormat.AppendFormatUtf8(ref sb, "Output truncated — showing {0} of {1:N0} lines."u8, file.Lines.Count, file.TotalLines);
             if (file.NextOffset.HasValue)
-                sb.AppendFormat(" Use offset={0} to continue.", file.NextOffset.Value);
+                Utf8CompositeFormat.AppendFormatUtf8(ref sb, " Use offset={0} to continue."u8, file.NextOffset.Value);
             var warning = new PlainTextContentBlock(ref sb);
             blocks.Add(warning);
         }

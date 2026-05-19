@@ -1321,7 +1321,7 @@ public static partial class Utf8CompositeFormat
             capacity = Math.Min(capacity * 2, maxCap);
         }
     }
-//  Formatter cache (per-type delegate dispatch)
+    //  Formatter cache (per-type delegate dispatch)
     //  Used by TryFormatValue to avoid boxing in
     //  the IUtf8SpanFormattable fallback path.
     // ──────────────────────────────────────────────

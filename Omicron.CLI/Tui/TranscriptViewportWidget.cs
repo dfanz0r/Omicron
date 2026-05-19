@@ -119,7 +119,13 @@ public sealed class TranscriptViewportWidget : ITuiWidget
             case UserMessageEvent ue:
                 FlushPending();
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
-                _store.AppendUserMessage(Encoding.UTF8.GetBytes($"  You: {ue.Text}"));
+                // Build "  You: <text>" as UTF-8 bytes directly, avoiding string interpolation + encode round-trip
+                {
+                    using var msgBuilder = ZString.CreateUtf8StringBuilder();
+                    msgBuilder.AppendLiteral("  You: "u8);
+                    msgBuilder.AppendLiteral(ue.Text.Utf8Span);
+                    _store.AppendUserMessage(msgBuilder.AsSpan());
+                }
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
                 RebuildLayout();
                 RequestRender?.Invoke();

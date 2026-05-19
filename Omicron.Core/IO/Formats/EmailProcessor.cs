@@ -1,6 +1,7 @@
 using System.Text;
 using Cysharp.Text;
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
 
@@ -29,70 +30,74 @@ public sealed class EmailProcessor : IContentProcessor
                 $"[FILE] {context.RelativePath}  (empty)", OutputModality.Text));
         }
 
-        using var output = ZString.CreateUtf8StringBuilder();
-        output.AppendFormat("[FILE] {0}  ({1}, email)", context.RelativePath, FormatSize.Format(bytes.Length));
-        output.AppendLine();
-        output.AppendLine();
-
-        // Try MimeKit first
+        var output = ZString.CreateUtf8StringBuilder();
         try
         {
-            using var ms = new MemoryStream(bytes.ToArray());
-            using var mimeMessage = MimeKit.MimeMessage.Load(ms);
-
-            output.AppendLiteral("--- Headers ---"u8);
-            output.AppendLine();
-            output.AppendFormat("From: {0}", mimeMessage.From);
-            output.AppendLine();
-            output.AppendFormat("To: {0}", mimeMessage.To);
-            output.AppendLine();
-            output.AppendFormat("Subject: {0}", mimeMessage.Subject);
-            output.AppendLine();
-            output.AppendFormat("Date: {0}", mimeMessage.Date);
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, email)"u8, context.RelativePath, FormatSize.Format(bytes.Length));
             output.AppendLine();
             output.AppendLine();
 
-            output.AppendLiteral("--- Body ---"u8);
-            output.AppendLine();
-            output.Append(mimeMessage.Body?.ToString() ?? "(no text body)");
-            output.AppendLine();
+            // Try MimeKit first
+            try
+            {
+                using var ms = new MemoryStream(bytes.ToArray());
+                using var mimeMessage = MimeKit.MimeMessage.Load(ms);
+
+                output.AppendLiteral("--- Headers ---"u8);
+                output.AppendLine();
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "From: {0}"u8, mimeMessage.From);
+                output.AppendLine();
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "To: {0}"u8, mimeMessage.To);
+                output.AppendLine();
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "Subject: {0}"u8, mimeMessage.Subject);
+                output.AppendLine();
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "Date: {0}"u8, mimeMessage.Date);
+                output.AppendLine();
+                output.AppendLine();
+
+                output.AppendLiteral("--- Body ---"u8);
+                output.AppendLine();
+                output.Append(mimeMessage.Body?.ToString() ?? "(no text body)");
+                output.AppendLine();
+
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    output.ToString().TrimEnd(), OutputModality.Text,
+                    Utf8Data: output.AsSpan().ToArray()));
+            }
+            catch
+            {
+                // MimeKit failed — fall back to RFC 822 parsing
+            }
+
+            // Fallback: manual RFC 822 parsing
+            var text = Encoding.UTF8.GetString(bytes.Span);
+            var (headers, body) = SplitEmail(text);
+
+            if (headers.Count > 0)
+            {
+                output.AppendLiteral("--- Headers ---"u8);
+                output.AppendLine();
+                foreach (var (key, value) in headers)
+                {
+                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "{0}: {1}"u8, key, value);
+                    output.AppendLine();
+                }
+                output.AppendLine();
+            }
+
+            if (!string.IsNullOrEmpty(body))
+            {
+                output.AppendLiteral("--- Body ---"u8);
+                output.AppendLine();
+                output.Append(body);
+                output.AppendLine();
+            }
 
             return ValueTask.FromResult(new ContentProcessorResult(
                 output.ToString().TrimEnd(), OutputModality.Text,
                 Utf8Data: output.AsSpan().ToArray()));
         }
-        catch
-        {
-            // MimeKit failed — fall back to RFC 822 parsing
-        }
-
-        // Fallback: manual RFC 822 parsing
-        var text = Encoding.UTF8.GetString(bytes.Span);
-        var (headers, body) = SplitEmail(text);
-
-        if (headers.Count > 0)
-        {
-            output.AppendLiteral("--- Headers ---"u8);
-            output.AppendLine();
-            foreach (var (key, value) in headers)
-            {
-                output.AppendFormat("{0}: {1}", key, value);
-                output.AppendLine();
-            }
-            output.AppendLine();
-        }
-
-        if (!string.IsNullOrEmpty(body))
-        {
-            output.AppendLiteral("--- Body ---"u8);
-            output.AppendLine();
-            output.Append(body);
-            output.AppendLine();
-        }
-
-        return ValueTask.FromResult(new ContentProcessorResult(
-            output.ToString().TrimEnd(), OutputModality.Text,
-            Utf8Data: output.AsSpan().ToArray()));
+        finally { output.Dispose(); }
     }
 
     /// <summary>

@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using Cysharp.Text;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
 
@@ -123,14 +124,14 @@ public sealed class HexDumpProcessor : IContentProcessor
                 var rowSpan = bytes.Span.Slice((int)rowStart, (int)Math.Min(BytesPerRow, actualEnd - rowStart));
 
                 // Offset column
-                builder.AppendFormat("{0:X8}  ", rowStart);
+                Utf8CompositeFormat.AppendFormatUtf8(ref builder, "{0:X8}  "u8, rowStart);
 
                 // Hex bytes — split into two groups of 8
                 for (int b = 0; b < BytesPerRow; b++)
                 {
                     if (b < rowSpan.Length)
                     {
-                        builder.AppendFormat("{0:X2} ", rowSpan[b]);
+                        Utf8CompositeFormat.AppendFormatUtf8(ref builder, "{0:X2} "u8, rowSpan[b]);
                     }
                     else
                     {
@@ -164,7 +165,7 @@ public sealed class HexDumpProcessor : IContentProcessor
             if (truncated)
             {
                 builder.AppendLine();
-                builder.AppendFormat("... (showing bytes 0x{0:X}–0x{1:X} of 0x{2:X} total). Use offset=0x{3:X} to continue.", startOffset, actualEnd, fileSize, nextOffset);
+                Utf8CompositeFormat.AppendFormatUtf8(ref builder, "... (showing bytes 0x{0:X}–0x{1:X} of 0x{2:X} total). Use offset=0x{3:X} to continue."u8, startOffset, actualEnd, fileSize, nextOffset);
                 builder.AppendLine();
             }
 
@@ -181,7 +182,7 @@ public sealed class HexDumpProcessor : IContentProcessor
 
     private static void AppendHeaderUtf8(ref Utf8ValueStringBuilder builder, long fileSize, long startOffset, long endOffset)
     {
-        builder.AppendFormat("[HEX] bytes 0x{0:X}–0x{1:X} of 0x{2:X} ({3} bytes)", startOffset, endOffset, fileSize, (int)fileSize);
+        Utf8CompositeFormat.AppendFormatUtf8(ref builder, "[HEX] bytes 0x{0:X}–0x{1:X} of 0x{2:X} ({3} bytes)"u8, startOffset, endOffset, fileSize, (int)fileSize);
         builder.AppendLine();
     }
 }

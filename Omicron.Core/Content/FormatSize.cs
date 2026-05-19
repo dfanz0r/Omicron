@@ -1,4 +1,5 @@
 using Cysharp.Text;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Content;
 
@@ -29,8 +30,8 @@ internal static class FormatSize
         }
 
         if (bytes < 1024 * 1024)
-            sb.AppendFormat("{0:F1} KB", bytes / 1024.0);
+            Utf8CompositeFormat.AppendFormatUtf8(ref sb, "{0:F1} KB"u8, bytes / 1024.0);
         else
-            sb.AppendFormat("{0:F1} MB", bytes / (1024.0 * 1024.0));
+            Utf8CompositeFormat.AppendFormatUtf8(ref sb, "{0:F1} MB"u8, bytes / (1024.0 * 1024.0));
     }
 }

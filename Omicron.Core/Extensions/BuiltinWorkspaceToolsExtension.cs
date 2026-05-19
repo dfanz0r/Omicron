@@ -5,6 +5,7 @@ using Omicron.Core.Content;
 using Omicron.Core.Diff;
 using Omicron.Core.Events;
 using Omicron.Core.IO;
+using Omicron.Core.Text;
 using Omicron.Core.Tools;
 using Omicron.Core.Workspace;
 
@@ -269,50 +270,50 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     var output = ZString.CreateUtf8StringBuilder();
                     try
                     {
-                        output.AppendFormat("[FILE] {0}  ({1} lines, hashline anchors)", path, totalLines);
-                    output.AppendLine();
-                    output.AppendLine();
+                        Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1} lines, hashline anchors)"u8, path, totalLines);
+                        output.AppendLine();
+                        output.AppendLine();
 
-                    const int maxOutputLines = 2000;
-                    const int maxOutputBytes = 50 * 1024;
-                    int writtenLines = 0;
-                    int writtenBytes = output.Length;
-                    bool truncated = false;
+                        const int maxOutputLines = 2000;
+                        const int maxOutputBytes = 50 * 1024;
+                        int writtenLines = 0;
+                        int writtenBytes = output.Length;
+                        bool truncated = false;
 
-                    for (int i = 0; i < totalLines; i++)
-                    {
-                        int lineByteStart = lineStarts[i];
-                        int lineByteEnd = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : span.Length;
-
-                        int lineLength = lineByteEnd - lineByteStart;
-                        if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\n')
-                            lineLength--;
-                        if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\r')
-                            lineLength--;
-
-                        var lineUtf8 = span.Slice(lineByteStart, lineLength);
-                        var anchor = LineHash.ComputeAnchorUtf8(lineUtf8);
-                        // Estimate byte cost: line number digits + anchor(2) + '|' + line + newline
-                        var lineNumDigits = i < 9 ? 1 : i < 99 ? 2 : i < 999 ? 3 : i < 9999 ? 4 : 5;
-                        var lineBytes = lineNumDigits + 2 + 1 + lineLength + 1;
-
-                        if (writtenLines >= maxOutputLines ||
-                            writtenBytes + lineBytes > maxOutputBytes)
+                        for (int i = 0; i < totalLines; i++)
                         {
-                            truncated = true;
-                            break;
+                            int lineByteStart = lineStarts[i];
+                            int lineByteEnd = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : span.Length;
+
+                            int lineLength = lineByteEnd - lineByteStart;
+                            if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\n')
+                                lineLength--;
+                            if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\r')
+                                lineLength--;
+
+                            var lineUtf8 = span.Slice(lineByteStart, lineLength);
+                            var anchor = LineHash.ComputeAnchorUtf8(lineUtf8);
+                            // Estimate byte cost: line number digits + anchor(2) + '|' + line + newline
+                            var lineNumDigits = i < 9 ? 1 : i < 99 ? 2 : i < 999 ? 3 : i < 9999 ? 4 : 5;
+                            var lineBytes = lineNumDigits + 2 + 1 + lineLength + 1;
+
+                            if (writtenLines >= maxOutputLines ||
+                                writtenBytes + lineBytes > maxOutputBytes)
+                            {
+                                truncated = true;
+                                break;
+                            }
+
+                            LineHash.FormatLineUtf8(ref output, i + 1, anchor, lineUtf8);
+                            writtenLines++;
+                            writtenBytes += lineBytes;
                         }
 
-                        LineHash.FormatLineUtf8(ref output, i + 1, anchor, lineUtf8);
-                        writtenLines++;
-                        writtenBytes += lineBytes;
-                    }
-
-                    if (truncated)
-                    {
-                        output.AppendFormat("... output truncated ({0} total lines, showing {1})", totalLines, writtenLines);
-                        output.AppendLine();
-                    }
+                        if (truncated)
+                        {
+                            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "... output truncated ({0} total lines, showing {1})"u8, totalLines, writtenLines);
+                            output.AppendLine();
+                        }
 
                         return new ToolResult(
                             Utf8Data: output.AsSpan().ToArray());
@@ -472,19 +473,23 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         if (foundLine == -1)
                         {
                             // Build nearby context for error
-                            using var context = ZString.CreateUtf8StringBuilder();
-                            context.AppendFormat("Hash mismatch at line {0} (expected hash '{1}'):", edit.StartLine, edit.StartHash);
-                            context.AppendLine();
-                            int ctxStart = Math.Max(1, edit.StartLine - 3);
-                            int ctxEnd = Math.Min(currentLines.Length, edit.StartLine + 3);
-                            for (int l = ctxStart; l <= ctxEnd; l++)
+                            var context = ZString.CreateUtf8StringBuilder();
+                            try
                             {
-                                var h = LineHash.ComputeAnchor(currentLines[l - 1]);
-                                context.AppendFormat("  {0}{1}|", l, h);
-                                context.Append(currentLines[l - 1]);
+                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "Hash mismatch at line {0} (expected hash '{1}'):"u8, edit.StartLine, edit.StartHash);
                                 context.AppendLine();
+                                int ctxStart = Math.Max(1, edit.StartLine - 3);
+                                int ctxEnd = Math.Min(currentLines.Length, edit.StartLine + 3);
+                                for (int l = ctxStart; l <= ctxEnd; l++)
+                                {
+                                    var h = LineHash.ComputeAnchor(currentLines[l - 1]);
+                                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "  {0}{1}|"u8, l, h);
+                                    context.Append(currentLines[l - 1]);
+                                    context.AppendLine();
+                                }
+                                errors.Add(context.ToString().TrimEnd());
                             }
-                            errors.Add(context.ToString().TrimEnd());
+                            finally { context.Dispose(); }
                             continue;
                         }
 
@@ -493,24 +498,28 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                             currentLines.Skip(foundLine - 1).Take(lineCount));
                         if (actualSpan != edit.OldText)
                         {
-                            using var context = ZString.CreateUtf8StringBuilder();
-                            context.AppendFormat("old_text mismatch at resolved line {0} (hash '{1}'):", foundLine, edit.StartHash);
-                            context.AppendLine();
-                            context.AppendFormat("  Expected: {0}", edit.OldText);
-                            context.AppendLine();
-                            context.AppendFormat("  Actual:   {0}", actualSpan);
-                            context.AppendLine();
-                            int ctxStart = Math.Max(1, foundLine - 2);
-                            int ctxEnd = Math.Min(currentLines.Length, foundLine + lineCount + 1);
-                            for (int l = ctxStart; l <= ctxEnd; l++)
+                            var context = ZString.CreateUtf8StringBuilder();
+                            try
                             {
-                                var h = LineHash.ComputeAnchor(currentLines[l - 1]);
-                                var marker = (l >= foundLine && l < foundLine + lineCount) ? "~~" : "  ";
-                                context.AppendFormat("{0}{1}{2}|", marker, l, h);
-                                context.Append(currentLines[l - 1]);
+                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "old_text mismatch at resolved line {0} (hash '{1}'):"u8, foundLine, edit.StartHash);
                                 context.AppendLine();
+                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "  Expected: {0}"u8, edit.OldText);
+                                context.AppendLine();
+                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "  Actual:   {0}"u8, actualSpan);
+                                context.AppendLine();
+                                int ctxStart = Math.Max(1, foundLine - 2);
+                                int ctxEnd = Math.Min(currentLines.Length, foundLine + lineCount + 1);
+                                for (int l = ctxStart; l <= ctxEnd; l++)
+                                {
+                                    var h = LineHash.ComputeAnchor(currentLines[l - 1]);
+                                    var marker = (l >= foundLine && l < foundLine + lineCount) ? "~~" : "  ";
+                                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "{0}{1}{2}|"u8, marker, l, h);
+                                    context.Append(currentLines[l - 1]);
+                                    context.AppendLine();
+                                }
+                                errors.Add(context.ToString().TrimEnd());
                             }
-                            errors.Add(context.ToString().TrimEnd());
+                            finally { context.Dispose(); }
                             continue;
                         }
 
@@ -569,7 +578,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     var resultOutput = ZString.CreateUtf8StringBuilder();
                     try
                     {
-                        resultOutput.AppendFormat("Edit committed: {0}", path);
+                        Utf8CompositeFormat.AppendFormatUtf8Slow(ref resultOutput, "Edit committed: {0}"u8, path);
                         resultOutput.AppendLine();
 
                         if (diff.HasChanges)

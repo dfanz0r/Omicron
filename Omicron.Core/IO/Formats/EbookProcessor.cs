@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Cysharp.Text;
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
 
@@ -32,54 +33,58 @@ public sealed class EbookProcessor : IContentProcessor
                 $"[FILE] {context.RelativePath}  (empty)", OutputModality.Text));
         }
 
-        using var output = ZString.CreateUtf8StringBuilder();
-        output.AppendFormat("[FILE] {0}  ({1}, EPUB)", context.RelativePath, FormatSize.Format(bytes.Length));
-        output.AppendLine();
-        output.AppendLine();
-
-        // Try to extract text from EPUB (ZIP with .opf and .xhtml)
-        var chapters = TryExtractEpubText(bytes.Span);
-
-        if (chapters is not null && chapters.Count > 0)
+        var output = ZString.CreateUtf8StringBuilder();
+        try
         {
-            output.AppendFormat("Chapters: {0}", chapters.Count);
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, EPUB)"u8, context.RelativePath, FormatSize.Format(bytes.Length));
             output.AppendLine();
             output.AppendLine();
 
-            long totalBytes = 0;
-            const long maxBytes = 50 * 1024;
+            // Try to extract text from EPUB (ZIP with .opf and .xhtml)
+            var chapters = TryExtractEpubText(bytes.Span);
 
-            foreach (var (title, content) in chapters)
+            if (chapters is not null && chapters.Count > 0)
             {
-                ct.ThrowIfCancellationRequested();
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "Chapters: {0}"u8, chapters.Count);
+                output.AppendLine();
+                output.AppendLine();
 
-                var chapterText = string.IsNullOrEmpty(title)
-                    ? content
-                    : $"## {title}\n\n{content}";
+                long totalBytes = 0;
+                const long maxBytes = 50 * 1024;
 
-                var chapterBytes = Encoding.UTF8.GetByteCount(chapterText) + 1; // +1 for newline
-                if (totalBytes + chapterBytes > maxBytes)
+                foreach (var (title, content) in chapters)
                 {
-                    output.AppendLiteral("... (output truncated)"u8);
+                    ct.ThrowIfCancellationRequested();
+
+                    var chapterText = string.IsNullOrEmpty(title)
+                        ? content
+                        : $"## {title}\n\n{content}";
+
+                    var chapterBytes = Encoding.UTF8.GetByteCount(chapterText) + 1; // +1 for newline
+                    if (totalBytes + chapterBytes > maxBytes)
+                    {
+                        output.AppendLiteral("... (output truncated)"u8);
+                        output.AppendLine();
+                        break;
+                    }
+
+                    output.Append(chapterText);
                     output.AppendLine();
-                    break;
+                    output.AppendLine();
+                    totalBytes += chapterBytes;
                 }
-
-                output.Append(chapterText);
-                output.AppendLine();
-                output.AppendLine();
-                totalBytes += chapterBytes;
             }
-        }
-        else
-        {
-            output.AppendLiteral("(text extraction unavailable)"u8);
-            output.AppendLine();
-        }
+            else
+            {
+                output.AppendLiteral("(text extraction unavailable)"u8);
+                output.AppendLine();
+            }
 
-        return ValueTask.FromResult(new ContentProcessorResult(
-            output.ToString().TrimEnd(), OutputModality.Text,
-            Utf8Data: output.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(
+                output.ToString().TrimEnd(), OutputModality.Text,
+                Utf8Data: output.AsSpan().ToArray()));
+        }
+        finally { output.Dispose(); }
     }
 
     private static List<(string? Title, string Content)>? TryExtractEpubText(ReadOnlySpan<byte> bytes)

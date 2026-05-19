@@ -232,7 +232,8 @@ public class AgentSessionTests
         var providerState = new ProviderStateManager(new InMemoryProviderConversationStateStore(), eventSink);
         var model = new Model
         {
-            Id = "test", ProviderName = "fake",
+            Id = "test",
+            ProviderName = "fake",
             Provider = new FakeProvider()
         };
 
@@ -255,7 +256,8 @@ public class AgentSessionTests
         var providerState = new ProviderStateManager(new InMemoryProviderConversationStateStore(), eventSink);
         var model = new Model
         {
-            Id = "test", ProviderName = "fake",
+            Id = "test",
+            ProviderName = "fake",
             Provider = new FakeProvider()
         };
 
@@ -264,7 +266,8 @@ public class AgentSessionTests
 
         fakeProvider.Responses.Add(() => Task.FromResult(new LlmResult
         {
-            Text = "First", StopReason = StopReason.Stop
+            Text = "First",
+            StopReason = StopReason.Stop
         }));
         await foreach (var _ in session.PromptAsync("First")) { }
 
@@ -297,7 +300,8 @@ public class AgentSessionTests
 
         fakeProvider.Responses.Add(() => Task.FromResult(new LlmResult
         {
-            Text = "First response", StopReason = StopReason.Stop
+            Text = "First response",
+            StopReason = StopReason.Stop
         }));
 
         var firstEvents = new List<OmicronEvent>();
@@ -312,7 +316,8 @@ public class AgentSessionTests
 
         fakeProvider.Responses.Add(() => Task.FromResult(new LlmResult
         {
-            Text = "Second response", StopReason = StopReason.Stop
+            Text = "Second response",
+            StopReason = StopReason.Stop
         }));
 
         var secondEvents = new List<OmicronEvent>();

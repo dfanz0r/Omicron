@@ -208,113 +208,113 @@ public class AnthropicProvider : IChatProvider
             switch (type)
             {
                 case "content_block_start":
-                {
-                    var blockType = root.GetProperty("content_block").GetProperty("type").GetString();
-                    var index = root.GetProperty("index").GetInt32();
-                    if (blockType == "tool_use")
                     {
-                        var id = root.GetProperty("content_block").GetProperty("id").GetString() ?? "";
-                        var name = root.GetProperty("content_block").GetProperty("name").GetString() ?? "";
-                        toolCallAccumulators[index] = (id, name, new StringBuilder());
-                        return new StreamEvent
+                        var blockType = root.GetProperty("content_block").GetProperty("type").GetString();
+                        var index = root.GetProperty("index").GetInt32();
+                        if (blockType == "tool_use")
                         {
-                            Type = StreamEventType.ToolCallStart,
-                            ToolCallId = id,
-                            ToolName = name
-                        };
+                            var id = root.GetProperty("content_block").GetProperty("id").GetString() ?? "";
+                            var name = root.GetProperty("content_block").GetProperty("name").GetString() ?? "";
+                            toolCallAccumulators[index] = (id, name, new StringBuilder());
+                            return new StreamEvent
+                            {
+                                Type = StreamEventType.ToolCallStart,
+                                ToolCallId = id,
+                                ToolName = name
+                            };
+                        }
+                        break;
                     }
-                    break;
-                }
 
                 case "content_block_delta":
-                {
-                    var delta = root.GetProperty("delta");
-                    var deltaType = delta.GetProperty("type").GetString();
-                    var index = root.GetProperty("index").GetInt32();
+                    {
+                        var delta = root.GetProperty("delta");
+                        var deltaType = delta.GetProperty("type").GetString();
+                        var index = root.GetProperty("index").GetInt32();
 
-                    if (deltaType == "text_delta")
-                    {
-                        var text = delta.GetProperty("text").GetString();
-                        if (!string.IsNullOrEmpty(text))
+                        if (deltaType == "text_delta")
                         {
-                            return new StreamEvent
+                            var text = delta.GetProperty("text").GetString();
+                            if (!string.IsNullOrEmpty(text))
                             {
-                                Type = StreamEventType.TextDelta,
-                                Delta = text
-                            };
+                                return new StreamEvent
+                                {
+                                    Type = StreamEventType.TextDelta,
+                                    Delta = text
+                                };
+                            }
                         }
-                    }
-                    else if (deltaType == "input_json_delta" && toolCallAccumulators.TryGetValue(index, out var acc))
-                    {
-                        var partial = delta.GetProperty("partial_json").GetString();
-                        if (!string.IsNullOrEmpty(partial))
+                        else if (deltaType == "input_json_delta" && toolCallAccumulators.TryGetValue(index, out var acc))
                         {
-                            acc.Args.Append(partial);
-                            return new StreamEvent
+                            var partial = delta.GetProperty("partial_json").GetString();
+                            if (!string.IsNullOrEmpty(partial))
                             {
-                                Type = StreamEventType.ToolCallDelta,
-                                Delta = partial,
-                                ToolCallId = acc.Id
-                            };
+                                acc.Args.Append(partial);
+                                return new StreamEvent
+                                {
+                                    Type = StreamEventType.ToolCallDelta,
+                                    Delta = partial,
+                                    ToolCallId = acc.Id
+                                };
+                            }
                         }
+                        break;
                     }
-                    break;
-                }
 
                 case "content_block_stop":
-                {
-                    var index = root.GetProperty("index").GetInt32();
-                    if (toolCallAccumulators.TryGetValue(index, out var acc))
                     {
-                        Dictionary<string, object?>? args = null;
-                        try
+                        var index = root.GetProperty("index").GetInt32();
+                        if (toolCallAccumulators.TryGetValue(index, out var acc))
                         {
-                            args = JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString());
-                        }
-                        catch
-                        {
-                            args = new Dictionary<string, object?>();
-                        }
+                            Dictionary<string, object?>? args = null;
+                            try
+                            {
+                                args = JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString());
+                            }
+                            catch
+                            {
+                                args = new Dictionary<string, object?>();
+                            }
 
-                        toolCallAccumulators.Remove(index);
-                        return new StreamEvent
-                        {
-                            Type = StreamEventType.ToolCallEnd,
-                            ToolCall = new ToolCallContent(acc.Id, acc.Name, args ?? new())
-                        };
+                            toolCallAccumulators.Remove(index);
+                            return new StreamEvent
+                            {
+                                Type = StreamEventType.ToolCallEnd,
+                                ToolCall = new ToolCallContent(acc.Id, acc.Name, args ?? new())
+                            };
+                        }
+                        break;
                     }
-                    break;
-                }
 
                 case "message_delta":
-                {
-                    var stopReason = root.GetProperty("delta").GetProperty("stop_reason").GetString();
-                    var usage = root.TryGetProperty("usage", out var usageEl) ? ParseUsage(usageEl) : null;
-                    var responseId = root.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
-                    return new StreamEvent
                     {
-                        Type = StreamEventType.Done,
-                        StopReason = MapStopReason(stopReason),
-                        Delta = responseId,
-                        Usage = usage
-                    };
-                }
+                        var stopReason = root.GetProperty("delta").GetProperty("stop_reason").GetString();
+                        var usage = root.TryGetProperty("usage", out var usageEl) ? ParseUsage(usageEl) : null;
+                        var responseId = root.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+                        return new StreamEvent
+                        {
+                            Type = StreamEventType.Done,
+                            StopReason = MapStopReason(stopReason),
+                            Delta = responseId,
+                            Usage = usage
+                        };
+                    }
 
                 case "message_stop":
                     break;
 
                 case "error":
-                {
-                    var error = root.GetProperty("error");
-                    var msg = error.TryGetProperty("message", out var msgEl)
-                        ? msgEl.GetString()
-                        : error.GetRawText();
-                    return new StreamEvent
                     {
-                        Type = StreamEventType.Error,
-                        ErrorMessage = msg ?? "Unknown Anthropic error"
-                    };
-                }
+                        var error = root.GetProperty("error");
+                        var msg = error.TryGetProperty("message", out var msgEl)
+                            ? msgEl.GetString()
+                            : error.GetRawText();
+                        return new StreamEvent
+                        {
+                            Type = StreamEventType.Error,
+                            ErrorMessage = msg ?? "Unknown Anthropic error"
+                        };
+                    }
             }
         }
         catch (JsonException)
