@@ -707,13 +707,35 @@ public static class DisplayHelpers
     {
         if (string.IsNullOrEmpty(text)) return;
 
-        var lines = text.Replace("\r\n", "\n").Split('\n');
-        var totalLines = lines.Length;
-        var shown = 0;
-
-        for (int i = 0; i < totalLines && shown < maxLines; i++, shown++)
+        // Count lines and find their start positions without allocating substrings
+        var lineStarts = new List<int>(maxLines > 0 ? Math.Min(maxLines + 1, 256) : 256);
+        lineStarts.Add(0);
+        int totalLines = 0;
+        for (int i = 0; i < text.Length && totalLines <= maxLines; i++)
         {
-            Console.WriteLine(TruncateLine(lines[i], lineWidth));
+            if (text[i] == '\n')
+            {
+                totalLines++;
+                if (totalLines <= maxLines && i + 1 < text.Length)
+                    lineStarts.Add(i + 1);
+            }
+        }
+        // Handle last line if no trailing newline
+        if (text.Length > 0 && text[^1] != '\n')
+            totalLines++;
+
+        int shown = 0;
+        for (int i = 0; i < lineStarts.Count && shown < maxLines; i++, shown++)
+        {
+            int start = lineStarts[i];
+            int end = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : text.Length;
+            // Strip trailing \r if present
+            if (end > start && text[end - 1] == '\r') end--;
+            // Strip trailing \n if present (for last line)
+            if (end > start && text[end - 1] == '\n') end--;
+
+            var line = text.AsSpan(start, end - start);
+            Console.WriteLine(TruncateLine(line, lineWidth));
         }
 
         if (totalLines > maxLines)
@@ -725,10 +747,10 @@ public static class DisplayHelpers
         }
     }
 
-    private static string TruncateLine(string line, int maxWidth)
+    private static string TruncateLine(ReadOnlySpan<char> line, int maxWidth)
     {
-        if (line.Length <= maxWidth) return line;
-        return line[..(maxWidth - 1)] + "\u2026";
+        if (line.Length <= maxWidth) return line.ToString();
+        return string.Concat(line[..(maxWidth - 1)], "\u2026");
     }
 
     public static string Truncate(this string value, int maxLength)
