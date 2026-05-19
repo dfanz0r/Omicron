@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Buffers.Text;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -15,8 +16,29 @@ namespace Omicron.Core.Content;
 /// String materialization via <see cref="ToString()"/> is explicit and lazy-cached.
 /// </summary>
 [JsonConverter(typeof(Utf8StringJsonConverter))]
-public sealed class Utf8String : IEquatable<Utf8String>
+public sealed class Utf8String : IEquatable<Utf8String>, IUtf8SpanFormattable
 {
+    /// <inheritdoc/>
+    bool IUtf8SpanFormattable.TryFormat(Span<byte> destination, out int written, ReadOnlySpan<char> format, IFormatProvider? provider)
+    {
+        // Reject non-empty format specifiers — Utf8String cannot honor them.
+        if (!format.IsEmpty)
+        {
+            written = 0;
+            return false;
+        }
+
+        var span = Utf8Span;
+        if (span.Length > destination.Length)
+        {
+            written = 0;
+            return false;
+        }
+        span.CopyTo(destination);
+        written = span.Length;
+        return true;
+    }
+
     /// <summary>Empty singleton instance.</summary>
     public static Utf8String Empty { get; } = new();
 

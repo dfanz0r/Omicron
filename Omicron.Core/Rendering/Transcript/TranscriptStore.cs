@@ -1,3 +1,4 @@
+using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Text;
@@ -78,7 +79,9 @@ public sealed class TranscriptStore
     {
         var id = BlockId.New();
         // Write a placeholder text
-        var textBytes = System.Text.Encoding.UTF8.GetBytes($"[tool: {toolName}]");
+        using var tempBuilder = ZString.CreateUtf8StringBuilder();
+        tempBuilder.AppendFormat("[tool: {0}]", toolName);
+        var textBytes = tempBuilder.AsSpan().ToArray();
         var pos = Text.Append(textBytes);
         var block = new ToolCallBlock(id, pos, textBytes.Length, toolName, toolCallId, ToolCallState.Running);
         _blocks.Add(block);

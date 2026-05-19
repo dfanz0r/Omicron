@@ -129,10 +129,10 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 if (!_assistantPrefixAdded)
                 {
                     _store.AppendSeparator();
-                    _pendingAssistantText.Append("  Agent: ");
+                    _pendingAssistantText.AppendLiteral("  Agent: "u8);
                     _assistantPrefixAdded = true;
                 }
-                _pendingAssistantText.Append(delta.Delta);
+                _pendingAssistantText.AppendLiteral(delta.Delta.Utf8Span);
                 RequestRender?.Invoke();
                 break;
 
@@ -220,8 +220,12 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                     var resultSpan = tic.Result.Utf8Span;
                     if (tic.IsError)
                     {
-                        var bytes = System.Text.Encoding.UTF8.GetBytes($"\n[Error: {tic.Result.ToString()}]");
-                        UpdateWithSpan(bytes.AsSpan(), null);
+                        var errBytes = new byte["\n[Error: "u8.Length + tic.Result.Utf8Span.Length + "]"u8.Length];
+                        int p = 0;
+                        "\n[Error: "u8.CopyTo(errBytes.AsSpan(p)); p += "\n[Error: "u8.Length;
+                        tic.Result.Utf8Span.CopyTo(errBytes.AsSpan(p)); p += tic.Result.Utf8Span.Length;
+                        "]"u8.CopyTo(errBytes.AsSpan(p));
+                        UpdateWithSpan(errBytes, null);
                     }
                     else
                     {
@@ -268,13 +272,34 @@ public sealed class TranscriptViewportWidget : ITuiWidget
         {
             case MessageRole.User:
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
-                _store.AppendUserMessage(Encoding.UTF8.GetBytes($"  You: {msg.GetTextString()}"));
+                // Build "  You: " + text as UTF-8 bytes
+                if (msg.HasText)
+                {
+                    var full = new byte["  You: "u8.Length + msg.TextUtf8.Length];
+                    "  You: "u8.CopyTo(full);
+                    msg.TextUtf8.CopyTo(full.AsSpan("  You: "u8.Length));
+                    _store.AppendUserMessage(full);
+                }
+                else
+                {
+                    _store.AppendUserMessage("  You: "u8);
+                }
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
                 break;
             case MessageRole.Assistant:
                 _store.AppendSeparator();
-                var assistant = "  Agent: " + msg.GetTextString();
-                _store.AppendAssistantDelta(Encoding.UTF8.GetBytes(assistant));
+                // Build "  Agent: " + text as UTF-8 bytes
+                if (msg.HasText)
+                {
+                    var full = new byte["  Agent: "u8.Length + msg.TextUtf8.Length];
+                    "  Agent: "u8.CopyTo(full);
+                    msg.TextUtf8.CopyTo(full.AsSpan("  Agent: "u8.Length));
+                    _store.AppendAssistantDelta(full);
+                }
+                else
+                {
+                    _store.AppendAssistantDelta("  Agent: "u8);
+                }
                 _store.CompleteLastAssistantBlock();
                 _store.AppendSeparator();
                 break;
@@ -287,10 +312,8 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                         tcb.ToolCallId == msg.ToolCallId &&
                         tcb.State is ToolCallState.Running or ToolCallState.Pending)
                     {
-                        var resultSpan = msg.HasText
-                            ? msg.TextUtf8
-                            : (ReadOnlySpan<byte>)Encoding.UTF8.GetBytes(msg.GetTextString());
-                        _store.UpdateToolCall(tcb.Id, msg.IsError ? ToolCallState.Failed : ToolCallState.Completed, resultSpan);
+                        // TextUtf8 returns empty span when TextData is null, same result
+                        _store.UpdateToolCall(tcb.Id, msg.IsError ? ToolCallState.Failed : ToolCallState.Completed, msg.TextUtf8);
                         break;
                     }
                 }
@@ -468,13 +491,14 @@ public sealed class TranscriptViewportWidget : ITuiWidget
         return -1;
     }
 
-    private readonly StringBuilder _pendingAssistantText = new();
+    // Long-lived builder with disposeImmediately: false to keep buffer outside the pool
+    private Utf8ValueStringBuilder _pendingAssistantText = new Utf8ValueStringBuilder(false);
 
     private void FlushPending()
     {
         if (_pendingAssistantText.Length > 0)
         {
-            _store.AppendAssistantDelta(Encoding.UTF8.GetBytes(_pendingAssistantText.ToString()));
+            _store.AppendAssistantDelta(_pendingAssistantText.AsSpan());
             _pendingAssistantText.Clear();
         }
     }
