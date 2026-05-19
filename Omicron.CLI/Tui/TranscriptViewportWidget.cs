@@ -119,12 +119,17 @@ public sealed class TranscriptViewportWidget : ITuiWidget
             case UserMessageEvent ue:
                 FlushPending();
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
-                // Build "  You: <text>" as UTF-8 bytes directly, avoiding string interpolation + encode round-trip
                 {
-                    using var msgBuilder = ZString.CreateUtf8StringBuilder();
-                    msgBuilder.AppendLiteral("  You: "u8);
-                    msgBuilder.AppendLiteral(ue.Text.Utf8Span);
-                    _store.AppendUserMessage(msgBuilder.AsSpan());
+                    var msgBuilder = ZString.CreateUtf8StringBuilder();
+                    try
+                    {
+                        Utf8CompositeFormat.AppendFormatUtf8(ref msgBuilder, "  You: {0}"u8, ue.Text);
+                        _store.AppendUserMessage(msgBuilder.AsSpan());
+                    }
+                    finally
+                    {
+                        msgBuilder.Dispose();
+                    }
                 }
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
                 RebuildLayout();
@@ -226,12 +231,16 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                     var resultSpan = tic.Result.Utf8Span;
                     if (tic.IsError)
                     {
-                        var errBytes = new byte["\n[Error: "u8.Length + tic.Result.Utf8Span.Length + "]"u8.Length];
-                        int p = 0;
-                        "\n[Error: "u8.CopyTo(errBytes.AsSpan(p)); p += "\n[Error: "u8.Length;
-                        tic.Result.Utf8Span.CopyTo(errBytes.AsSpan(p)); p += tic.Result.Utf8Span.Length;
-                        "]"u8.CopyTo(errBytes.AsSpan(p));
-                        UpdateWithSpan(errBytes, null);
+                        var errBuilder = ZString.CreateUtf8StringBuilder();
+                        try
+                        {
+                            Utf8CompositeFormat.AppendFormatUtf8(ref errBuilder, "\n[Error: {0}]"u8, tic.Result);
+                            UpdateWithSpan(errBuilder.AsSpan(), null);
+                        }
+                        finally
+                        {
+                            errBuilder.Dispose();
+                        }
                     }
                     else
                     {
@@ -278,33 +287,33 @@ public sealed class TranscriptViewportWidget : ITuiWidget
         {
             case MessageRole.User:
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
-                // Build "  You: " + text as UTF-8 bytes
-                if (msg.HasText)
                 {
-                    var full = new byte["  You: "u8.Length + msg.TextUtf8.Length];
-                    "  You: "u8.CopyTo(full);
-                    msg.TextUtf8.CopyTo(full.AsSpan("  You: "u8.Length));
-                    _store.AppendUserMessage(full);
-                }
-                else
-                {
-                    _store.AppendUserMessage("  You: "u8);
+                    var builder = ZString.CreateUtf8StringBuilder();
+                    try
+                    {
+                        Utf8CompositeFormat.AppendFormatUtf8(ref builder, "  You: {0}"u8, msg.TextData ?? Utf8String.Empty);
+                        _store.AppendUserMessage(builder.AsSpan());
+                    }
+                    finally
+                    {
+                        builder.Dispose();
+                    }
                 }
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
                 break;
             case MessageRole.Assistant:
                 _store.AppendSeparator();
-                // Build "  Agent: " + text as UTF-8 bytes
-                if (msg.HasText)
                 {
-                    var full = new byte["  Agent: "u8.Length + msg.TextUtf8.Length];
-                    "  Agent: "u8.CopyTo(full);
-                    msg.TextUtf8.CopyTo(full.AsSpan("  Agent: "u8.Length));
-                    _store.AppendAssistantDelta(full);
-                }
-                else
-                {
-                    _store.AppendAssistantDelta("  Agent: "u8);
+                    var builder = ZString.CreateUtf8StringBuilder();
+                    try
+                    {
+                        Utf8CompositeFormat.AppendFormatUtf8(ref builder, "  Agent: {0}"u8, msg.TextData ?? Utf8String.Empty);
+                        _store.AppendAssistantDelta(builder.AsSpan());
+                    }
+                    finally
+                    {
+                        builder.Dispose();
+                    }
                 }
                 _store.CompleteLastAssistantBlock();
                 _store.AppendSeparator();
