@@ -72,6 +72,23 @@ Run tests with:
 dotnet test Omicron.slnx --nologo
 ```
 
+## Formatting
+
+The repository currently uses JetBrains ReSharper Global Tools for whole-codebase C# formatting/cleanup. Formatting settings live in `.editorconfig`.
+
+Install the tool if needed:
+
+```bash
+dotnet tool install -g JetBrains.ReSharper.GlobalTools
+export PATH="$PATH:$HOME/.dotnet/tools"
+```
+
+Run cleanup/formatting from the repository root:
+
+```bash
+jb cleanupcode Omicron.slnx
+```
+
 Run the console MVP with classic CLI mode:
 
 ```bash
