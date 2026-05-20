@@ -1,5 +1,7 @@
 <Solution>
   <Project Path="Omicron.CLI/Omicron.CLI.csproj" />
   <Project Path="Omicron.Core/Omicron.Core.csproj" />
+  <Project Path="Omicron.Core.Generators/Omicron.Core.Generators.csproj" />
+  <Project Path="Omicron.Core.Generators.Tests/Omicron.Core.Generators.Tests.csproj" />
   <Project Path="Omicron.Core.Tests/Omicron.Core.Tests.csproj" />
 </Solution>
