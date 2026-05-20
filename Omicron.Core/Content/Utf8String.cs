@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Content;
 
@@ -194,7 +195,7 @@ public sealed class Utf8String : IEquatable<Utf8String>, IUtf8SpanFormattable
     }
 
     /// <summary>Append the UTF-8 content to a builder without allocating a string.</summary>
-    public void AppendTo(ref Cysharp.Text.Utf8ValueStringBuilder builder)
+    public void AppendTo(ref Utf8Builder builder)
     {
         builder.AppendLiteral(Utf8Span);
     }

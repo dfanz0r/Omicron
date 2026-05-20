@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.RegularExpressions;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
 
@@ -33,7 +32,7 @@ public sealed class EbookProcessor : IContentProcessor
                 $"[FILE] {context.RelativePath}  (empty)", OutputModality.Text));
         }
 
-        var output = ZString.CreateUtf8StringBuilder();
+        var output = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, EPUB)"u8, context.RelativePath, FormatSize.Format(bytes.Length));
@@ -191,7 +190,7 @@ public sealed class EbookProcessor : IContentProcessor
         if (html.Length > 10 * 1024 * 1024) // 10 MB cap
             return "(document too large)";
 
-        using var output = ZString.CreateUtf8StringBuilder();
+        using var output = Utf8Text.CreateBuilder();
         bool inTag = false;
         bool inEntity = false;
         var entityBuf = new System.Text.StringBuilder();

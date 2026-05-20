@@ -2,7 +2,6 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Events;
 using Omicron.Core.Text;
 
@@ -215,8 +214,8 @@ public sealed class LocalExecutionBroker : IExecutionBroker
 
         stopwatch.Stop();
 
-        // Build output using Utf8ValueStringBuilder with byte-oriented line handling.
-        var builder = ZString.CreateUtf8StringBuilder();
+        // Build output using Utf8Builder with byte-oriented line handling.
+        var builder = Utf8Text.CreateBuilder();
         try
         {
             var stdoutSpan = stdoutBytes.WrittenSpan;

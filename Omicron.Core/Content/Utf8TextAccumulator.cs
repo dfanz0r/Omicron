@@ -1,4 +1,4 @@
-using Cysharp.Text;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Content;
 
@@ -24,7 +24,7 @@ internal sealed class Utf8TextAccumulator : IDisposable
     public void Append(string? text)
     {
         if (text is null) return;
-        _buffer.Mutate(text, static (ref Utf8ValueStringBuilder b, string t) => b.Append(t));
+        _buffer.Mutate(text, static (ref Utf8Builder b, string t) => b.Append(t));
     }
 
     /// <summary>Append raw UTF-8 bytes to the accumulator.</summary>

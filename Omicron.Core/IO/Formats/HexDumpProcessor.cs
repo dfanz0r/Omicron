@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
@@ -59,7 +58,7 @@ public sealed class HexDumpProcessor : IContentProcessor
             if (limit == 0)
             {
                 // Empty dump (header only)
-                var emptyBuilder = ZString.CreateUtf8StringBuilder();
+                var emptyBuilder = Utf8Text.CreateBuilder();
                 try
                 {
                     AppendHeaderUtf8(ref emptyBuilder, fileSize, 0, 0);
@@ -107,7 +106,7 @@ public sealed class HexDumpProcessor : IContentProcessor
         rowCount = Math.Min(rowCount, MaxRows);
         long actualEnd = Math.Min(startOffset + rowCount * BytesPerRow, fileSize);
 
-        var builder = ZString.CreateUtf8StringBuilder();
+        var builder = Utf8Text.CreateBuilder();
         try
         {
             // Header
@@ -180,7 +179,7 @@ public sealed class HexDumpProcessor : IContentProcessor
         finally { builder.Dispose(); }
     }
 
-    private static void AppendHeaderUtf8(ref Utf8ValueStringBuilder builder, long fileSize, long startOffset, long endOffset)
+    private static void AppendHeaderUtf8(ref Utf8Builder builder, long fileSize, long startOffset, long endOffset)
     {
         Utf8CompositeFormat.AppendFormatUtf8(ref builder, "[HEX] bytes 0x{0:X}–0x{1:X} of 0x{2:X} ({3} bytes)"u8, startOffset, endOffset, fileSize, (int)fileSize);
         builder.AppendLine();

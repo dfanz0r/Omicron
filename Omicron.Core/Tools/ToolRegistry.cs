@@ -1,10 +1,10 @@
 using System.Text;
 using System.Text.Json;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Sessions;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Tools;
 
@@ -47,7 +47,7 @@ public sealed record ToolResult(
     {
         if (Blocks is { Count: > 0 })
         {
-            var sb = new Utf8ValueStringBuilder();
+            var sb = new Utf8Builder();
             try
             {
                 ContentBlockTextRenderer.AppendAllUtf8To(ref sb, Blocks);

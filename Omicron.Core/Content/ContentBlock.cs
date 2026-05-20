@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Cysharp.Text;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Content;
 
@@ -10,25 +10,25 @@ namespace Omicron.Core.Content;
 
 /// <summary>
 /// Callback delegate for temporary mutable access to a
-/// <see cref="Utf8ValueStringBuilder"/> owned by a content buffer.
+/// <see cref="Utf8Builder"/> owned by a content buffer.
 /// Use the generic overload <see cref="Utf8BuilderMutator{TState}"/>
 /// with a static lambda to avoid closure allocations.
 /// </summary>
-public delegate void Utf8BuilderMutator(ref Utf8ValueStringBuilder builder);
+public delegate void Utf8BuilderMutator(ref Utf8Builder builder);
 
 /// <summary>
 /// Stateful callback delegate for allocation-free temporary mutable
-/// access to a <see cref="Utf8ValueStringBuilder"/>.
+/// access to a <see cref="Utf8Builder"/>.
 /// </summary>
-public delegate void Utf8BuilderMutator<TState>(ref Utf8ValueStringBuilder builder, TState state);
+public delegate void Utf8BuilderMutator<TState>(ref Utf8Builder builder, TState state);
 
 // ============================================================
 // Utf8ContentBuffer — owns the pooled UTF-8 builder (F2)
 // ============================================================
 
 /// <summary>
-/// Owns UTF-8 text for content blocks. The backing storage is a ZString
-/// <see cref="Utf8ValueStringBuilder"/>, so renderers can append the content
+/// Owns UTF-8 text for content blocks. The backing storage is an
+/// <see cref="Utf8Builder"/>, so renderers can append the content
 /// into larger caller-owned UTF-8 builders without round-tripping through
 /// intermediate strings.
 ///
@@ -38,12 +38,12 @@ public delegate void Utf8BuilderMutator<TState>(ref Utf8ValueStringBuilder build
 /// </summary>
 public sealed class Utf8ContentBuffer : IDisposable, IEquatable<Utf8ContentBuffer>
 {
-    private Utf8ValueStringBuilder _builder;
+    private Utf8Builder _builder;
     private bool _disposed;
 
     public Utf8ContentBuffer()
     {
-        _builder = ZString.CreateUtf8StringBuilder();
+        _builder = Utf8Text.CreateBuilder();
     }
 
     public Utf8ContentBuffer(string value) : this()
@@ -52,7 +52,7 @@ public sealed class Utf8ContentBuffer : IDisposable, IEquatable<Utf8ContentBuffe
     }
 
     /// <summary>Take ownership of an existing builder, clearing the source.</summary>
-    public Utf8ContentBuffer(ref Utf8ValueStringBuilder builder)
+    public Utf8ContentBuffer(ref Utf8Builder builder)
     {
         _builder = builder;
         builder = default; // prevent double dispose
@@ -67,7 +67,7 @@ public sealed class Utf8ContentBuffer : IDisposable, IEquatable<Utf8ContentBuffe
     /// the ref struct.
     /// </summary>
     [JsonIgnore]
-    internal ref Utf8ValueStringBuilder Builder => ref _builder;
+    internal ref Utf8Builder Builder => ref _builder;
 
     /// <summary>Temporarily borrow the builder for mutation via callback.</summary>
     public void Mutate(Utf8BuilderMutator mutator)
@@ -79,7 +79,7 @@ public sealed class Utf8ContentBuffer : IDisposable, IEquatable<Utf8ContentBuffe
     /// <summary>
     /// Temporarily borrow the builder for mutation via a stateful callback.
     /// Use a static lambda to avoid closure allocations:
-    /// <code>buffer.Mutate(path, static (ref Utf8ValueStringBuilder b, string p) => b.Append(p));</code>
+    /// <code>buffer.Mutate(path, static (ref Utf8Builder b, string p) => b.Append(p));</code>
     /// </summary>
     public void Mutate<TState>(TState state, Utf8BuilderMutator<TState> mutator)
     {
@@ -118,7 +118,7 @@ public sealed class Utf8ContentBuffer : IDisposable, IEquatable<Utf8ContentBuffe
         }
     }
 
-    public void AppendTo(ref Utf8ValueStringBuilder destination)
+    public void AppendTo(ref Utf8Builder destination)
     {
         ThrowIfDisposed();
         destination.AppendLiteral(_builder.AsSpan());
@@ -228,7 +228,7 @@ public sealed class PlainTextContentBlock : IContentBlock, IEquatable<PlainTextC
     public PlainTextContentBlock(Utf8ContentBuffer buffer) => TextBuffer = buffer;
 
     /// <summary>Take ownership of a pre-built UTF-8 builder.</summary>
-    public PlainTextContentBlock(ref Utf8ValueStringBuilder builder)
+    public PlainTextContentBlock(ref Utf8Builder builder)
     {
         TextBuffer = new Utf8ContentBuffer(ref builder);
     }
@@ -273,7 +273,7 @@ public sealed class MarkdownContentBlock : IContentBlock, IEquatable<MarkdownCon
     public MarkdownContentBlock(Utf8ContentBuffer buffer) => TextBuffer = buffer;
 
     /// <summary>Take ownership of a pre-built UTF-8 builder.</summary>
-    public MarkdownContentBlock(ref Utf8ValueStringBuilder builder)
+    public MarkdownContentBlock(ref Utf8Builder builder)
     {
         TextBuffer = new Utf8ContentBuffer(ref builder);
     }
@@ -329,7 +329,7 @@ public sealed class CodeContentBlock : IContentBlock, IEquatable<CodeContentBloc
     }
 
     /// <summary>Take ownership of a pre-built UTF-8 builder.</summary>
-    public CodeContentBlock(ref Utf8ValueStringBuilder builder, string? Language = null, string? Path = null)
+    public CodeContentBlock(ref Utf8Builder builder, string? Language = null, string? Path = null)
     {
         TextBuffer = new Utf8ContentBuffer(ref builder);
         this.Language = Language;
@@ -393,7 +393,7 @@ public sealed class DiffContentBlock : IContentBlock, IEquatable<DiffContentBloc
     }
 
     /// <summary>Take ownership of a pre-built UTF-8 builder.</summary>
-    public DiffContentBlock(ref Utf8ValueStringBuilder builder, string? Path = null)
+    public DiffContentBlock(ref Utf8Builder builder, string? Path = null)
     {
         TextBuffer = new Utf8ContentBuffer(ref builder);
         this.Path = Path;
@@ -469,7 +469,7 @@ public sealed class FilePreviewContentBlock : IContentBlock, IEquatable<FilePrev
     }
 
     /// <summary>Take ownership of a pre-built UTF-8 builder.</summary>
-    public FilePreviewContentBlock(string Path, ref Utf8ValueStringBuilder builder, long Size, int? LineCount, bool IsBinary)
+    public FilePreviewContentBlock(string Path, ref Utf8Builder builder, long Size, int? LineCount, bool IsBinary)
     {
         this.Path = Path;
         TextBuffer = new Utf8ContentBuffer(ref builder);
@@ -543,7 +543,7 @@ public sealed class ErrorContentBlock : IContentBlock, IEquatable<ErrorContentBl
     }
 
     /// <summary>Take ownership of a pre-built UTF-8 builder for the message.</summary>
-    public ErrorContentBlock(ref Utf8ValueStringBuilder builder, string? Details = null)
+    public ErrorContentBlock(ref Utf8Builder builder, string? Details = null)
     {
         TextBuffer = new Utf8ContentBuffer(ref builder);
         DetailsBuffer = Details is null ? null : new Utf8ContentBuffer(Details);
@@ -609,7 +609,7 @@ public sealed class ToolCallContentBlock : IContentBlock, IEquatable<ToolCallCon
         Arguments = arguments;
 
         // Synthesize a text representation for the buffer
-        var sb = ZString.CreateUtf8StringBuilder();
+        var sb = Utf8Text.CreateBuilder();
         try
         {
             sb.AppendLiteral("[Tool Call: "u8);

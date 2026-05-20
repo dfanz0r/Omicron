@@ -1,4 +1,3 @@
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
 
@@ -20,7 +19,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
 {
     public WorkspaceReadResult Render(WorkspaceReadContent content)
     {
-        var sb = ZString.CreateUtf8StringBuilder();
+        var sb = Utf8Text.CreateBuilder();
         try
         {
             AppendUtf8To(ref sb, content);
@@ -41,7 +40,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
     /// Hot paths can reuse the builder across render operations and avoid
     /// intermediate <see cref="string"/> allocations.
     /// </summary>
-    public static void AppendUtf8To(ref Utf8ValueStringBuilder sb, WorkspaceReadContent content)
+    public static void AppendUtf8To(ref Utf8Builder sb, WorkspaceReadContent content)
     {
         switch (content)
         {
@@ -63,7 +62,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         }
     }
 
-    private static void AppendFileUtf8(ref Utf8ValueStringBuilder sb, WorkspaceFileContent file)
+    private static void AppendFileUtf8(ref Utf8Builder sb, WorkspaceFileContent file)
     {
         sb.AppendLiteral("[FILE] "u8);
         sb.AppendLine(file.RequestedPath);
@@ -102,7 +101,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         }
     }
 
-    private static void AppendBinaryUtf8(ref Utf8ValueStringBuilder sb, WorkspaceBinaryFileContent binary)
+    private static void AppendBinaryUtf8(ref Utf8Builder sb, WorkspaceBinaryFileContent binary)
     {
         sb.AppendLiteral("[FILE] "u8);
         sb.AppendLine(binary.RequestedPath);
@@ -112,7 +111,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         sb.AppendLiteral("  Type: binary (not displayed)"u8);
     }
 
-    private static void AppendDirectoryUtf8(ref Utf8ValueStringBuilder sb, WorkspaceDirectoryContent dir)
+    private static void AppendDirectoryUtf8(ref Utf8Builder sb, WorkspaceDirectoryContent dir)
     {
         sb.AppendLiteral("[DIR] "u8);
         sb.Append(dir.RequestedPath);
@@ -153,7 +152,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         }
     }
 
-    private static void AppendErrorUtf8(ref Utf8ValueStringBuilder sb, WorkspaceReadErrorContent error)
+    private static void AppendErrorUtf8(ref Utf8Builder sb, WorkspaceReadErrorContent error)
     {
         sb.AppendLiteral("Error: "u8);
         sb.Append(error.Message);
@@ -178,7 +177,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
 
     private static List<IContentBlock> ToFileBlocks(WorkspaceFileContent file)
     {
-        var previewSb = ZString.CreateUtf8StringBuilder();
+        var previewSb = Utf8Text.CreateBuilder();
         AppendFilePreviewLinesUtf8(ref previewSb, file);
 
         var preview = new FilePreviewContentBlock(
@@ -192,7 +191,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
 
         if (file.Truncated)
         {
-            var sb = ZString.CreateUtf8StringBuilder();
+            var sb = Utf8Text.CreateBuilder();
             Utf8CompositeFormat.AppendFormatUtf8(ref sb, "Output truncated — showing {0} of {1:N0} lines."u8, file.Lines.Count, file.TotalLines);
             if (file.NextOffset.HasValue)
                 Utf8CompositeFormat.AppendFormatUtf8(ref sb, " Use offset={0} to continue."u8, file.NextOffset.Value);
@@ -217,7 +216,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
 
     private static List<IContentBlock> ToDirectoryBlock(WorkspaceDirectoryContent dir)
     {
-        var sb = ZString.CreateUtf8StringBuilder();
+        var sb = Utf8Text.CreateBuilder();
         AppendDirectoryPreviewUtf8(ref sb, dir);
 
         var block = new PlainTextContentBlock(ref sb);
@@ -229,7 +228,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         return [new ErrorContentBlock(error.Message)];
     }
 
-    private static void AppendFilePreviewLinesUtf8(ref Utf8ValueStringBuilder sb, WorkspaceFileContent file)
+    private static void AppendFilePreviewLinesUtf8(ref Utf8Builder sb, WorkspaceFileContent file)
     {
         for (int i = 0; i < file.Lines.Count; i++)
         {
@@ -241,7 +240,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         }
     }
 
-    private static void AppendDirectoryPreviewUtf8(ref Utf8ValueStringBuilder sb, WorkspaceDirectoryContent dir)
+    private static void AppendDirectoryPreviewUtf8(ref Utf8Builder sb, WorkspaceDirectoryContent dir)
     {
         sb.AppendLiteral("[DIR] "u8);
         sb.Append(dir.RequestedPath);
@@ -281,7 +280,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         }
     }
 
-    private static void AppendPaddedRightUtf8(ref Utf8ValueStringBuilder sb, string value, int width)
+    private static void AppendPaddedRightUtf8(ref Utf8Builder sb, string value, int width)
     {
         sb.Append(value);
         int padding = width - value.Length;
@@ -289,7 +288,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
             sb.Append(' ', padding);
     }
 
-    private static void AppendNumberPaddedLeftUtf8(ref Utf8ValueStringBuilder sb, int value, int width)
+    private static void AppendNumberPaddedLeftUtf8(ref Utf8Builder sb, int value, int width)
     {
         int digits = CountDecimalDigits(value);
         int padding = width - digits;
@@ -298,10 +297,10 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         sb.Append(value);
     }
 
-    private static void AppendSizePaddedLeft(ref Utf8ValueStringBuilder sb, long bytes, int width)
+    private static void AppendSizePaddedLeft(ref Utf8Builder sb, long bytes, int width)
     {
         // Format size into a temp builder to measure its length, then pad.
-        var temp = ZString.CreateUtf8StringBuilder();
+        var temp = Utf8Text.CreateBuilder();
         try
         {
             FormatSize.AppendUtf8To(ref temp, bytes);

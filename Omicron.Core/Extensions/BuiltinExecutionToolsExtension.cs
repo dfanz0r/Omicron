@@ -1,9 +1,9 @@
 using System.Text;
 using System.Text.Json;
-using Cysharp.Text;
 using Omicron.Core.Execution;
 using Omicron.Core.Tools;
 using Omicron.Core.Workspace;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Extensions;
 
@@ -79,7 +79,7 @@ public sealed class BuiltinExecutionToolsExtension : IOmicronExtension
                     ctx.CancellationToken);
 
                 // Build header and combine with result bytes
-                var combined = ZString.CreateUtf8StringBuilder();
+                var combined = Utf8Text.CreateBuilder();
                 try
                 {
                     combined.AppendLiteral("[shell: "u8);

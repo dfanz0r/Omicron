@@ -1,4 +1,3 @@
-using Cysharp.Text;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.Content;
@@ -20,7 +19,7 @@ internal static class FormatSize
     /// Append a human-readable file size directly into a UTF-8 builder,
     /// avoiding the intermediate string allocation of <see cref="Format"/>.
     /// </summary>
-    public static void AppendUtf8To(ref Utf8ValueStringBuilder sb, long bytes)
+    public static void AppendUtf8To(ref Utf8Builder sb, long bytes)
     {
         if (bytes < 1024)
         {

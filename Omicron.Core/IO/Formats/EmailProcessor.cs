@@ -1,5 +1,4 @@
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
 
@@ -30,7 +29,7 @@ public sealed class EmailProcessor : IContentProcessor
                 $"[FILE] {context.RelativePath}  (empty)", OutputModality.Text));
         }
 
-        var output = ZString.CreateUtf8StringBuilder();
+        var output = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, email)"u8, context.RelativePath, FormatSize.Format(bytes.Length));

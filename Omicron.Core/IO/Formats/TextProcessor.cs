@@ -1,5 +1,4 @@
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
@@ -56,7 +55,7 @@ public sealed class TextProcessor : IContentProcessor
         if (isUtf8Compatible)
         {
             // UTF-8/ASCII: scan raw bytes for line boundaries without allocating a full-file string.
-            var builder = ZString.CreateUtf8StringBuilder();
+            var builder = Utf8Text.CreateBuilder();
             try
             {
                 if (isBinary)
@@ -77,7 +76,7 @@ public sealed class TextProcessor : IContentProcessor
         {
             // Non-UTF-8 encoding (e.g. UTF-16, UTF-32): decode the whole file, then split.
             // Byte scanning for \n is not safe here because \n is multi-byte.
-            var builder = ZString.CreateUtf8StringBuilder();
+            var builder = Utf8Text.CreateBuilder();
             try
             {
                 if (isBinary)
@@ -99,7 +98,7 @@ public sealed class TextProcessor : IContentProcessor
     private static void BuildTextOutputUtf8(
         ContentProcessorContext context,
         ReadOnlySpan<byte> span,
-        ref Utf8ValueStringBuilder builder,
+        ref Utf8Builder builder,
         bool isBinary)
     {
         var lineStarts = new List<int> { 0 };
@@ -177,7 +176,7 @@ public sealed class TextProcessor : IContentProcessor
         ContentProcessorContext context,
         ReadOnlySpan<byte> span,
         Encoding encoding,
-        ref Utf8ValueStringBuilder builder,
+        ref Utf8Builder builder,
         bool isBinary)
     {
         string text;

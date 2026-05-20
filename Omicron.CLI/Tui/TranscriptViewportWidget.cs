@@ -1,6 +1,5 @@
 using System;
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
@@ -120,7 +119,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 FlushPending();
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
                 {
-                    var msgBuilder = ZString.CreateUtf8StringBuilder();
+                    var msgBuilder = Utf8Text.CreateBuilder();
                     try
                     {
                         Utf8CompositeFormat.AppendFormatUtf8(ref msgBuilder, "  You: {0}"u8, ue.Text);
@@ -211,7 +210,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 // buffers avoiding the string → UTF-8 roundtrip.
                 if (ticBlocks is { Count: > 0 })
                 {
-                    var blockSb = ZString.CreateUtf8StringBuilder();
+                    var blockSb = Utf8Text.CreateBuilder();
                     try
                     {
                         blockSb.AppendLine();
@@ -231,7 +230,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                     var resultSpan = tic.Result.Utf8Span;
                     if (tic.IsError)
                     {
-                        var errBuilder = ZString.CreateUtf8StringBuilder();
+                        var errBuilder = Utf8Text.CreateBuilder();
                         try
                         {
                             Utf8CompositeFormat.AppendFormatUtf8(ref errBuilder, "\n[Error: {0}]"u8, tic.Result);
@@ -288,7 +287,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
             case MessageRole.User:
                 _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
                 {
-                    var builder = ZString.CreateUtf8StringBuilder();
+                    var builder = Utf8Text.CreateBuilder();
                     try
                     {
                         Utf8CompositeFormat.AppendFormatUtf8(ref builder, "  You: {0}"u8, msg.TextData ?? Utf8String.Empty);
@@ -304,7 +303,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
             case MessageRole.Assistant:
                 _store.AppendSeparator();
                 {
-                    var builder = ZString.CreateUtf8StringBuilder();
+                    var builder = Utf8Text.CreateBuilder();
                     try
                     {
                         Utf8CompositeFormat.AppendFormatUtf8(ref builder, "  Agent: {0}"u8, msg.TextData ?? Utf8String.Empty);
@@ -507,7 +506,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
     }
 
     // Long-lived builder with disposeImmediately: false to keep buffer outside the pool
-    private Utf8ValueStringBuilder _pendingAssistantText = new Utf8ValueStringBuilder(false);
+    private Utf8Builder _pendingAssistantText = new Utf8Builder(false);
 
     private void FlushPending()
     {

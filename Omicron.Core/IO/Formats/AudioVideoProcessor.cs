@@ -1,5 +1,4 @@
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Models;
 using Omicron.Core.Text;
@@ -32,7 +31,7 @@ public sealed class AudioProcessor : IContentProcessor
         if (audioCapable)
         {
             var b64 = Convert.ToBase64String(context.Bytes.Span);
-            var output = ZString.CreateUtf8StringBuilder();
+            var output = Utf8Text.CreateBuilder();
             try
             {
                 Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
@@ -53,7 +52,7 @@ public sealed class AudioProcessor : IContentProcessor
         }
 
         // Text-only model: metadata only
-        var audioMeta = ZString.CreateUtf8StringBuilder();
+        var audioMeta = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref audioMeta, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
@@ -299,7 +298,7 @@ public sealed class VideoProcessor : IContentProcessor
         if (videoCapable)
         {
             var b64 = Convert.ToBase64String(context.Bytes.Span);
-            var output = ZString.CreateUtf8StringBuilder();
+            var output = Utf8Text.CreateBuilder();
             try
             {
                 Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);
@@ -330,7 +329,7 @@ public sealed class VideoProcessor : IContentProcessor
         }
 
         // Text-only model: metadata only
-        var videoMeta = ZString.CreateUtf8StringBuilder();
+        var videoMeta = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref videoMeta, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(context.Bytes.Length), mimeType);

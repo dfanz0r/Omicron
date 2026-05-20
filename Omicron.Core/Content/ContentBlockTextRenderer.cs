@@ -1,4 +1,4 @@
-using Cysharp.Text;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Content;
 
@@ -16,7 +16,7 @@ public static class ContentBlockTextRenderer
     /// </summary>
     public static string Render(IContentBlock block)
     {
-        var sb = ZString.CreateUtf8StringBuilder();
+        var sb = Utf8Text.CreateBuilder();
         try
         {
             AppendUtf8To(ref sb, block);
@@ -36,7 +36,7 @@ public static class ContentBlockTextRenderer
     {
         if (blocks.Count == 0) return "";
 
-        var sb = ZString.CreateUtf8StringBuilder();
+        var sb = Utf8Text.CreateBuilder();
         try
         {
             AppendAllUtf8To(ref sb, blocks);
@@ -49,7 +49,7 @@ public static class ContentBlockTextRenderer
     }
 
     /// <summary>Append a rendered content block directly into a caller-owned UTF-8 value string builder.</summary>
-    public static void AppendUtf8To(ref Utf8ValueStringBuilder sb, IContentBlock block)
+    public static void AppendUtf8To(ref Utf8Builder sb, IContentBlock block)
     {
         switch (block)
         {
@@ -83,7 +83,7 @@ public static class ContentBlockTextRenderer
     }
 
     /// <summary>Append rendered content blocks directly into a caller-owned UTF-8 value string builder.</summary>
-    public static void AppendAllUtf8To(ref Utf8ValueStringBuilder sb, List<IContentBlock> blocks)
+    public static void AppendAllUtf8To(ref Utf8Builder sb, List<IContentBlock> blocks)
     {
         for (int i = 0; i < blocks.Count; i++)
         {
@@ -92,7 +92,7 @@ public static class ContentBlockTextRenderer
         }
     }
 
-    private static void AppendCodeUtf8(ref Utf8ValueStringBuilder sb, CodeContentBlock block)
+    private static void AppendCodeUtf8(ref Utf8Builder sb, CodeContentBlock block)
     {
         if (block.Path is not null)
         {
@@ -111,7 +111,7 @@ public static class ContentBlockTextRenderer
         sb.AppendLiteral("```"u8);
     }
 
-    private static void AppendFilePreviewUtf8(ref Utf8ValueStringBuilder sb, FilePreviewContentBlock block)
+    private static void AppendFilePreviewUtf8(ref Utf8Builder sb, FilePreviewContentBlock block)
     {
         sb.AppendLiteral("[FILE] "u8);
         sb.Append(block.Path);
@@ -135,7 +135,7 @@ public static class ContentBlockTextRenderer
         block.TextBuffer.AppendTo(ref sb);
     }
 
-    private static void AppendErrorUtf8(ref Utf8ValueStringBuilder sb, ErrorContentBlock block)
+    private static void AppendErrorUtf8(ref Utf8Builder sb, ErrorContentBlock block)
     {
         sb.AppendLiteral("Error: "u8);
         block.TextBuffer.AppendTo(ref sb);
@@ -146,7 +146,7 @@ public static class ContentBlockTextRenderer
         }
     }
 
-    private static void AppendToolCallUtf8(ref Utf8ValueStringBuilder sb, ToolCallContentBlock block)
+    private static void AppendToolCallUtf8(ref Utf8Builder sb, ToolCallContentBlock block)
     {
         sb.AppendLiteral("[Tool Call: "u8);
         sb.Append(block.ToolName);

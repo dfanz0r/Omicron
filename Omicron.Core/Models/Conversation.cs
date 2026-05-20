@@ -1,7 +1,7 @@
 using System.Text.Json;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Providers;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Models;
 
@@ -293,7 +293,7 @@ public static class ConversationConverter
         if (parts.Count == 1)
             return parts[0];
 
-        using var sb = ZString.CreateUtf8StringBuilder();
+        using var sb = Utf8Text.CreateBuilder();
         sb.AppendLiteral(parts[0].Utf8Span);
         for (int i = 1; i < parts.Count; i++)
         {

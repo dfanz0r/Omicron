@@ -1,4 +1,3 @@
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Text;
@@ -80,7 +79,7 @@ public sealed class TranscriptStore
         var id = BlockId.New();
         // Write a placeholder text
         byte[] textBytes;
-        var tempBuilder = ZString.CreateUtf8StringBuilder();
+        var tempBuilder = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref tempBuilder, "[tool: {0}]"u8, toolName);

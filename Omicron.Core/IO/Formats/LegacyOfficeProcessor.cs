@@ -1,5 +1,4 @@
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
 
@@ -68,7 +67,7 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
 
                 var openXmlResult = await openXmlProcessor.ProcessAsync(openXmlContext, ct);
 
-                var output = ZString.CreateUtf8StringBuilder();
+                var output = Utf8Text.CreateBuilder();
                 try
                 {
                     Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(bytes.Length), docType);
@@ -260,7 +259,7 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
             if (bytes.Length < 8) return null;
             if (bytes[0] != 0xD0 || bytes[1] != 0xCF) return null;
 
-            using var output = ZString.CreateUtf8StringBuilder();
+            using var output = Utf8Text.CreateBuilder();
             bool inText = false;
 
             for (int i = 0; i < bytes.Length - 2; i += 2)
@@ -314,7 +313,7 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
         string method, string text, string? warning,
         OutputModality modality)
     {
-        var output = ZString.CreateUtf8StringBuilder();
+        var output = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, relativePath, FormatSize.Format(size), docType);
@@ -354,7 +353,7 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
         var reason = extraReason is not null ? $" ({extraReason})" : "";
         var warning = $"Legacy Office text extraction unavailable{reason}; showing hex dump.";
 
-        var output2 = ZString.CreateUtf8StringBuilder();
+        var output2 = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref output2, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(bytes.Length), docType);

@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.RegularExpressions;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
 
@@ -41,7 +40,7 @@ public sealed class OpenXmlProcessor : IContentProcessor
 
         if (text is not null)
         {
-            var output = ZString.CreateUtf8StringBuilder();
+            var output = Utf8Text.CreateBuilder();
             try
             {
                 Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(bytes.Length), docType);
@@ -65,7 +64,7 @@ public sealed class OpenXmlProcessor : IContentProcessor
 
         var hexResult = await hexDumper.ProcessAsync(hexContext, ct);
 
-        var fallback = ZString.CreateUtf8StringBuilder();
+        var fallback = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref fallback, "[FILE] {0}  ({1}, {2} — text extraction unavailable, showing hex dump)"u8, context.RelativePath, FormatSize.Format(bytes.Length), docType);
@@ -214,7 +213,7 @@ public sealed class OpenXmlProcessor : IContentProcessor
         if (xml.Length > 10 * 1024 * 1024) // 10 MB cap
             return "(document too large)";
 
-        using var output = ZString.CreateUtf8StringBuilder();
+        using var output = Utf8Text.CreateBuilder();
         bool inTag = false;
         bool inEntity = false;
         var entityBuf = new System.Text.StringBuilder();

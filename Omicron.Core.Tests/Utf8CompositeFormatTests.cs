@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Buffers.Text;
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
 using Xunit;
@@ -506,7 +505,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void AppendFormatUtf8Builder_Int()
     {
-        var builder = ZString.CreateUtf8StringBuilder();
+        var builder = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8(ref builder, "Score: {0}"u8, 99);
@@ -518,7 +517,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void AppendFormatUtf8Builder_Mixed()
     {
-        var builder = ZString.CreateUtf8StringBuilder();
+        var builder = Utf8Text.CreateBuilder();
         try
         {
             builder.AppendLiteral("Start|"u8);
@@ -540,7 +539,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void AppendFormatUtf8SlowBuilder_String()
     {
-        var builder = ZString.CreateUtf8StringBuilder();
+        var builder = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref builder, "{0}"u8, "test");
@@ -571,7 +570,7 @@ public class Utf8CompositeFormatTests
         Span<byte> span = stackalloc byte[64];
         Utf8CompositeFormat.TryFormat(format, span, out var written, 42);
 
-        var builder = ZString.CreateUtf8StringBuilder();
+        var builder = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8(ref builder, format, 42);
@@ -604,7 +603,7 @@ public class Utf8CompositeFormatTests
     public void LargeString_AppendFormatUtf8Slow()
     {
         var large = new string('B', 50000);
-        var builder = ZString.CreateUtf8StringBuilder();
+        var builder = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref builder, "{0}"u8, large);
@@ -624,7 +623,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void UnsupportedType_AppendFormatUtf8Slow_Throws()
     {
-        var builder = ZString.CreateUtf8StringBuilder();
+        var builder = Utf8Text.CreateBuilder();
         try
         {
             Assert.Throws<InvalidOperationException>(() =>

@@ -1,5 +1,5 @@
 using System.Text;
-using Cysharp.Text;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Diff;
 
@@ -27,7 +27,7 @@ internal static class UnifiedDiffRenderer
         TextDiffResult diff,
         UnifiedDiffRenderOptions? options = null)
     {
-        var builder = ZString.CreateUtf8StringBuilder();
+        var builder = Utf8Text.CreateBuilder();
         try
         {
             AppendUtf8To(ref builder, oldPath, newPath, oldLines, newLines, diff, options);
@@ -47,7 +47,7 @@ internal static class UnifiedDiffRenderer
         TextDiffResult diff,
         UnifiedDiffRenderOptions? options = null)
     {
-        var builder = ZString.CreateUtf8StringBuilder();
+        var builder = Utf8Text.CreateBuilder();
         try
         {
             AppendUtf8To(ref builder, oldPath, newPath, oldLines, newLines, diff, options);
@@ -60,11 +60,11 @@ internal static class UnifiedDiffRenderer
     }
 
     /// <summary>
-    /// Append a unified diff directly to a <see cref="Utf8ValueStringBuilder"/>,
+    /// Append a unified diff directly to a <see cref="Utf8Builder"/>,
     /// avoiding intermediate string allocations for callers that already use UTF-8 builders.
     /// </summary>
     public static void AppendUtf8To(
-        ref Utf8ValueStringBuilder builder,
+        ref Utf8Builder builder,
         string oldPath,
         string newPath,
         IReadOnlyList<string> oldLines,
@@ -124,7 +124,7 @@ internal static class UnifiedDiffRenderer
     }
 
     public static void AppendUtf8To(
-        ref Utf8ValueStringBuilder builder,
+        ref Utf8Builder builder,
         string oldPath,
         string newPath,
         Utf8LineIndex oldLines,
@@ -239,7 +239,7 @@ internal static class UnifiedDiffRenderer
     }
 
     private static void AppendLine(
-        ref Utf8ValueStringBuilder builder,
+        ref Utf8Builder builder,
         ref int lineCount,
         ref int byteCount,
         UnifiedDiffRenderOptions options,
@@ -264,7 +264,7 @@ internal static class UnifiedDiffRenderer
     }
 
     private static void AppendLine(
-        ref Utf8ValueStringBuilder builder,
+        ref Utf8Builder builder,
         ref int lineCount,
         ref int byteCount,
         UnifiedDiffRenderOptions options,

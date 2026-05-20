@@ -1,5 +1,5 @@
 using System.Text;
-using Cysharp.Text;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Tools;
 
@@ -82,7 +82,7 @@ internal static class LineHash
     /// <summary>
     /// Append a formatted hashline directly to a UTF-8 builder.
     /// </summary>
-    public static void FormatLineUtf8(ref Utf8ValueStringBuilder builder, int lineNumber, string anchor, ReadOnlySpan<byte> utf8Text)
+    public static void FormatLineUtf8(ref Utf8Builder builder, int lineNumber, string anchor, ReadOnlySpan<byte> utf8Text)
     {
         builder.Append(lineNumber);
         builder.Append(anchor);

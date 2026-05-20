@@ -1,5 +1,4 @@
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
 using SharpCompress.Archives;
@@ -39,7 +38,7 @@ public sealed class ArchiveProcessor : IContentProcessor
             _ => "Archive"
         };
 
-        var output = ZString.CreateUtf8StringBuilder();
+        var output = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, {2})"u8, context.RelativePath, FormatSize.Format(bytes.Length), formatName);

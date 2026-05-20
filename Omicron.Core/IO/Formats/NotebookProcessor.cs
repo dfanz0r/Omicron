@@ -1,7 +1,6 @@
 using System.Buffers;
 using System.Text;
 using System.Text.Json;
-using Cysharp.Text;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
@@ -49,7 +48,7 @@ public sealed class NotebookProcessor : IContentProcessor
                     $"[FILE] {context.RelativePath}  (not a valid .ipynb file — missing 'cells' array)", OutputModality.Text));
             }
 
-            var output = ZString.CreateUtf8StringBuilder();
+            var output = Utf8Text.CreateBuilder();
             try
             {
 

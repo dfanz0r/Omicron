@@ -1,9 +1,9 @@
 using System.Buffers;
 using System.Buffers.Text;
-using Cysharp.Text;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Text;
 
@@ -1136,8 +1136,8 @@ public static partial class Utf8CompositeFormat
         }
     }
 
-    /// <summary>Append formatted output to a Utf8ValueStringBuilder.</summary>
-    public static void AppendFormatUtf8<T1>(ref Utf8ValueStringBuilder builder, ReadOnlySpan<byte> format, T1 arg1)
+    /// <summary>Append formatted output to a Utf8Builder.</summary>
+    public static void AppendFormatUtf8<T1>(ref Utf8Builder builder, ReadOnlySpan<byte> format, T1 arg1)
         where T1 : IUtf8SpanFormattable
     {
         int capacity = Math.Max(format.Length + 256, 256);
@@ -1160,7 +1160,7 @@ public static partial class Utf8CompositeFormat
     }
 
     /// <summary>Append formatted output with two args.</summary>
-    public static void AppendFormatUtf8<T1, T2>(ref Utf8ValueStringBuilder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2)
+    public static void AppendFormatUtf8<T1, T2>(ref Utf8Builder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2)
         where T1 : IUtf8SpanFormattable
         where T2 : IUtf8SpanFormattable
     {
@@ -1184,7 +1184,7 @@ public static partial class Utf8CompositeFormat
     }
 
     /// <summary>Append formatted output with three args.</summary>
-    public static void AppendFormatUtf8<T1, T2, T3>(ref Utf8ValueStringBuilder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2, T3 arg3)
+    public static void AppendFormatUtf8<T1, T2, T3>(ref Utf8Builder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2, T3 arg3)
         where T1 : IUtf8SpanFormattable
         where T2 : IUtf8SpanFormattable
         where T3 : IUtf8SpanFormattable
@@ -1209,7 +1209,7 @@ public static partial class Utf8CompositeFormat
     }
 
     /// <summary>Append formatted output with four args.</summary>
-    public static void AppendFormatUtf8<T1, T2, T3, T4>(ref Utf8ValueStringBuilder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2, T3 arg3, T4 arg4)
+    public static void AppendFormatUtf8<T1, T2, T3, T4>(ref Utf8Builder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2, T3 arg3, T4 arg4)
         where T1 : IUtf8SpanFormattable
         where T2 : IUtf8SpanFormattable
         where T3 : IUtf8SpanFormattable
@@ -1235,7 +1235,7 @@ public static partial class Utf8CompositeFormat
     }
 
     /// <summary>Append formatted output via runtime dispatch.</summary>
-    public static void AppendFormatUtf8Slow<T1>(ref Utf8ValueStringBuilder builder, ReadOnlySpan<byte> format, T1 arg1)
+    public static void AppendFormatUtf8Slow<T1>(ref Utf8Builder builder, ReadOnlySpan<byte> format, T1 arg1)
     {
         int capacity = Math.Max(format.Length + 256, 256);
         const int maxCap = 1024 * 1024 * 100;
@@ -1257,7 +1257,7 @@ public static partial class Utf8CompositeFormat
     }
 
     /// <summary>Append formatted output with two args via runtime dispatch.</summary>
-    public static void AppendFormatUtf8Slow<T1, T2>(ref Utf8ValueStringBuilder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2)
+    public static void AppendFormatUtf8Slow<T1, T2>(ref Utf8Builder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2)
     {
         int capacity = Math.Max(format.Length + 256, 256);
         const int maxCap = 1024 * 1024 * 100;
@@ -1279,7 +1279,7 @@ public static partial class Utf8CompositeFormat
     }
 
     /// <summary>Append formatted output with three args via runtime dispatch.</summary>
-    public static void AppendFormatUtf8Slow<T1, T2, T3>(ref Utf8ValueStringBuilder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2, T3 arg3)
+    public static void AppendFormatUtf8Slow<T1, T2, T3>(ref Utf8Builder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2, T3 arg3)
     {
         int capacity = Math.Max(format.Length + 256, 256);
         const int maxCap = 1024 * 1024 * 100;
@@ -1301,7 +1301,7 @@ public static partial class Utf8CompositeFormat
     }
 
     /// <summary>Append formatted output with four args via runtime dispatch.</summary>
-    public static void AppendFormatUtf8Slow<T1, T2, T3, T4>(ref Utf8ValueStringBuilder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2, T3 arg3, T4 arg4)
+    public static void AppendFormatUtf8Slow<T1, T2, T3, T4>(ref Utf8Builder builder, ReadOnlySpan<byte> format, T1 arg1, T2 arg2, T3 arg3, T4 arg4)
     {
         int capacity = Math.Max(format.Length + 256, 256);
         const int maxCap = 1024 * 1024 * 100;

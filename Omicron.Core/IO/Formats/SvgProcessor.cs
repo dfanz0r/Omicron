@@ -1,5 +1,4 @@
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
 
@@ -50,7 +49,7 @@ public sealed class SvgProcessor : IContentProcessor
         }
         var totalLines = lineStarts.Count;
 
-        var output = ZString.CreateUtf8StringBuilder();
+        var output = Utf8Text.CreateBuilder();
         try
         {
 

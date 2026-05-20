@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using Cysharp.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Diff;
 using Omicron.Core.Events;
@@ -267,7 +266,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     }
                     var totalLines = lineStarts.Count;
 
-                    var output = ZString.CreateUtf8StringBuilder();
+                    var output = Utf8Text.CreateBuilder();
                     try
                     {
                         Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1} lines, hashline anchors)"u8, path, totalLines);
@@ -473,7 +472,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         if (foundLine == -1)
                         {
                             // Build nearby context for error
-                            var context = ZString.CreateUtf8StringBuilder();
+                            var context = Utf8Text.CreateBuilder();
                             try
                             {
                                 Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "Hash mismatch at line {0} (expected hash '{1}'):"u8, edit.StartLine, edit.StartHash);
@@ -498,7 +497,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                             currentLines.Skip(foundLine - 1).Take(lineCount));
                         if (actualSpan != edit.OldText)
                         {
-                            var context = ZString.CreateUtf8StringBuilder();
+                            var context = Utf8Text.CreateBuilder();
                             try
                             {
                                 Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "old_text mismatch at resolved line {0} (hash '{1}'):"u8, foundLine, edit.StartHash);
@@ -575,7 +574,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
 
                     // ---------- format result ----------
 
-                    var resultOutput = ZString.CreateUtf8StringBuilder();
+                    var resultOutput = Utf8Text.CreateBuilder();
                     try
                     {
                         Utf8CompositeFormat.AppendFormatUtf8Slow(ref resultOutput, "Edit committed: {0}"u8, path);

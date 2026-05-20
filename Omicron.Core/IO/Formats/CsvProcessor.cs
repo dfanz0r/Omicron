@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.Text;
-using Cysharp.Text;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
@@ -36,7 +35,7 @@ public sealed class CsvProcessor : IContentProcessor
                 $"[FILE] {context.RelativePath}  (empty)", OutputModality.Text));
         }
 
-        var output = ZString.CreateUtf8StringBuilder();
+        var output = Utf8Text.CreateBuilder();
         try
         {
 
@@ -80,7 +79,7 @@ public sealed class CsvProcessor : IContentProcessor
                     if (!csv.Read())
                         break;
 
-                    using var rowBuilder = ZString.CreateUtf8StringBuilder();
+                    using var rowBuilder = Utf8Text.CreateBuilder();
                     for (int i = 0; i < csv.ColumnCount; i++)
                     {
                         if (i > 0) rowBuilder.Append(delimiter);
