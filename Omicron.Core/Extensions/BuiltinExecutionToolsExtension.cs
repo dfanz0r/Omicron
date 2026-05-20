@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Omicron.Core.Content;
 using Omicron.Core.Execution;
 using Omicron.Core.Text;
 using Omicron.Core.Tools;
@@ -13,6 +14,15 @@ namespace Omicron.Core.Extensions;
 public sealed class BuiltinExecutionToolsExtension : IOmicronExtension
 {
     private readonly IExecutionBroker _execution;
+
+    private static Utf8String ToolErrorUtf8(ReadOnlySpan<byte> prefix, string value)
+    {
+        using var b = Utf8Text.CreateBuilder();
+        b.AppendLiteral("Error: "u8);
+        b.AppendLiteral(prefix);
+        b.Append(value);
+        return Utf8String.FromUtf8(b.AsSpan());
+    }
     private readonly IWorkspace _workspace;
 
     public BuiltinExecutionToolsExtension(IExecutionBroker execution, IWorkspace workspace)
@@ -59,7 +69,7 @@ public sealed class BuiltinExecutionToolsExtension : IOmicronExtension
 
                 if (string.IsNullOrWhiteSpace(command))
                 {
-                    return new ToolResult("Error: command is required.", IsError: true);
+                    return new ToolResult(TextData: Utf8String.FromUtf8("Error: command is required."u8), IsError: true);
                 }
 
                 // Resolve working directory relative to workspace root
@@ -69,13 +79,15 @@ public sealed class BuiltinExecutionToolsExtension : IOmicronExtension
                     string? resolved = _workspace.ResolvePath(cwd);
                     if (resolved is null)
                     {
-                        return new ToolResult($"Error: cwd escapes workspace root: {cwd}",
+                        return new ToolResult(
+                            TextData: ToolErrorUtf8("cwd escapes workspace root: "u8, cwd),
                             IsError: true);
                     }
 
                     if (!Directory.Exists(resolved))
                     {
-                        return new ToolResult($"Error: cwd not found or not a directory: {cwd}",
+                        return new ToolResult(
+                            TextData: ToolErrorUtf8("cwd not found or not a directory: "u8, cwd),
                             IsError: true);
                     }
 
@@ -114,7 +126,7 @@ public sealed class BuiltinExecutionToolsExtension : IOmicronExtension
                         combined.Append(result.Output);
                     }
 
-                    return new ToolResult(Utf8Data: combined.AsSpan().ToArray(),
+                    return new ToolResult(TextData: Utf8String.FromUtf8(combined.AsSpan()),
                         IsError: result.ExitCode != 0 || result.TimedOut);
                 }
                 finally

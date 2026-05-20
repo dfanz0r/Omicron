@@ -85,11 +85,11 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
                         conversion.ConvertedExtension);
                     output.AppendLine();
                     output.AppendLine();
-                    output.Append(openXmlResult.Text);
+                    output.AppendLiteral(openXmlResult.TextData.Utf8Span);
 
-                    return new ContentProcessorResult(output.ToString().TrimEnd(),
+                    return new ContentProcessorResult(
+                        Utf8String.FromUtf8(output.AsSpan()),
                         openXmlResult.ActualModality,
-                        output.AsSpan().ToArray(),
                         Warning: conversion.Warning ?? openXmlResult.Warning);
                 }
                 finally
@@ -395,9 +395,9 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
 
             output.AppendLine();
             output.Append(text);
-            return new ContentProcessorResult(output.ToString().TrimEnd(),
+            return new ContentProcessorResult(
+                Utf8String.FromUtf8(output.AsSpan()),
                 modality,
-                output.AsSpan().ToArray(),
                 Warning: warning);
         }
         finally
@@ -442,10 +442,10 @@ public sealed class LegacyOfficeProcessor : IContentProcessor
             output2.AppendLine();
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref output2, "[WARNING] {0}"u8, warning);
             output2.AppendLine();
-            output2.Append(hexResult.Text);
-            return new ContentProcessorResult(output2.ToString().TrimEnd(),
+            output2.AppendLiteral(hexResult.TextData.Utf8Span);
+            return new ContentProcessorResult(
+                Utf8String.FromUtf8(output2.AsSpan()),
                 OutputModality.HexDump,
-                output2.AsSpan().ToArray(),
                 Warning: warning);
         }
         finally

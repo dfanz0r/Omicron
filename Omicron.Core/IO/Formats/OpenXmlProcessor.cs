@@ -61,9 +61,9 @@ public sealed class OpenXmlProcessor : IContentProcessor
                 output.AppendLine();
                 output.Append(text);
 
-                return new ContentProcessorResult(output.ToString().TrimEnd(),
-                    OutputModality.Text,
-                    output.AsSpan().ToArray());
+                return new ContentProcessorResult(
+                    Utf8String.FromUtf8(output.AsSpan()),
+                    OutputModality.Text);
             }
             finally
             {
@@ -96,10 +96,10 @@ public sealed class OpenXmlProcessor : IContentProcessor
                 FormatSize.Format(bytes.Length),
                 docType);
             fallback.AppendLine();
-            fallback.Append(hexResult.Text);
-            return new ContentProcessorResult(fallback.ToString().TrimEnd(),
+            fallback.AppendLiteral(hexResult.TextData.Utf8Span);
+            return new ContentProcessorResult(
+                Utf8String.FromUtf8(fallback.AsSpan()),
                 OutputModality.HexDump,
-                fallback.AsSpan().ToArray(),
                 Warning: "Open XML text extraction unavailable.");
         }
         finally

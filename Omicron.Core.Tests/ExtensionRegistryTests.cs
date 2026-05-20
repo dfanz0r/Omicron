@@ -1,5 +1,7 @@
 using Omicron.Core.Commands;
+using Omicron.Core.Content;
 using Omicron.Core.Extensions;
+using Omicron.Core.Text;
 using Omicron.Core.Models;
 using Omicron.Core.Sessions;
 using Omicron.Core.Tools;
@@ -121,7 +123,7 @@ public class ToolRegisteringExtension : IOmicronExtension
         context.RegisterTool(new ToolDefinition("test_tool",
             "A test tool",
             null,
-            ctx => Task.FromResult(new ToolResult("done"))));
+            ctx => Task.FromResult(new ToolResult(TextData: Utf8String.FromUtf8("done"u8)))));
     }
 }
 

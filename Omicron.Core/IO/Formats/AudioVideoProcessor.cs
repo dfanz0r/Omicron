@@ -58,10 +58,10 @@ public sealed class AudioProcessor : IContentProcessor
                 output.AppendLiteral("Data: "u8);
                 output.Append(b64);
 
-                return ValueTask.FromResult(new ContentProcessorResult(output.ToString(),
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Utf8String.FromUtf8(output.AsSpan()),
                     OutputModality.AudioBase64,
-                    MimeType: mimeType,
-                    Utf8Data: output.AsSpan().ToArray()));
+                    MimeType: mimeType));
             }
             finally
             {
@@ -115,9 +115,9 @@ public sealed class AudioProcessor : IContentProcessor
                 audioMeta.AppendLine();
             }
 
-            return ValueTask.FromResult(new ContentProcessorResult(audioMeta.ToString().TrimEnd(),
-                OutputModality.Metadata,
-                audioMeta.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(audioMeta.AsSpan()),
+                OutputModality.Metadata));
         }
         finally
         {
@@ -447,10 +447,10 @@ public sealed class VideoProcessor : IContentProcessor
                 output.AppendLiteral("Data: "u8);
                 output.Append(b64);
 
-                return ValueTask.FromResult(new ContentProcessorResult(output.ToString(),
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Utf8String.FromUtf8(output.AsSpan()),
                     OutputModality.VideoBase64,
-                    MimeType: mimeType,
-                    Utf8Data: output.AsSpan().ToArray()));
+                    MimeType: mimeType));
             }
             finally
             {
@@ -505,9 +505,9 @@ public sealed class VideoProcessor : IContentProcessor
                 videoMeta.AppendLine();
             }
 
-            return ValueTask.FromResult(new ContentProcessorResult(videoMeta.ToString().TrimEnd(),
-                OutputModality.Metadata,
-                videoMeta.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(videoMeta.AsSpan()),
+                OutputModality.Metadata));
         }
         finally
         {

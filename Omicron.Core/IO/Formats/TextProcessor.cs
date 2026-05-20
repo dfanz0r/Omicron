@@ -1,4 +1,5 @@
 using System.Text;
+using Omicron.Core.Content;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
@@ -31,8 +32,12 @@ public sealed class TextProcessor : IContentProcessor
 
         if (bytes.IsEmpty)
         {
-            return ValueTask.FromResult(new ContentProcessorResult($"[FILE] {context.RelativePath}  (empty file)",
-                OutputModality.Text));
+            using var _b = Utf8Text.CreateBuilder();
+            _b.AppendLiteral("[FILE] "u8);
+            _b.Append(context.RelativePath);
+            _b.AppendLiteral("  (empty file)"u8);
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(_b.AsSpan()), OutputModality.Text));
         }
 
         // Safety check: if classification was bypassed (format: "text"), verify content
@@ -75,10 +80,9 @@ public sealed class TextProcessor : IContentProcessor
                 }
 
                 BuildTextOutputUtf8(context, span, ref builder, isBinary);
-                byte[] bytesOut = builder.AsSpan().ToArray();
-                return ValueTask.FromResult(new ContentProcessorResult(Encoding.UTF8.GetString(bytesOut).TrimEnd(),
-                    OutputModality.Text,
-                    bytesOut));
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Utf8String.FromUtf8(builder.AsSpan()),
+                    OutputModality.Text));
             }
             finally
             {
@@ -101,10 +105,9 @@ public sealed class TextProcessor : IContentProcessor
                 }
 
                 BuildTextOutputFallback(context, span, encoding, ref builder, isBinary);
-                byte[] bytesOut = builder.AsSpan().ToArray();
-                return ValueTask.FromResult(new ContentProcessorResult(Encoding.UTF8.GetString(bytesOut).TrimEnd(),
-                    OutputModality.Text,
-                    bytesOut));
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Utf8String.FromUtf8(builder.AsSpan()),
+                    OutputModality.Text));
             }
             finally
             {

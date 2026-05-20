@@ -1,4 +1,5 @@
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
 
@@ -23,8 +24,17 @@ public sealed class Base64Processor
         string mimeType = GuessMimeType(context.RelativePath, context.Bytes.Span);
         string b64 = Convert.ToBase64String(context.Bytes.Span);
 
-        string text =
-            $"[FILE] {context.RelativePath}  ({mimeType}, {FormatSize.Format(context.Bytes.Length)})\nData: {b64}";
+        var _b = Utf8Text.CreateBuilder();
+        try
+        {
+            _b.AppendLiteral("[FILE] "u8);
+            _b.Append(context.RelativePath);
+            _b.AppendLiteral("  ("u8);
+            _b.Append(mimeType);
+            _b.AppendLiteral(", "u8);
+            FormatSize.AppendUtf8To(ref _b, context.Bytes.Length);
+            _b.AppendLiteral(")\nData: "u8);
+            _b.Append(b64);
 
         // Determine appropriate modality based on MIME type
         OutputModality modality = mimeType switch
@@ -36,7 +46,12 @@ public sealed class Base64Processor
             _ => OutputModality.Metadata
         };
 
-        return ValueTask.FromResult(new ContentProcessorResult(text, modality, MimeType: mimeType));
+        return ValueTask.FromResult(new ContentProcessorResult(Utf8String.FromUtf8(_b.AsSpan()), modality, MimeType: mimeType));
+        }
+        finally
+        {
+            _b.Dispose();
+        }
     }
 
     private static string GuessMimeType(string path, ReadOnlySpan<byte> header)

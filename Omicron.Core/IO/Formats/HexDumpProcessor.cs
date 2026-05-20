@@ -1,4 +1,5 @@
 using System.Text;
+using Omicron.Core.Content;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
@@ -40,7 +41,8 @@ public sealed class HexDumpProcessor : IContentProcessor
             offset = context.Offset.Value;
             if (offset < 0)
             {
-                return ValueTask.FromResult(new ContentProcessorResult("Error: offset must be non-negative.",
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Utf8String.FromUtf8("Error: offset must be non-negative."u8),
                     OutputModality.HexDump));
             }
         }
@@ -56,7 +58,8 @@ public sealed class HexDumpProcessor : IContentProcessor
             limit = context.Limit.Value;
             if (limit < 0)
             {
-                return ValueTask.FromResult(new ContentProcessorResult("Error: limit must be non-negative.",
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Utf8String.FromUtf8("Error: limit must be non-negative."u8),
                     OutputModality.HexDump));
             }
 
@@ -68,9 +71,9 @@ public sealed class HexDumpProcessor : IContentProcessor
                 {
                     AppendHeaderUtf8(ref emptyBuilder, fileSize, 0, 0);
                     emptyBuilder.AppendLine();
-                    return ValueTask.FromResult(new ContentProcessorResult(emptyBuilder.ToString().TrimEnd(),
-                        OutputModality.HexDump,
-                        emptyBuilder.AsSpan().ToArray()));
+                    return ValueTask.FromResult(new ContentProcessorResult(
+                        Utf8String.FromUtf8(emptyBuilder.AsSpan()),
+                        OutputModality.HexDump));
                 }
                 finally
                 {
@@ -89,8 +92,12 @@ public sealed class HexDumpProcessor : IContentProcessor
         // Handle empty file
         if (fileSize == 0)
         {
-            return ValueTask.FromResult(new ContentProcessorResult($"[HEX] {context.RelativePath}  (0 bytes)",
-                OutputModality.HexDump));
+            using var _hb = Utf8Text.CreateBuilder();
+            _hb.AppendLiteral("[HEX] "u8);
+            _hb.Append(context.RelativePath);
+            _hb.AppendLiteral("  (0 bytes)"u8);
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(_hb.AsSpan()), OutputModality.HexDump));
         }
 
         // Round offset down to nearest 16-byte row boundary
@@ -99,7 +106,7 @@ public sealed class HexDumpProcessor : IContentProcessor
         if (startOffset >= fileSize)
         {
             return ValueTask.FromResult(new ContentProcessorResult(
-                $"Requested offset 0x{offset:X} ({(int)offset}) is past end of file ({fileSize} bytes).",
+                HexErrorUtf8(offset, fileSize),
                 OutputModality.HexDump));
         }
 
@@ -184,16 +191,31 @@ public sealed class HexDumpProcessor : IContentProcessor
                 builder.AppendLine();
             }
 
-            byte[] bytesOut = builder.AsSpan().ToArray();
-            return ValueTask.FromResult(new ContentProcessorResult(Encoding.UTF8.GetString(bytesOut).TrimEnd(),
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(builder.AsSpan()),
                 OutputModality.HexDump,
-                bytesOut,
                 IsTruncated: truncated,
                 NextOffset: truncated ? nextOffset : null));
         }
         finally
         {
             builder.Dispose();
+        }
+    }
+
+    private static Utf8String HexErrorUtf8(long offset, long fileSize)
+    {
+        var _he = Utf8Text.CreateBuilder();
+        try
+        {
+            Utf8CompositeFormat.FormatSlow(ref _he,
+                "Requested offset 0x{0:X} ({1}) is past end of file ({2} bytes)."u8,
+                offset, (int)offset, fileSize);
+            return Utf8String.FromUtf8(_he.AsSpan());
+        }
+        finally
+        {
+            _he.Dispose();
         }
     }
 

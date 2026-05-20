@@ -75,9 +75,9 @@ public sealed class ArchiveProcessor : IContentProcessor
                 output.AppendLine();
             }
 
-            return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
-                OutputModality.Text,
-                output.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(output.AsSpan()),
+                OutputModality.Text));
         }
         finally
         {

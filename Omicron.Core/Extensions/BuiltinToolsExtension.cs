@@ -1,5 +1,7 @@
 using System.Data;
 using System.Text.Json;
+using Omicron.Core.Content;
+using Omicron.Core.Text;
 using Omicron.Core.Tools;
 
 namespace Omicron.Core.Extensions;
@@ -35,12 +37,30 @@ public sealed class BuiltinToolsExtension : IOmicronExtension
                 try
                 {
                     object result = new DataTable().Compute(expr, null);
-                    return new ToolResult($"```\n{expr} = {result}\n```");
+                    var r = Utf8Text.CreateBuilder();
+                    try
+                    {
+                        r.AppendLiteral("```\n"u8);
+                        r.Append(expr);
+                        r.AppendLiteral(" = "u8);
+                        r.Append(result?.ToString() ?? "");
+                        r.AppendLiteral("\n```"u8);
+                        return new ToolResult(TextData: Utf8String.FromUtf8(r.AsSpan()));
+                    }
+                    finally { r.Dispose(); }
                 }
                 catch (Exception ex)
                 {
-                    return new ToolResult($"Error evaluating '{expr}': {ex.Message}",
-                        IsError: true);
+                    var r2 = Utf8Text.CreateBuilder();
+                    try
+                    {
+                        r2.AppendLiteral("Error evaluating '"u8);
+                        r2.Append(expr);
+                        r2.AppendLiteral("': "u8);
+                        r2.Append(ex.Message);
+                        return new ToolResult(TextData: Utf8String.FromUtf8(r2.AsSpan()), IsError: true);
+                    }
+                    finally { r2.Dispose(); }
                 }
             }));
 
@@ -61,8 +81,19 @@ public sealed class BuiltinToolsExtension : IOmicronExtension
                 DateTime now = string.IsNullOrEmpty(tz)
                     ? DateTime.UtcNow
                     : TimeZoneInfo.ConvertTimeBySystemTimeZoneId(DateTime.UtcNow, tz!);
-                return new ToolResult(
-                    $"Current time: {now:yyyy-MM-dd HH:mm:ss} {(string.IsNullOrEmpty(tz) ? "UTC" : tz)}");
+                var tzName = Utf8Text.CreateBuilder();
+                try
+                {
+                    Utf8CompositeFormat.FormatSlow(ref tzName,
+                    "Current time: {0:yyyy-MM-dd HH:mm:ss} {1}"u8,
+                    now,
+                    string.IsNullOrEmpty(tz) ? "UTC" : tz);
+                    return new ToolResult(TextData: Utf8String.FromUtf8(tzName.AsSpan()));
+                }
+                finally
+                {
+                    tzName.Dispose();
+                }
             }));
     }
 }

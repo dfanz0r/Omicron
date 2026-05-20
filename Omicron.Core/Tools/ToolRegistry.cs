@@ -30,20 +30,22 @@ public sealed record ToolInvocationContext(
 
 /// <summary>
 ///     Result returned by a tool after execution.
+///     Text is stored as owned UTF-8 via <see cref="Utf8String" />.
+///     Use <see cref="TextData" /> for zero-alloc span access, or
+///     <see cref="GetText()" /> for explicit string materialization.
 /// </summary>
-/// <param name="Text">Error/small text output. Not set when <see cref="Utf8Data" /> is provided.</param>
-/// <param name="Utf8Data">Primary output as UTF-8 bytes. Preferred over <c>Text</c> for large responses.</param>
+/// <param name="TextData">The result text as owned UTF-8. Null when no text output.</param>
 /// <param name="IsError">Whether the tool execution failed.</param>
 /// <param name="Blocks">Rich content blocks with native UTF-8 data.</param>
 public sealed record ToolResult(
-    string? Text = null,
-    ReadOnlyMemory<byte>? Utf8Data = null,
+    Utf8String? TextData = null,
     bool IsError = false,
     List<IContentBlock>? Blocks = null)
 {
     /// <summary>
-    ///     Get the result as a string. Prefers <see cref="Blocks" />, then <see cref="Utf8Data" />, then
-    ///     <see cref="Text" />.
+    ///     Get the result as a string. Prefers <see cref="Blocks" />, then <see cref="TextData" />.
+    ///     This is an explicit string materialization; prefer <see cref="TextData" />.Utf8Span
+    ///     for zero-alloc UTF-8 access.
     /// </summary>
     public string GetText()
     {
@@ -61,12 +63,7 @@ public sealed record ToolResult(
             }
         }
 
-        if (Utf8Data.HasValue)
-        {
-            return Encoding.UTF8.GetString(Utf8Data.Value.Span);
-        }
-
-        return Text ?? string.Empty;
+        return TextData?.ToString() ?? string.Empty;
     }
 }
 

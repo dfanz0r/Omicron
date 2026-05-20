@@ -1,5 +1,7 @@
 using Omicron.Core.Commands;
+using Omicron.Core.Content;
 using Omicron.Core.Events;
+using Omicron.Core.Text;
 using Omicron.Core.Permissions;
 using Omicron.Core.Tools;
 using Omicron.Core.Workspace;
@@ -16,7 +18,7 @@ public class ToolRegistryTests
         var tool = new ToolDefinition("calculator",
             "Do math",
             null,
-            ctx => Task.FromResult(new ToolResult("42")));
+            ctx => Task.FromResult(new ToolResult(TextData: Utf8String.FromUtf8("42"u8))));
 
         registry.Register(tool);
         Assert.True(registry.HasTool("calculator"));
@@ -35,8 +37,8 @@ public class ToolRegistryTests
     public void ToolRegistry_Register_OverwritesExisting()
     {
         var registry = new ToolRegistry();
-        registry.Register(new ToolDefinition("calc", "v1", null, ctx => Task.FromResult(new ToolResult("1"))));
-        registry.Register(new ToolDefinition("calc", "v2", null, ctx => Task.FromResult(new ToolResult("2"))));
+        registry.Register(new ToolDefinition("calc", "v1", null, ctx => Task.FromResult(new ToolResult(TextData: Utf8String.FromUtf8("1"u8)))));
+        registry.Register(new ToolDefinition("calc", "v2", null, ctx => Task.FromResult(new ToolResult(TextData: Utf8String.FromUtf8("2"u8)))));
 
         Assert.Single(registry.AllTools);
         Assert.Equal("v2", registry.GetTool("calc")!.Description);
@@ -50,7 +52,7 @@ public class ToolRegistryTests
             "Echo input",
             null,
             ctx =>
-                Task.FromResult(new ToolResult(ctx.Arguments.GetValueOrDefault("msg")?.ToString() ?? ""))));
+                Task.FromResult(new ToolResult(TextData: Utf8String.FromString(ctx.Arguments.GetValueOrDefault("msg")?.ToString() ?? "")))));
 
         ToolDefinition? tool = registry.GetTool("echo");
         Assert.NotNull(tool);
@@ -64,7 +66,8 @@ public class ToolRegistryTests
             AgentId.New(),
             CancellationToken.None));
 
-        Assert.Equal("Hello", result.Text);
+        Assert.NotNull(result.TextData);
+        Assert.Equal("Hello", result.TextData!.ToString());
         Assert.False(result.IsError);
     }
 

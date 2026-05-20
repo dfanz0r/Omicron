@@ -31,8 +31,12 @@ public sealed class SvgProcessor : IContentProcessor
 
         if (bytes.IsEmpty)
         {
-            return ValueTask.FromResult(new ContentProcessorResult($"[FILE] {context.RelativePath}  (empty SVG)",
-                OutputModality.Text));
+            using var _sb = Utf8Text.CreateBuilder();
+            _sb.AppendLiteral("[FILE] "u8);
+            _sb.Append(context.RelativePath);
+            _sb.AppendLiteral("  (empty SVG)"u8);
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(_sb.AsSpan()), OutputModality.Text));
         }
 
         // Truncate to max size before scanning
@@ -123,9 +127,9 @@ public sealed class SvgProcessor : IContentProcessor
                 output.AppendLine();
             }
 
-            return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(output.AsSpan()),
                 OutputModality.Text,
-                output.AsSpan().ToArray(),
                 IsTruncated: isTruncated || showLines < totalLines));
         }
         finally

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using CsvHelper;
 using CsvHelper.Configuration;
+using Omicron.Core.Content;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
@@ -37,8 +38,12 @@ public sealed class CsvProcessor : IContentProcessor
 
         if (bytes.IsEmpty)
         {
-            return ValueTask.FromResult(new ContentProcessorResult($"[FILE] {context.RelativePath}  (empty)",
-                OutputModality.Text));
+            using var _cb = Utf8Text.CreateBuilder();
+            _cb.AppendLiteral("[FILE] "u8);
+            _cb.Append(context.RelativePath);
+            _cb.AppendLiteral("  (empty)"u8);
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(_cb.AsSpan()), OutputModality.Text));
         }
 
         Utf8Builder output = Utf8Text.CreateBuilder();
@@ -156,9 +161,9 @@ public sealed class CsvProcessor : IContentProcessor
                     output.AppendLine();
                 }
 
-                return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
-                    OutputModality.Text,
-                    output.AsSpan().ToArray()));
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Utf8String.FromUtf8(output.AsSpan()),
+                    OutputModality.Text));
             }
             catch
             {
@@ -291,9 +296,9 @@ public sealed class CsvProcessor : IContentProcessor
                 output.AppendLine();
             }
 
-            return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
-                OutputModality.Text,
-                output.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(output.AsSpan()),
+                OutputModality.Text));
         }
         finally
         {

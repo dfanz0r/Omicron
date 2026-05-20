@@ -3,6 +3,7 @@ using System.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Diff;
 using Omicron.Core.Events;
+using Omicron.Core.Text;
 using Omicron.Core.Models;
 using Omicron.Core.Permissions;
 using Omicron.Core.Providers;
@@ -427,14 +428,13 @@ public sealed class AgentSession
                         toolCall.Arguments ?? new Dictionary<string, object?>()));
 
                     ToolDefinition? toolDef = _toolRegistry.GetTool(toolCall.Name);
-                    string resultText = null!;
+                    Utf8String? resultUtf8 = null;
                     bool isError = false;
                     List<IContentBlock>? resultBlocks = null;
-                    ReadOnlyMemory<byte>? resultUtf8Data = null;
 
                     if (toolDef is null)
                     {
-                        resultText = $"Error: Tool '{toolCall.Name}' not found.";
+                        resultUtf8 = MakeToolErrorUtf8("Tool '"u8, toolCall.Name, "' not found."u8);
                         isError = true;
                     }
                     else
@@ -452,8 +452,8 @@ public sealed class AgentSession
 
                         if (!permResult.Allowed)
                         {
-                            resultText =
-                                $"Error: Permission denied for tool '{toolCall.Name}': {permResult.Reason}";
+                            resultUtf8 = MakeToolErrorUtf8(
+                                "Permission denied for tool '"u8, toolCall.Name, "': "u8, permResult.Reason ?? string.Empty);
                             isError = true;
                         }
                         else
@@ -482,79 +482,46 @@ public sealed class AgentSession
                                     AgentId,
                                     ct,
                                     toolModelMeta));
-                                resultText = invokeResult.Text ?? string.Empty;
+                                resultUtf8 = invokeResult.TextData;
                                 isError = invokeResult.IsError;
                                 resultBlocks = invokeResult.Blocks;
-                                resultUtf8Data = invokeResult.Utf8Data;
 
                                 // Multimodal bridge: if read_path returned base64 content,
                                 // inject a user message with actual image/audio/video/PDF content
                                 // so provider shapes can serialize it as image_url/input_image.
-                                if (!isError && toolCall.Name == "read_path")
+                                if (!isError && toolCall.Name == "read_path" && resultUtf8 is not null)
                                 {
-                                    if (resultUtf8Data.HasValue)
+                                    IReadOnlyList<ImageContent> bridgeImages =
+                                        TryExtractBase64ContentUtf8(resultUtf8.Utf8Span);
+                                    if (bridgeImages.Count > 0)
                                     {
-                                        IReadOnlyList<ImageContent> bridgeImages =
-                                            TryExtractBase64ContentUtf8(resultUtf8Data.Value.Span);
-                                        if (bridgeImages.Count > 0)
-                                        {
-                                            _messages.Add(Message.UserMessage(
-                                                Utf8String.FromTrustedUtf8Literal(
-                                                    "read_path returned base64 content for the tool result below"u8),
-                                                bridgeImages));
-                                        }
-                                    }
-                                    else if (resultText is not null)
-                                    {
-                                        IReadOnlyList<ImageContent> bridgeImages = TryExtractBase64Content(resultText);
-                                        if (bridgeImages.Count > 0)
-                                        {
-                                            _messages.Add(Message.UserMessage(
-                                                Utf8String.FromTrustedUtf8Literal(
-                                                    "read_path returned base64 content for the tool result below"u8),
-                                                bridgeImages));
-                                        }
+                                        _messages.Add(Message.UserMessage(
+                                            Utf8String.FromTrustedUtf8Literal(
+                                                "read_path returned base64 content for the tool result below"u8),
+                                            bridgeImages));
                                     }
                                 }
                             }
                             catch (Exception ex)
                             {
-                                resultText =
-                                    $"Error executing tool '{toolCall.Name}': {ex.Message}";
+                                resultUtf8 = MakeToolErrorUtf8(
+                                    "executing tool '"u8, toolCall.Name, "': "u8, ex.Message);
                                 isError = true;
                             }
                         }
                     }
 
-                    if (resultUtf8Data.HasValue)
-                    {
-                        var utf8Result = Utf8String.FromUtf8(resultUtf8Data.Value.Span);
-                        _messages.Add(Message.ToolResultMessage(toolCall.Id,
-                            toolCall.Name,
-                            utf8Result,
-                            isError));
+                    _messages.Add(Message.ToolResultMessage(toolCall.Id,
+                        toolCall.Name,
+                        resultUtf8 ?? Utf8String.Empty,
+                        isError));
 
-                        yield return Emit(new ToolInvocationCompletedEvent(_writer.Envelope(),
-                            toolCallId,
-                            toolCall.Name,
-                            utf8Result,
-                            isError,
-                            resultBlocks));
-                    }
-                    else
-                    {
-                        _messages.Add(Message.ToolResultMessage(toolCall.Id,
-                            toolCall.Name,
-                            Utf8String.FromString(resultText ?? string.Empty),
-                            isError));
-
-                        yield return Emit(new ToolInvocationCompletedEvent(_writer.Envelope(),
-                            toolCallId,
-                            toolCall.Name,
-                            Utf8String.FromString(resultText ?? string.Empty),
-                            isError,
-                            resultBlocks));
-                    }
+                    yield return Emit(new ToolInvocationCompletedEvent(_writer.Envelope(),
+                        toolCallId,
+                        toolCall.Name,
+                        resultUtf8 ?? Utf8String.Empty,
+                        isError,
+                        resultBlocks));
                 }
 
                 continue;
@@ -585,6 +552,29 @@ public sealed class AgentSession
     // ================================================================
     // Helpers
     // ================================================================
+
+    private static Utf8String MakeToolErrorUtf8(
+        ReadOnlySpan<byte> prefix, string value, ReadOnlySpan<byte> suffix)
+    {
+        using var b = Utf8Text.CreateBuilder();
+        b.AppendLiteral("Error: "u8);
+        b.AppendLiteral(prefix);
+        b.Append(value);
+        b.AppendLiteral(suffix);
+        return Utf8String.FromUtf8(b.AsSpan());
+    }
+
+    private static Utf8String MakeToolErrorUtf8(
+        ReadOnlySpan<byte> prefix, string value1, ReadOnlySpan<byte> separator, string value2)
+    {
+        using var b = Utf8Text.CreateBuilder();
+        b.AppendLiteral("Error: "u8);
+        b.AppendLiteral(prefix);
+        b.Append(value1);
+        b.AppendLiteral(separator);
+        b.Append(value2);
+        return Utf8String.FromUtf8(b.AsSpan());
+    }
 
     private string ReserveUniqueToolCallId(string? providerId)
     {

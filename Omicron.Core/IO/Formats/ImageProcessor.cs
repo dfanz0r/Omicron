@@ -1,4 +1,5 @@
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 using Omicron.Core.Models;
 using SixLabors.ImageSharp;
 
@@ -40,17 +41,32 @@ public sealed class ImageProcessor : IContentProcessor
             // Return base64 inline
             string b64 = Convert.ToBase64String(bytes.Span);
 
-            string text =
-                $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, {mimeType}";
-            if (dim.HasValue)
+            var _ib = Utf8Text.CreateBuilder();
+            try
             {
-                text += $", {dim.Value.Width}×{dim.Value.Height}px";
+                _ib.AppendLiteral("[FILE] "u8);
+                _ib.Append(context.RelativePath);
+                _ib.AppendLiteral("  ("u8);
+                FormatSize.AppendUtf8To(ref _ib, bytes.Length);
+                _ib.AppendLiteral(", "u8);
+                _ib.Append(mimeType);
+                if (dim.HasValue)
+                {
+                    _ib.AppendLiteral(", "u8);
+                    _ib.Append(dim.Value.Width);
+                    _ib.AppendLiteral("×"u8);
+                    _ib.Append(dim.Value.Height);
+                    _ib.AppendLiteral("px"u8);
+                }
+                _ib.AppendLiteral(")\nData: "u8);
+                _ib.Append(b64);
+
+                return new ContentProcessorResult(Utf8String.FromUtf8(_ib.AsSpan()), OutputModality.ImageBase64, MimeType: mimeType);
             }
-
-            text += ")\n";
-            text += $"Data: {b64}";
-
-            return new ContentProcessorResult(text, OutputModality.ImageBase64, MimeType: mimeType);
+            finally
+            {
+                _ib.Dispose();
+            }
         }
 
         // Text-only model: fall back to hex dump with metadata header
@@ -78,7 +94,10 @@ public sealed class ImageProcessor : IContentProcessor
 
         ContentProcessorResult hexResult = await hexDumper.ProcessAsync(hexContext, ct);
 
-        return new ContentProcessorResult(imageInfo + hexResult.Text,
+        using var _ip = Utf8Text.CreateBuilder();
+        _ip.Append(imageInfo);
+        _ip.AppendLiteral(hexResult.TextData.Utf8Span);
+        return new ContentProcessorResult(Utf8String.FromUtf8(_ip.AsSpan()),
             OutputModality.HexDump,
             MimeType: mimeType,
             Warning: "Image displayed as hex dump; model does not support vision.");

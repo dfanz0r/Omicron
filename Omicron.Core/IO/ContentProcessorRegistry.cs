@@ -1,3 +1,4 @@
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 
@@ -46,18 +47,17 @@ public sealed record ContentProcessorContext(
 ///     Result returned by <see cref="IContentProcessor.ProcessAsync" />.
 ///     Carries the actual output modality used (which may differ from
 ///     the processor's declared capabilities).
+///     Text is stored as owned UTF-8 via <see cref="Utf8String" />.
 /// </summary>
-/// <param name="Text">Formatted output as a string (fallback).</param>
-/// <param name="Utf8Data">Formatted output as UTF-8 bytes (preferred).</param>
+/// <param name="TextData">Formatted output as owned UTF-8.</param>
 /// <param name="ActualModality">What was actually emitted.</param>
 /// <param name="MimeType">e.g., "image/png".</param>
 /// <param name="Warning">e.g., "PDF text extracted locally".</param>
 /// <param name="IsTruncated">True if output was cut short.</param>
 /// <param name="NextOffset">For continuation (hex or text).</param>
 public sealed record ContentProcessorResult(
-    string Text,
+    Utf8String TextData,
     OutputModality ActualModality,
-    ReadOnlyMemory<byte>? Utf8Data = null,
     string? MimeType = null,
     string? Warning = null,
     bool IsTruncated = false,

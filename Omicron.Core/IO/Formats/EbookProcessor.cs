@@ -34,8 +34,12 @@ public sealed class EbookProcessor : IContentProcessor
 
         if (bytes.IsEmpty)
         {
-            return ValueTask.FromResult(new ContentProcessorResult($"[FILE] {context.RelativePath}  (empty)",
-                OutputModality.Text));
+            using var _eb = Utf8Text.CreateBuilder();
+            _eb.AppendLiteral("[FILE] "u8);
+            _eb.Append(context.RelativePath);
+            _eb.AppendLiteral("  (empty)"u8);
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(_eb.AsSpan()), OutputModality.Text));
         }
 
         Utf8Builder output = Utf8Text.CreateBuilder();
@@ -90,9 +94,9 @@ public sealed class EbookProcessor : IContentProcessor
                 output.AppendLine();
             }
 
-            return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
-                OutputModality.Text,
-                output.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(output.AsSpan()),
+                OutputModality.Text));
         }
         finally
         {

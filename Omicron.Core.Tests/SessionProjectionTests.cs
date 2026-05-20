@@ -438,7 +438,7 @@ public class SessionProjectionTests
         var toolDef = new ToolDefinition("test_tool",
             "A test tool",
             null,
-            _ => Task.FromResult(new ToolResult("Tool executed!")));
+            _ => Task.FromResult(new ToolResult(TextData: Utf8String.FromUtf8("Tool executed!"u8))));
         toolRegistry.Register(toolDef);
 
         var fakeProvider = new FakeProvider();

@@ -163,7 +163,7 @@ public class BinaryFileReaderTests
         var processor = new HexDumpProcessor();
         ContentProcessorContext ctx = MakeHexContext(bytes, offset, limit);
         ContentProcessorResult result = processor.ProcessAsync(ctx).GetAwaiter().GetResult();
-        return result.Text;
+        return result.TextData.ToString();
     }
 
     [Fact]
@@ -246,7 +246,7 @@ public class BinaryFileReaderTests
             0x01
         }, -1);
         ContentProcessorResult result = await processor.ProcessAsync(ctx);
-        Assert.Contains("non-negative", result.Text);
+        Assert.Contains("non-negative", result.TextData.ToString());
     }
 
     [Fact]
@@ -360,8 +360,8 @@ public class BinaryFileReaderTests
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
         Assert.Equal(OutputModality.ImageBase64, result.ActualModality);
-        Assert.Contains("Data: ", result.Text);
-        Assert.Contains("image/png", result.Text);
+        Assert.Contains("Data: ", result.TextData.ToString());
+        Assert.Contains("image/png", result.TextData.ToString());
     }
 
     [Fact]
@@ -393,7 +393,7 @@ public class BinaryFileReaderTests
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
         // Should be HexDump, not ImageBase64
         Assert.Equal(OutputModality.HexDump, result.ActualModality);
-        Assert.Contains("[HEX]", result.Text);
+        Assert.Contains("[HEX]", result.TextData.ToString());
     }
 
     [Fact]
@@ -451,7 +451,7 @@ public class BinaryFileReaderTests
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
         Assert.Equal(OutputModality.PdfBase64, result.ActualModality);
-        Assert.Contains("Data: ", result.Text);
+        Assert.Contains("Data: ", result.TextData.ToString());
     }
 
     [Fact]
@@ -504,8 +504,8 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("hello", result.Text);
-        Assert.Contains("world", result.Text);
+        Assert.Contains("hello", result.TextData.ToString());
+        Assert.Contains("world", result.TextData.ToString());
         Assert.Equal(OutputModality.Text, result.ActualModality);
     }
 
@@ -527,7 +527,7 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("empty", result.Text);
+        Assert.Contains("empty", result.TextData.ToString());
     }
 
     [Fact]
@@ -552,7 +552,7 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("WARNING", result.Text);
+        Assert.Contains("WARNING", result.TextData.ToString());
     }
 
     // ============================================================
@@ -590,7 +590,7 @@ public class BinaryFileReaderTests
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
         Assert.Equal(OutputModality.AudioBase64, result.ActualModality);
-        Assert.Contains("Data: ", result.Text);
+        Assert.Contains("Data: ", result.TextData.ToString());
     }
 
     [Fact]
@@ -643,8 +643,8 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("Data: ", result.Text);
-        Assert.Contains("SGVsbG8sIFdvcmxkIQ==", result.Text); // base64 of "Hello, World!"
+        Assert.Contains("Data: ", result.TextData.ToString());
+        Assert.Contains("SGVsbG8sIFdvcmxkIQ==", result.TextData.ToString()); // base64 of "Hello, World!"
     }
 
     [Fact]
@@ -668,7 +668,7 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("image/png", result.Text);
+        Assert.Contains("image/png", result.TextData.ToString());
     }
 
     // ============================================================
@@ -931,10 +931,10 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("Columns", result.Text);
-        Assert.Contains("name", result.Text);
-        Assert.Contains("age", result.Text);
-        Assert.Contains("Alice", result.Text);
+        Assert.Contains("Columns", result.TextData.ToString());
+        Assert.Contains("name", result.TextData.ToString());
+        Assert.Contains("age", result.TextData.ToString());
+        Assert.Contains("Alice", result.TextData.ToString());
     }
 
     [Fact]
@@ -957,9 +957,9 @@ public class BinaryFileReaderTests
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
 
-        Assert.Contains("row50", result.Text);
-        Assert.DoesNotContain("row51", result.Text);
-        Assert.Contains("... (50+ total rows)", result.Text);
+        Assert.Contains("row50", result.TextData.ToString());
+        Assert.DoesNotContain("row51", result.TextData.ToString());
+        Assert.Contains("... (50+ total rows)", result.TextData.ToString());
     }
 
     // ============================================================
@@ -985,11 +985,11 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("From", result.Text);
-        Assert.Contains("alice@example.com", result.Text);
-        Assert.Contains("Subject", result.Text);
-        Assert.Contains("Hello", result.Text);
-        Assert.Contains("Body text here", result.Text);
+        Assert.Contains("From", result.TextData.ToString());
+        Assert.Contains("alice@example.com", result.TextData.ToString());
+        Assert.Contains("Subject", result.TextData.ToString());
+        Assert.Contains("Hello", result.TextData.ToString());
+        Assert.Contains("Body text here", result.TextData.ToString());
     }
 
     [Fact]
@@ -1024,8 +1024,8 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("<svg", result.Text);
-        Assert.Contains("rect", result.Text);
+        Assert.Contains("<svg", result.TextData.ToString());
+        Assert.Contains("rect", result.TextData.ToString());
     }
 
     // ============================================================
@@ -1053,7 +1053,7 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("shell commands", result.Text);
+        Assert.Contains("shell commands", result.TextData.ToString());
     }
 
     // ============================================================
@@ -1080,9 +1080,9 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("print", result.Text);
-        Assert.Contains("hello", result.Text);
-        Assert.Contains("Title", result.Text);
+        Assert.Contains("print", result.TextData.ToString());
+        Assert.Contains("hello", result.TextData.ToString());
+        Assert.Contains("Title", result.TextData.ToString());
     }
 
     // ============================================================
@@ -1316,6 +1316,6 @@ public class BinaryFileReaderTests
             CancellationToken.None);
 
         ContentProcessorResult result = await proc.ProcessAsync(ctx);
-        Assert.Contains("unavailable", result.Text);
+        Assert.Contains("unavailable", result.TextData.ToString());
     }
 }

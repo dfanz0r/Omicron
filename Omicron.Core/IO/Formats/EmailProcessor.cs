@@ -31,8 +31,12 @@ public sealed class EmailProcessor : IContentProcessor
 
         if (bytes.IsEmpty)
         {
-            return ValueTask.FromResult(new ContentProcessorResult($"[FILE] {context.RelativePath}  (empty)",
-                OutputModality.Text));
+            using var __eb = Utf8Text.CreateBuilder();
+            __eb.AppendLiteral("[FILE] "u8);
+            __eb.Append(context.RelativePath);
+            __eb.AppendLiteral("  (empty)"u8);
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(__eb.AsSpan()), OutputModality.Text));
         }
 
         Utf8Builder output = Utf8Text.CreateBuilder();
@@ -74,9 +78,9 @@ public sealed class EmailProcessor : IContentProcessor
                 output.Append(mimeMessage.Body?.ToString() ?? "(no text body)");
                 output.AppendLine();
 
-                return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
-                    OutputModality.Text,
-                    output.AsSpan().ToArray()));
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Utf8String.FromUtf8(output.AsSpan()),
+                    OutputModality.Text));
             }
             catch
             {
@@ -108,9 +112,9 @@ public sealed class EmailProcessor : IContentProcessor
                 output.AppendLine();
             }
 
-            return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
-                OutputModality.Text,
-                output.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(
+                Utf8String.FromUtf8(output.AsSpan()),
+                OutputModality.Text));
         }
         finally
         {

@@ -1,5 +1,7 @@
+using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
+using Omicron.Core.Text;
 using Omicron.Core.Permissions;
 using Omicron.Core.Sessions;
 using Omicron.Core.Tools;
@@ -96,7 +98,7 @@ public class AgentSessionTests
         toolRegistry.Register(new ToolDefinition("test_tool",
             "A test tool",
             null,
-            ctx => Task.FromResult(new ToolResult("Tool result"))));
+            ctx => Task.FromResult(new ToolResult(TextData: Utf8String.FromUtf8("Tool result"u8)))));
 
         var permissionService = new AllowAllPermissionService();
         var providerState = new ProviderStateManager(new InMemoryProviderConversationStateStore(),
@@ -171,7 +173,7 @@ public class AgentSessionTests
         toolRegistry.Register(new ToolDefinition("test_tool",
             "A test tool",
             null,
-            ctx => Task.FromResult(new ToolResult($"result for {ctx.ToolCallId.Value}"))));
+            ctx => Task.FromResult(new ToolResult(TextData: Utf8String.FromString($"result for {ctx.ToolCallId.Value}")))));
 
         var permissionService = new AllowAllPermissionService();
         var providerState = new ProviderStateManager(new InMemoryProviderConversationStateStore(),

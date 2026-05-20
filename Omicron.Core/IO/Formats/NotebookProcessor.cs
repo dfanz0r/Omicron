@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Text;
 using System.Text.Json;
+using Omicron.Core.Content;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
@@ -32,13 +33,14 @@ public sealed class NotebookProcessor : IContentProcessor
         if (bytes.Length > 50 * 1024 * 1024)
         {
             return ValueTask.FromResult(new ContentProcessorResult(
-                $"[FILE] {context.RelativePath}  ({bytes.Length} bytes, IPYNB — file too large)",
+                MakeNotebookHeaderUtf8("[FILE] "u8, context.RelativePath, "  ("u8, bytes.Length, " bytes, IPYNB — file too large)"u8),
                 OutputModality.Text));
         }
 
         if (bytes.IsEmpty)
         {
-            return ValueTask.FromResult(new ContentProcessorResult($"[FILE] {context.RelativePath}  (empty notebook)",
+            return ValueTask.FromResult(new ContentProcessorResult(
+                MakeNotebookHeaderUtf8("[FILE] "u8, context.RelativePath, "  (empty notebook)"u8),
                 OutputModality.Text));
         }
 
@@ -51,7 +53,7 @@ public sealed class NotebookProcessor : IContentProcessor
             if (!root.TryGetProperty("cells", out JsonElement cells))
             {
                 return ValueTask.FromResult(new ContentProcessorResult(
-                    $"[FILE] {context.RelativePath}  (not a valid .ipynb file — missing 'cells' array)",
+                    MakeNotebookHeaderUtf8("[FILE] "u8, context.RelativePath, "  (not a valid .ipynb file — missing 'cells' array)"u8),
                     OutputModality.Text));
             }
 
@@ -180,9 +182,9 @@ public sealed class NotebookProcessor : IContentProcessor
                     totalBytes += lineBytes;
                 }
 
-                return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
-                    OutputModality.Text,
-                    output.AsSpan().ToArray()));
+                return ValueTask.FromResult(new ContentProcessorResult(
+                    Utf8String.FromUtf8(output.AsSpan()),
+                    OutputModality.Text));
             }
             finally
             {
@@ -191,8 +193,38 @@ public sealed class NotebookProcessor : IContentProcessor
         }
         catch (JsonException)
         {
-            return ValueTask.FromResult(new ContentProcessorResult($"[FILE] {context.RelativePath}  (invalid JSON)",
+            return ValueTask.FromResult(new ContentProcessorResult(
+                MakeNotebookHeaderUtf8("[FILE] "u8, context.RelativePath, "  (invalid JSON)"u8),
                 OutputModality.Text));
+        }
+    }
+
+    private static Utf8String MakeNotebookHeaderUtf8(
+        ReadOnlySpan<byte> prefix, string path, ReadOnlySpan<byte> suffix)
+    {
+        using var _nb = Utf8Text.CreateBuilder();
+        _nb.AppendLiteral(prefix);
+        _nb.Append(path);
+        _nb.AppendLiteral(suffix);
+        return Utf8String.FromUtf8(_nb.AsSpan());
+    }
+
+    private static Utf8String MakeNotebookHeaderUtf8(
+        ReadOnlySpan<byte> prefix, string path, ReadOnlySpan<byte> mid, long count, ReadOnlySpan<byte> suffix)
+    {
+        var _nb = Utf8Text.CreateBuilder();
+        try
+        {
+            _nb.AppendLiteral(prefix);
+            _nb.Append(path);
+            _nb.AppendLiteral(mid);
+            _nb.Append(count);
+            _nb.AppendLiteral(suffix);
+            return Utf8String.FromUtf8(_nb.AsSpan());
+        }
+        finally
+        {
+            _nb.Dispose();
         }
     }
 }

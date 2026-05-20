@@ -1,5 +1,6 @@
 using System.Text;
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 using Omicron.Core.Models;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
@@ -37,23 +38,48 @@ public sealed class PdfProcessor : IContentProcessor
         {
             // Return base64 for models that natively handle PDF
             string b64 = Convert.ToBase64String(bytes.Span);
-            string text =
-                $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, application/pdf)\n";
-            text += $"Data: {b64}";
+            var _pb = Utf8Text.CreateBuilder();
+            try
+            {
+                _pb.AppendLiteral("[FILE] "u8);
+                _pb.Append(context.RelativePath);
+                _pb.AppendLiteral("  ("u8);
+                FormatSize.AppendUtf8To(ref _pb, bytes.Length);
+                _pb.AppendLiteral(", application/pdf)\nData: "u8);
+                _pb.Append(b64);
 
-            return new ContentProcessorResult(text,
-                OutputModality.PdfBase64,
-                MimeType: "application/pdf");
+                return new ContentProcessorResult(Utf8String.FromUtf8(_pb.AsSpan()),
+                    OutputModality.PdfBase64,
+                    MimeType: "application/pdf");
+            }
+            finally
+            {
+                _pb.Dispose();
+            }
         }
 
         // Text-only model: try local text extraction, fall back to hex dump
         string? extracted = TryExtractText(bytes.Span);
         if (extracted is not null)
         {
-            return new ContentProcessorResult(
-                $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, PDF text extracted locally)\n\n{extracted}",
-                OutputModality.Text,
-                Warning: "PDF text extracted locally.");
+            var _pt = Utf8Text.CreateBuilder();
+            try
+            {
+                _pt.AppendLiteral("[FILE] "u8);
+                _pt.Append(context.RelativePath);
+                _pt.AppendLiteral("  ("u8);
+                FormatSize.AppendUtf8To(ref _pt, bytes.Length);
+                _pt.AppendLiteral(", PDF text extracted locally)\n\n"u8);
+                _pt.Append(extracted);
+                return new ContentProcessorResult(
+                    Utf8String.FromUtf8(_pt.AsSpan()),
+                    OutputModality.Text,
+                    Warning: "PDF text extracted locally.");
+            }
+            finally
+            {
+                _pt.Dispose();
+            }
         }
 
         // Fall back to hex dump
@@ -72,10 +98,24 @@ public sealed class PdfProcessor : IContentProcessor
 
         ContentProcessorResult hexResult = await hexDumper.ProcessAsync(hexContext, ct);
 
-        return new ContentProcessorResult(
-            $"[FILE] {context.RelativePath}  ({FormatSize.Format(bytes.Length)}, PDF — text extraction unavailable, showing hex dump)\n{hexResult.Text}",
-            OutputModality.HexDump,
-            Warning: "PDF text extraction unavailable.");
+        var _ph = Utf8Text.CreateBuilder();
+        try
+        {
+            _ph.AppendLiteral("[FILE] "u8);
+            _ph.Append(context.RelativePath);
+            _ph.AppendLiteral("  ("u8);
+            FormatSize.AppendUtf8To(ref _ph, bytes.Length);
+            _ph.AppendLiteral(", PDF — text extraction unavailable, showing hex dump)\n"u8);
+            _ph.AppendLiteral(hexResult.TextData.Utf8Span);
+            return new ContentProcessorResult(
+                Utf8String.FromUtf8(_ph.AsSpan()),
+                OutputModality.HexDump,
+                Warning: "PDF text extraction unavailable.");
+        }
+        finally
+        {
+            _ph.Dispose();
+        }
     }
 
     /// <summary>

@@ -90,14 +90,17 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     WorkspacePath? wsPath = _vfs.Resolve(path);
                     if (wsPath is null)
                     {
-                        return new ToolResult($"Error: path escapes workspace root: '{path}'",
+                        return new ToolResult(
+                            TextData: ErrorUtf8("path escapes workspace root: '"u8, path, "'"u8),
                             IsError: true);
                     }
 
                     FileStat? stat = await _vfs.StatAsync(wsPath.Value, ctx.CancellationToken);
                     if (stat is null)
                     {
-                        return new ToolResult($"Error: path not found: {path}", IsError: true);
+                        return new ToolResult(
+                            TextData: ErrorUtf8("path not found: "u8, path),
+                            IsError: true);
                     }
 
                     // --- Directory listing via workspace renderer ---
@@ -106,7 +109,8 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         WorkspaceReadResult readResult = await _workspace.ReadPathAsync(path,
                             null,
                             ctx.CancellationToken);
-                        return new ToolResult(readResult.Content,
+                        return new ToolResult(
+                            TextData: Utf8String.FromString(readResult.Content),
                             IsError: false,
                             Blocks: readResult.Blocks?.Value);
                     }
@@ -115,7 +119,8 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     ReadOnlyMemory<byte> bytes = await _vfs.ReadFileAsync(wsPath.Value, ctx.CancellationToken);
                     if (bytes.IsEmpty && stat.Size > 0)
                     {
-                        return new ToolResult($"Error: could not read file: {path}",
+                        return new ToolResult(
+                            TextData: ErrorUtf8("could not read file: "u8, path),
                             IsError: true);
                     }
 
@@ -180,8 +185,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                             }
                         }
 
-                        return new ToolResult(b64Result.Utf8Data.HasValue ? null : b64Result.Text,
-                            b64Result.Utf8Data);
+                        return new ToolResult(TextData: b64Result.TextData);
                     }
                     else if (effectiveFormat == "text")
                     {
@@ -241,8 +245,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         }
                     }
 
-                    return new ToolResult(result.Utf8Data.HasValue ? null : result.Text,
-                        result.Utf8Data);
+                    return new ToolResult(TextData: result.TextData);
                 }
                 catch (OperationCanceledException)
                 {
@@ -250,7 +253,8 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                 }
                 catch (Exception ex)
                 {
-                    return new ToolResult($"Error reading '{path}': {ex.Message}",
+                    return new ToolResult(
+                        TextData: ErrorUtf8("reading '"u8, path, "': "u8, ex.Message),
                         IsError: true);
                 }
             }));
@@ -285,26 +289,32 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     WorkspacePath? wsPath = _vfs.Resolve(path);
                     if (wsPath is null)
                     {
-                        return new ToolResult($"Error: path escapes workspace root: '{path}'",
+                        return new ToolResult(
+                            TextData: ErrorUtf8("path escapes workspace root: '"u8, path, "'"u8),
                             IsError: true);
                     }
 
                     FileStat? stat = await _vfs.StatAsync(wsPath.Value, ctx.CancellationToken);
                     if (stat is null)
                     {
-                        return new ToolResult($"Error: path not found: {path}", IsError: true);
+                        return new ToolResult(
+                            TextData: ErrorUtf8("path not found: "u8, path),
+                            IsError: true);
                     }
 
                     ReadOnlyMemory<byte> bytes = await _vfs.ReadFileAsync(wsPath.Value, ctx.CancellationToken);
                     if (bytes.IsEmpty && stat.Size > 0)
                     {
-                        return new ToolResult($"Error: could not read file: {path}",
+                        return new ToolResult(
+                            TextData: ErrorUtf8("could not read file: "u8, path),
                             IsError: true);
                     }
 
                     if (!TextEncodingDetector.IsText(bytes.Span))
                     {
-                        return new ToolResult($"Error: binary file: {path}", IsError: true);
+                        return new ToolResult(
+                            TextData: ErrorUtf8("binary file: "u8, path),
+                            IsError: true);
                     }
 
                     // Scan line boundaries without full-file string allocation
@@ -398,7 +408,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                             output.AppendLine();
                         }
 
-                        return new ToolResult(Utf8Data: output.AsSpan().ToArray());
+                        return new ToolResult(TextData: Utf8String.FromUtf8(output.AsSpan()));
                     }
                     finally
                     {
@@ -407,7 +417,8 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    return new ToolResult($"Error reading '{path}': {ex.Message}",
+                    return new ToolResult(
+                        TextData: ErrorUtf8("reading '"u8, path, "': "u8, ex.Message),
                         IsError: true);
                 }
             }));
@@ -460,14 +471,17 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     WorkspacePath? wsPath = _vfs.Resolve(path);
                     if (wsPath is null)
                     {
-                        return new ToolResult($"Error: path escapes workspace root: '{path}'",
+                        return new ToolResult(
+                            TextData: ErrorUtf8("path escapes workspace root: '"u8, path, "'"u8),
                             IsError: true);
                     }
 
                     FileStat? stat = await _vfs.StatAsync(wsPath.Value, ctx.CancellationToken);
                     if (stat is null)
                     {
-                        return new ToolResult($"Error: path not found: {path}", IsError: true);
+                        return new ToolResult(
+                            TextData: ErrorUtf8("path not found: "u8, path),
+                            IsError: true);
                     }
 
                     // ---------- read current file ----------
@@ -475,14 +489,16 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     ReadOnlyMemory<byte> bytes = await _vfs.ReadFileAsync(wsPath.Value, ctx.CancellationToken);
                     if (bytes.IsEmpty && stat.Size > 0)
                     {
-                        return new ToolResult($"Error: could not read file: {path}",
+                        return new ToolResult(
+                            TextData: ErrorUtf8("could not read file: "u8, path),
                             IsError: true);
                     }
 
                     // Content-based binary detection (BOM / null-byte / UTF-8 decode / printable ratio).
                     if (!TextEncodingDetector.IsText(bytes.Span))
                     {
-                        return new ToolResult($"Error: binary file cannot be edited: {path}",
+                        return new ToolResult(
+                            TextData: ErrorUtf8("binary file cannot be edited: "u8, path),
                             IsError: true);
                     }
 
@@ -562,7 +578,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     if (parsedEdits.Count == 0)
                     {
                         return new ToolResult(
-                            "Error: no valid edits provided. Supply an 'edits' array with objects containing start_line, start_hash, old_text, new_text.",
+                            TextData: Utf8String.FromString("Error: no valid edits provided. Supply an 'edits' array with objects containing start_line, start_hash, old_text, new_text."),
                             IsError: true);
                     }
 
@@ -684,8 +700,14 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
 
                     if (errors.Count > 0)
                     {
-                        return new ToolResult("Validation errors:\n\n" + string.Join("\n\n", errors),
-                            IsError: true);
+                        using var _b = Utf8Text.CreateBuilder();
+                        _b.AppendLiteral("Validation errors:"u8);
+                        foreach (var _err in errors)
+                        {
+                            _b.AppendLiteral("\n\n"u8);
+                            _b.Append(_err);
+                        }
+                        return new ToolResult(TextData: Utf8String.FromUtf8(_b.AsSpan()), IsError: true);
                     }
 
                     // ---------- check for overlapping edits ----------
@@ -697,10 +719,9 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         int prevEnd = prev.ActualLine + prev.LineCount - 1;
                         if (curr.ActualLine <= prevEnd)
                         {
-                            return new ToolResult($"Error: overlapping edits. "
-                                                  + $"Edit at line {prev.Edit.StartLine} (resolved {prev.ActualLine}, "
-                                                  + $"{prev.LineCount} line(s)) overlaps with edit at line {curr.Edit.StartLine} "
-                                                  + $"(resolved {curr.ActualLine}).",
+                            return new ToolResult(
+                                TextData: MakeOverlapErrorUtf8(prev.Edit.StartLine, prev.ActualLine,
+                                    prev.LineCount, curr.Edit.StartLine, curr.ActualLine),
                                 IsError: true);
                         }
                     }
@@ -769,7 +790,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                             "Call read_file_hashlines to get fresh line anchors if you need to make further edits."u8);
                         resultOutput.AppendLine();
 
-                        return new ToolResult(Utf8Data: resultOutput.AsSpan().ToArray());
+                        return new ToolResult(TextData: Utf8String.FromUtf8(resultOutput.AsSpan()));
                     }
                     finally
                     {
@@ -782,7 +803,8 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                 }
                 catch (Exception ex)
                 {
-                    return new ToolResult($"Error editing '{path}': {ex.Message}",
+                    return new ToolResult(
+                        TextData: ErrorUtf8("editing '"u8, path, "': "u8, ex.Message),
                         IsError: true);
                 }
             }));
@@ -817,7 +839,8 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     WorkspacePath? wsPath = _vfs.Resolve(path);
                     if (wsPath is null)
                     {
-                        return new ToolResult($"Error: path escapes workspace root: '{path}'",
+                        return new ToolResult(
+                            TextData: ErrorUtf8("path escapes workspace root: '"u8, path, "'"u8),
                             IsError: true);
                     }
 
@@ -829,7 +852,8 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         ctx.CancellationToken);
 
                     int lineCount = content.AsSpan().Count('\n') + 1;
-                    return new ToolResult($"Wrote {path} ({FormatSize.Format(bytes.Length)}, {lineCount} lines).",
+                    return new ToolResult(
+                        TextData: MakeWriteSuccessUtf8(path, bytes, lineCount),
                         IsError: false);
                 }
                 catch (OperationCanceledException)
@@ -838,7 +862,8 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                 }
                 catch (Exception ex)
                 {
-                    return new ToolResult($"Error writing '{path}': {ex.Message}",
+                    return new ToolResult(
+                        TextData: ErrorUtf8("writing '"u8, path, "': "u8, ex.Message),
                         IsError: true);
                 }
             }));
@@ -930,6 +955,85 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
             limit,
             _eventSink,
             ctx.CancellationToken);
+    }
+
+    /// <summary>
+    ///     Build an error message as <c>Utf8String</c> without string interpolation.
+    ///     Constructs "Error: {prefix}{value}{suffix}" directly in UTF-8.
+    /// </summary>
+    private static Utf8String ErrorUtf8(
+        ReadOnlySpan<byte> prefix, string value, ReadOnlySpan<byte> suffix = default)
+    {
+        using var b = Utf8Text.CreateBuilder();
+        b.AppendLiteral("Error: "u8);
+        b.AppendLiteral(prefix);
+        b.Append(value);
+        if (!suffix.IsEmpty)
+            b.AppendLiteral(suffix);
+        return Utf8String.FromUtf8(b.AsSpan());
+    }
+
+    /// <summary>
+    ///     Build an error message as <c>Utf8String</c> without string interpolation.
+    ///     Constructs "Error: {prefix}{value1}: {value2}" directly in UTF-8.
+    /// </summary>
+    private static Utf8String ErrorUtf8(
+        ReadOnlySpan<byte> prefix, string value1, ReadOnlySpan<byte> separator, string value2)
+    {
+        using var b = Utf8Text.CreateBuilder();
+        b.AppendLiteral("Error: "u8);
+        b.AppendLiteral(prefix);
+        b.Append(value1);
+        b.AppendLiteral(separator);
+        b.Append(value2);
+        return Utf8String.FromUtf8(b.AsSpan());
+    }
+
+    /// <summary>
+    ///     Build "Error: overlapping edits. Edit at line {startLine} (resolved {actualLine}, "
+    ///     "{lineCount} line(s)) overlaps with edit at line {otherStart} (resolved {otherActual})."
+    ///     directly in UTF-8 without string interpolation.
+    /// </summary>
+    private static Utf8String MakeOverlapErrorUtf8(
+        int startLine, int actualLine, int lineCount,
+        int otherStart, int otherActual)
+    {
+        using var b = Utf8Text.CreateBuilder();
+        b.AppendLiteral("Error: overlapping edits. Edit at line "u8);
+        b.Append(startLine);
+        b.AppendLiteral(" (resolved "u8);
+        b.Append(actualLine);
+        b.AppendLiteral(", "u8);
+        b.Append(lineCount);
+        b.AppendLiteral(" line(s)) overlaps with edit at line "u8);
+        b.Append(otherStart);
+        b.AppendLiteral(" (resolved "u8);
+        b.Append(otherActual);
+        b.AppendLiteral(")."u8);
+        return Utf8String.FromUtf8(b.AsSpan());
+    }
+
+    /// <summary>
+    ///     Build "Wrote {path} ({size}, {lineCount} lines)." directly in UTF-8.
+    /// </summary>
+    private static Utf8String MakeWriteSuccessUtf8(string path, byte[] bytes, int lineCount)
+    {
+        var b = Utf8Text.CreateBuilder();
+        try
+        {
+            b.AppendLiteral("Wrote "u8);
+            b.Append(path);
+            b.AppendLiteral(" ("u8);
+            FormatSize.AppendUtf8To(ref b, bytes.Length);
+            b.AppendLiteral(", "u8);
+            b.Append(lineCount);
+            b.AppendLiteral(" lines)."u8);
+            return Utf8String.FromUtf8(b.AsSpan());
+        }
+        finally
+        {
+            b.Dispose();
+        }
     }
 
     /// <summary>
