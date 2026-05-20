@@ -199,6 +199,10 @@ internal static partial class Utf8ValueFormatter
 
                     written += genWritten;
                 }
+                else if (genResult == Utf8FormatResult.InsufficientSpace && genWritten > written)
+                {
+                    written = genWritten;
+                }
 
                 return genResult;
             }
