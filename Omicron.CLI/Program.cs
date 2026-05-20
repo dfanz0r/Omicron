@@ -1,4 +1,6 @@
 using System.Text;
+using Omicron.CLI;
+using Omicron.CLI.Tui;
 using Omicron.Core;
 using Omicron.Core.Config;
 using Omicron.Core.Events;
@@ -6,8 +8,6 @@ using Omicron.Core.Models;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
 using Omicron.Core.Sessions;
-using Omicron.CLI;
-using Omicron.CLI.Tui;
 
 Console.OutputEncoding = Encoding.UTF8;
 
@@ -15,17 +15,16 @@ Console.OutputEncoding = Encoding.UTF8;
 
 var configManager = new ConfigManager();
 configManager.Load();
-var cfg = configManager.Config;
+AgentConfig cfg = configManager.Config;
 
-var sessionStoreDir = Path.Combine(
-    Path.GetDirectoryName(configManager.GetConfigPath())!,
+string sessionStoreDir = Path.Combine(Path.GetDirectoryName(configManager.GetConfigPath())!,
     "sessions");
 var sessionStore = new JsonlSessionStore(sessionStoreDir);
 using var host = new OmicronHost(Environment.CurrentDirectory, sessionStore);
 host.LoadBuiltinExtensions();
 
-var catalog = host.ModelCatalog;
-await catalog.DiscoverAsync(quiet: true);
+IModelCatalog catalog = host.ModelCatalog;
+await catalog.DiscoverAsync(true);
 try
 {
     using var metaCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
@@ -54,14 +53,17 @@ Console.WriteLine();
 Console.WriteLine($"Config: {configManager.GetConfigPath()}");
 Console.WriteLine($"Session store: {sessionStore.StoreDirectory}");
 Console.WriteLine("Registered providers:");
-foreach (var name in host.Providers.ProviderNames)
+foreach (string name in host.Providers.ProviderNames)
+{
     Console.WriteLine($"  \u2022 {name}");
+}
+
 Console.WriteLine();
 
 // Create slash command dispatcher
 var slashDispatcher = new SlashCommandDispatcher();
 
-var currentModelKey = SelectStartupModelKey(catalog, cfg);
+string? currentModelKey = SelectStartupModelKey(catalog, cfg);
 if (currentModelKey is null)
 {
     Console.ForegroundColor = ConsoleColor.Yellow;
@@ -87,10 +89,14 @@ while (true)
     {
         if (resumedSession is null)
         {
-            if (!catalog.Models.TryGetValue(currentModelKey, out var selectedModel))
+            if (!catalog.Models.TryGetValue(currentModelKey, out Model? selectedModel))
             {
                 currentModelKey = SelectStartupModelKey(catalog, cfg);
-                if (currentModelKey is null) break;
+                if (currentModelKey is null)
+                {
+                    break;
+                }
+
                 selectedModel = catalog.Models[currentModelKey];
             }
 
@@ -104,10 +110,17 @@ while (true)
                 if (string.IsNullOrEmpty(currentApiKey))
                 {
                     Console.WriteLine("API key required for this provider.");
-                    currentModelKey = SelectStartupModelKey(catalog, cfg, excludeKey: currentModelKey);
-                    if (currentModelKey is null) break;
+                    currentModelKey = SelectStartupModelKey(catalog,
+                        cfg,
+                        currentModelKey);
+                    if (currentModelKey is null)
+                    {
+                        break;
+                    }
+
                     continue;
                 }
+
                 configManager.SetApiKey(selectedModel.ProviderName, currentApiKey);
                 Console.WriteLine("  (saved to config)");
             }
@@ -118,8 +131,7 @@ while (true)
             Console.WriteLine($"  Base URL: {selectedModel.BaseUrl}");
             Console.WriteLine("Type your message, /help for commands, /models to list, /model <n> to switch.\n");
 
-            var sessionConfig = SessionConfig.Create(
-                selectedModel,
+            var sessionConfig = SessionConfig.Create(selectedModel,
                 cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.",
                 currentApiKey,
                 cfg.DefaultMaxTokens,
@@ -129,10 +141,14 @@ while (true)
             resumedModel = selectedModel;
         }
 
-        var innerSlashContext = new SlashCommandContext(
-            host, resumedSession, resumedModel!, currentModelKey, cfg, catalog);
+        var innerSlashContext = new SlashCommandContext(host,
+            resumedSession,
+            resumedModel!,
+            currentModelKey,
+            cfg,
+            catalog);
 
-        var loopResult = await ChatLoop(resumedSession, innerSlashContext, slashDispatcher);
+        ChatLoopResult loopResult = await ChatLoop(resumedSession, innerSlashContext, slashDispatcher);
 
         if (loopResult.Reason == ChatLoopExitReason.ExitApp)
         {
@@ -150,6 +166,7 @@ while (true)
                 cfg.LastModel = currentModelKey;
                 configManager.Save();
             }
+
             // Runtime config is already applied at construction via SessionConfig
             continue;
         }
@@ -161,8 +178,10 @@ while (true)
             resumedModel = null;
             continue;
         }
+
         break;
     }
+
     break;
 }
 
@@ -172,10 +191,13 @@ return;
 // Local functions
 // ---------------------------------------------------------------
 
-IReadOnlyList<KeyValuePair<string, Model>> GetVisibleModels(IModelCatalog catalog, AgentConfig cfg, string? excludeKey = null)
+IReadOnlyList<KeyValuePair<string, Model>> GetVisibleModels(
+    IModelCatalog catalog,
+    AgentConfig cfg,
+    string? excludeKey = null)
 {
-    return catalog.Models
-        .Where(kv => kv.Key != excludeKey)
+    return catalog
+        .Models.Where(kv => kv.Key != excludeKey)
         .Where(kv => catalog.IsFreeModel(kv.Key) || ResolveApiKey(kv.Value) is not null)
         .OrderBy(kv => kv.Key == cfg.LastModel ? 0 : 1)
         .ThenBy(kv => kv.Value.ProviderName)
@@ -185,18 +207,27 @@ IReadOnlyList<KeyValuePair<string, Model>> GetVisibleModels(IModelCatalog catalo
 
 string? SelectStartupModelKey(IModelCatalog catalog, AgentConfig cfg, string? excludeKey = null)
 {
-    var visible = GetVisibleModels(catalog, cfg, excludeKey);
-    if (visible.Count == 0) return null;
+    IReadOnlyList<KeyValuePair<string, Model>> visible = GetVisibleModels(catalog, cfg, excludeKey);
+    if (visible.Count == 0)
+    {
+        return null;
+    }
 
-    if (cfg.LastModel is not null && excludeKey != cfg.LastModel && visible.Any(kv => kv.Key == cfg.LastModel))
+    if (
+        cfg.LastModel is not null
+        && excludeKey != cfg.LastModel
+        && visible.Any(kv => kv.Key == cfg.LastModel)
+    )
+    {
         return cfg.LastModel;
+    }
 
     return visible[0].Key;
 }
 
 string? ResolveApiKey(Model selectedModel)
 {
-    var envVarName = selectedModel.ProviderName.ToLowerInvariant() switch
+    string? envVarName = selectedModel.ProviderName.ToLowerInvariant() switch
     {
         "openai" => "OPENAI_API_KEY",
         "anthropic" => "ANTHROPIC_API_KEY",
@@ -212,18 +243,20 @@ string? ResolveApiKey(Model selectedModel)
 
 void ShowConfig(ConfigManager cm)
 {
-    var cfg = cm.Config;
+    AgentConfig cfg = cm.Config;
     Console.WriteLine("\n--- Configuration ---");
     Console.WriteLine($"  Config file: {cm.GetConfigPath()}");
     Console.WriteLine($"  Saved API keys: {cfg.ApiKeys.Count}");
-    foreach (var (provider, _) in cfg.ApiKeys.OrderBy(k => k.Key))
+    foreach ((string provider, string _) in cfg.ApiKeys.OrderBy(k => k.Key))
     {
         Console.WriteLine($"    - {provider}: ****{cfg.ApiKeys[provider][^4..]}");
     }
+
     Console.WriteLine($"  Last model: {cfg.LastModel ?? "(none)"}");
     Console.WriteLine($"  Max tokens: {cfg.DefaultMaxTokens}");
     Console.WriteLine($"  Temperature: {cfg.DefaultTemperature}");
-    Console.WriteLine($"  System prompt: {(cfg.SystemPrompt is not null ? cfg.SystemPrompt[..Math.Min(60, cfg.SystemPrompt.Length)] + "..." : "(default)")}");
+    Console.WriteLine(
+        $"  System prompt: {(cfg.SystemPrompt is not null ? cfg.SystemPrompt[..Math.Min(60, cfg.SystemPrompt.Length)] + "..." : "(default)")}");
     Console.WriteLine($"  Display width: {cfg.DisplayLineWidth} cols");
     Console.WriteLine($"  Display lines: {cfg.DisplayMaxLines} max");
     Console.WriteLine($"  Max iterations: {cfg.MaxIterations}");
@@ -242,19 +275,23 @@ void ShowConfig(ConfigManager cm)
     while (true)
     {
         Console.Write("config> ");
-        var line = Console.ReadLine()?.Trim();
-        if (string.IsNullOrEmpty(line)) break;
+        string? line = Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(line))
+        {
+            break;
+        }
 
-        var parts = line.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+        string[] parts = line.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
         switch (parts[0])
         {
             case "key" when parts.Length >= 3 && parts[1] == "set":
-                var key = PromptForApiKey(parts[2]);
+                string? key = PromptForApiKey(parts[2]);
                 if (!string.IsNullOrEmpty(key))
                 {
                     cm.SetApiKey(parts[2], key);
                     Console.WriteLine($"  Key saved for '{parts[2]}'.");
                 }
+
                 break;
 
             case "key" when parts.Length >= 2 && parts[1] == "rm":
@@ -263,6 +300,7 @@ void ShowConfig(ConfigManager cm)
                     cm.Save();
                     Console.WriteLine($"  Key removed for '{parts[2]}'.");
                 }
+
                 break;
 
             case "prompt" when parts.Length >= 2:
@@ -271,31 +309,31 @@ void ShowConfig(ConfigManager cm)
                 Console.WriteLine("  System prompt updated.");
                 break;
 
-            case "tokens" when parts.Length >= 2 && int.TryParse(parts[1], out var n):
+            case "tokens" when parts.Length >= 2 && int.TryParse(parts[1], out int n):
                 cfg.DefaultMaxTokens = n;
                 cm.Save();
                 Console.WriteLine($"  Max tokens set to {n}.");
                 break;
 
-            case "temp" when parts.Length >= 2 && double.TryParse(parts[1], out var t):
+            case "temp" when parts.Length >= 2 && double.TryParse(parts[1], out double t):
                 cfg.DefaultTemperature = t;
                 cm.Save();
                 Console.WriteLine($"  Temperature set to {t}.");
                 break;
 
-            case "width" when parts.Length >= 2 && int.TryParse(parts[1], out var w) && w >= 20:
+            case "width" when parts.Length >= 2 && int.TryParse(parts[1], out int w) && w >= 20:
                 cfg.DisplayLineWidth = w;
                 cm.Save();
                 Console.WriteLine($"  Display line width set to {w}.");
                 break;
 
-            case "lines" when parts.Length >= 2 && int.TryParse(parts[1], out var ml) && ml >= 5:
+            case "lines" when parts.Length >= 2 && int.TryParse(parts[1], out int ml) && ml >= 5:
                 cfg.DisplayMaxLines = ml;
                 cm.Save();
                 Console.WriteLine($"  Display max lines set to {ml}.");
                 break;
 
-            case "iters" when parts.Length >= 2 && int.TryParse(parts[1], out var it) && it >= 1:
+            case "iters" when parts.Length >= 2 && int.TryParse(parts[1], out int it) && it >= 1:
                 cfg.MaxIterations = it;
                 cm.Save();
                 Console.WriteLine($"  Max iterations set to {it}.");
@@ -311,7 +349,7 @@ void ShowConfig(ConfigManager cm)
 string? PromptForApiKey(string provider)
 {
     Console.Write($"  Enter your {provider} API key (will be saved to config): ");
-    var key = ReadPassword();
+    string key = ReadPassword();
     Console.WriteLine();
     return key;
 }
@@ -321,20 +359,31 @@ string ReadPassword()
     var sb = new StringBuilder();
     while (true)
     {
-        var key = Console.ReadKey(true);
-        if (key.Key == ConsoleKey.Enter) break;
+        ConsoleKeyInfo key = Console.ReadKey(true);
+        if (key.Key == ConsoleKey.Enter)
+        {
+            break;
+        }
+
         if (key.Key == ConsoleKey.Backspace && sb.Length > 0)
         {
             sb.Length--;
             continue;
         }
+
         if (key.KeyChar != 0)
+        {
             sb.Append(key.KeyChar);
+        }
     }
+
     return sb.ToString();
 }
 
-async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext slashCtx, SlashCommandDispatcher dispatcher)
+async Task<ChatLoopResult> ChatLoop(
+    AgentSession session,
+    SlashCommandContext slashCtx,
+    SlashCommandDispatcher dispatcher)
 {
     var editor = new LineEditor(input => dispatcher.GetCompletions(input, slashCtx));
 
@@ -342,7 +391,7 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
     if (session.Messages.Count > 0)
     {
         Console.WriteLine($"\n  Session has {session.Messages.Count} previous messages.\n");
-        foreach (var msg in session.Messages)
+        foreach (Message msg in session.Messages)
         {
             switch (msg.Role)
             {
@@ -351,32 +400,43 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
                     break;
                 case MessageRole.Assistant when msg.ToolCalls is { Count: > 0 }:
                     Console.WriteLine($"\x1b[36mAssistant:\x1b[0m {msg.GetTextString()}");
-                    foreach (var tc in msg.ToolCalls)
+                    foreach (ToolCallContent tc in msg.ToolCalls)
+                    {
                         Console.WriteLine($"  \x1b[90m[tool: {tc.Name}]\x1b[0m");
+                    }
+
                     break;
                 case MessageRole.Assistant:
                     Console.WriteLine($"\x1b[36mAssistant:\x1b[0m {msg.GetTextString()}");
                     break;
                 case MessageRole.ToolResult:
-                    var text = msg.GetTextString();
-                    var preview = text.Length > 80 ? text[..80] + "…" : text;
+                    string text = msg.GetTextString();
+                    string preview = text.Length > 80 ? text[..80] + "…" : text;
                     Console.WriteLine($"  \x1b[90m[result: {msg.ToolName}] {preview}\x1b[0m");
                     break;
             }
         }
+
         Console.WriteLine();
     }
 
     while (true)
     {
-        var input = editor.ReadLine("You: ");
-        if (input is null) break;
-        if (string.IsNullOrWhiteSpace(input)) continue;
+        string? input = editor.ReadLine("You: ");
+        if (input is null)
+        {
+            break;
+        }
+
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            continue;
+        }
 
         // Check for slash commands first
         if (dispatcher.IsCommand(input))
         {
-            var result = dispatcher.Execute(input, slashCtx);
+            ChatCommandResult result = dispatcher.Execute(input, slashCtx);
             switch (result.Action)
             {
                 case ChatCommandAction.Continue:
@@ -384,7 +444,10 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
 
                 case ChatCommandAction.ExitSession:
                     if (result.Message is not null)
+                    {
                         Console.WriteLine(result.Message);
+                    }
+
                     return new ChatLoopResult(ChatLoopExitReason.ExitSession);
 
                 case ChatCommandAction.ExitApp:
@@ -400,17 +463,23 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
                     if (result.ModelKey is not null)
                     {
                         if (result.Message is not null)
+                        {
                             Console.WriteLine(result.Message);
+                        }
+
                         return new ChatLoopResult(ChatLoopExitReason.ExitSession, result.ModelKey);
                     }
+
                     continue;
 
                 case ChatCommandAction.SwitchSession:
                     if (result.NewSession is not null && result.NewModel is not null)
                     {
                         return new ChatLoopResult(ChatLoopExitReason.ExitSession,
-                            NewSession: result.NewSession, NewModel: result.NewModel);
+                            NewSession: result.NewSession,
+                            NewModel: result.NewModel);
                     }
+
                     continue;
             }
         }
@@ -418,20 +487,20 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
         Console.Write("Agent: ");
 
         using var cts = new CancellationTokenSource();
-        var interrupted = false;
+        bool interrupted = false;
 
-        var sessionTask = ReadSessionOutput(session, input, cts.Token);
+        Task sessionTask = ReadSessionOutput(session, input, cts.Token);
 
         while (!sessionTask.IsCompleted)
         {
             var delay = Task.Delay(100);
-            var completed = await Task.WhenAny(sessionTask, delay);
+            Task completed = await Task.WhenAny(sessionTask, delay);
 
             if (completed == delay)
             {
                 while (Console.KeyAvailable)
                 {
-                    var key = Console.ReadKey(intercept: true);
+                    ConsoleKeyInfo key = Console.ReadKey(true);
                     if (key.Key == ConsoleKey.Escape)
                     {
                         interrupted = true;
@@ -441,10 +510,16 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
                 }
             }
 
-            if (interrupted) break;
+            if (interrupted)
+            {
+                break;
+            }
         }
 
-        try { await sessionTask; }
+        try
+        {
+            await sessionTask;
+        }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
@@ -466,7 +541,7 @@ async Task<ChatLoopResult> ChatLoop(AgentSession session, SlashCommandContext sl
 
 async Task ReadSessionOutput(AgentSession session, string input, CancellationToken ct)
 {
-    await foreach (var evt in session.PromptAsync(input, ct))
+    await foreach (OmicronEvent evt in session.PromptAsync(input, ct))
     {
         switch (evt)
         {
@@ -481,7 +556,9 @@ async Task ReadSessionOutput(AgentSession session, string input, CancellationTok
             case ToolInvocationCompletedEvent toolEnd:
                 Console.WriteLine("done.");
                 Console.WriteLine();
-                DisplayHelpers.DisplayTruncated(toolEnd.Result.ToString(), cfg.DisplayLineWidth, cfg.DisplayMaxLines);
+                DisplayHelpers.DisplayTruncated(toolEnd.Result.ToString(),
+                    cfg.DisplayLineWidth,
+                    cfg.DisplayMaxLines);
                 Console.WriteLine();
                 break;
 
@@ -518,9 +595,13 @@ async Task ReadSessionOutput(AgentSession session, string input, CancellationTok
 /// <summary>
 /// TUI mode entry point — creates or resumes a session, launches the full chat TUI.
 /// </summary>
-async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConfig cfg, JsonlSessionStore sessionStore)
+async Task RunTuiSessionAsync(
+    OmicronHost host,
+    IModelCatalog catalog,
+    AgentConfig cfg,
+    JsonlSessionStore sessionStore)
 {
-    using var backend = TerminalBackendFactory.CreateSystemBackend();
+    using ITerminalBackend backend = TerminalBackendFactory.CreateSystemBackend();
     backend.Initialize();
     using var shell = new TuiShell(backend);
 
@@ -528,7 +609,7 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
     var slashBridge = new TuiSlashCommandBridge(host, cfg, catalog);
 
     // Try to find a model and create a session
-    var visibleModels = GetVisibleModels(catalog, cfg);
+    IReadOnlyList<KeyValuePair<string, Model>> visibleModels = GetVisibleModels(catalog, cfg);
     AgentSession? session = null;
     Model? selectedModel = null;
     string modelKey = "";
@@ -539,17 +620,21 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
         if (cfg.LastModel is not null)
         {
             // cfg.LastModel stores the catalog KEY, not the model Id/Name.
-            var lastModelEntry = visibleModels
-                .FirstOrDefault(kv => kv.Key == cfg.LastModel);
-            var lastModel = lastModelEntry.Value;
+            KeyValuePair<string, Model> lastModelEntry = visibleModels.FirstOrDefault(kv => kv.Key == cfg.LastModel);
+            Model? lastModel = lastModelEntry.Value;
             if (lastModel is not null)
             {
-                var apiKey = ResolveApiKey(lastModel);
+                string? apiKey = ResolveApiKey(lastModel);
                 if (apiKey is not null)
                 {
                     selectedModel = lastModel;
                     modelKey = lastModelEntry.Key;
-                    session = host.CreateSession(SessionConfig.Create(selectedModel, cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.", apiKey, cfg.DefaultMaxTokens, cfg.DefaultTemperature, maxIterations: cfg.MaxIterations));
+                    session = host.CreateSession(SessionConfig.Create(selectedModel,
+                        cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.",
+                        apiKey,
+                        cfg.DefaultMaxTokens,
+                        cfg.DefaultTemperature,
+                        maxIterations: cfg.MaxIterations));
                 }
             }
         }
@@ -561,12 +646,11 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
             picker.SetModels(visibleModels.Select(kv => kv.Value).ToList(), cfg.LastModel);
 
             var pickerTask = new TaskCompletionSource<Model?>();
-            picker.OnModelSelected += (m) => pickerTask.TrySetResult(m);
+            picker.OnModelSelected += m => pickerTask.TrySetResult(m);
             picker.OnCancelled += () => pickerTask.TrySetResult(null);
 
             // Run a mini event loop for the picker
-            await shell.RunAsync(
-                onEvent: (evt) =>
+            await shell.RunAsync(evt =>
                 {
                     if (evt is KeyEvent ke)
                     {
@@ -576,15 +660,17 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
                             shell.Cancel();
                             return Task.FromResult(true);
                         }
+
                         picker.HandleKey(ke);
                         if (picker.IsCompleted)
                         {
                             shell.Cancel(); // Exit the event loop — modal complete
                         }
                     }
+
                     return Task.FromResult(true);
                 },
-                onRender: (frame) =>
+                frame =>
                 {
                     frame.Clear();
                     var bounds = new Rect(0, 0, frame.Width, frame.Height);
@@ -600,10 +686,14 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
             if (selectedModel is not null)
             {
                 // Look up the catalog key for the selected model
-                modelKey = catalog.Models
-                    .FirstOrDefault(kv => kv.Value.Id == selectedModel.Id && kv.Value.ProviderName == selectedModel.ProviderName)
-                    .Key ?? selectedModel.Id;
-                var apiKey = ResolveApiKey(selectedModel);
+                modelKey =
+                    catalog
+                        .Models.FirstOrDefault(kv =>
+                            kv.Value.Id == selectedModel.Id
+                            && kv.Value.ProviderName == selectedModel.ProviderName)
+                        .Key
+                    ?? selectedModel.Id;
+                string? apiKey = ResolveApiKey(selectedModel);
                 bool promptedForApiKey = false;
                 if (apiKey is null)
                 {
@@ -612,8 +702,7 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
                     prompt.Reset(selectedModel.ProviderName);
 
                     var promptTask = new TaskCompletionSource<string?>();
-                    await shell.RunAsync(
-                        onEvent: (evt) =>
+                    await shell.RunAsync(evt =>
                         {
                             if (evt is PasteEvent pe)
                             {
@@ -632,9 +721,10 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
                                     }
                                 }
                             }
+
                             return Task.FromResult(true);
                         },
-                        onRender: (frame) =>
+                        frame =>
                         {
                             frame.Clear();
                             var bounds = new Rect(0, 0, frame.Width, frame.Height);
@@ -656,9 +746,16 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
                     // Persist keys entered through the TUI prompt, matching the
                     // non-TUI startup flow. Do not copy env-var keys into config.
                     if (promptedForApiKey)
+                    {
                         configManager.SetApiKey(selectedModel.ProviderName, apiKey);
+                    }
 
-                    var sessionConfig = SessionConfig.Create(selectedModel, cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.", apiKey, cfg.DefaultMaxTokens, cfg.DefaultTemperature, maxIterations: cfg.MaxIterations);
+                    var sessionConfig = SessionConfig.Create(selectedModel,
+                        cfg.SystemPrompt ?? "You are a helpful assistant with access to tools.",
+                        apiKey,
+                        cfg.DefaultMaxTokens,
+                        cfg.DefaultTemperature,
+                        maxIterations: cfg.MaxIterations);
                     session = host.CreateSession(sessionConfig);
                     cfg.LastModel = modelKey;
                     configManager.Save();
@@ -686,9 +783,11 @@ async Task RunTuiSessionAsync(OmicronHost host, IModelCatalog catalog, AgentConf
     {
         if (session.Messages.Count == 0)
         {
-            var sessionPath = Path.Combine(sessionStore.StoreDirectory, $"{session.Id}.jsonl");
+            string sessionPath = Path.Combine(sessionStore.StoreDirectory, $"{session.Id}.jsonl");
             if (File.Exists(sessionPath))
+            {
                 File.Delete(sessionPath);
+            }
         }
         else
         {
@@ -705,7 +804,10 @@ public static class DisplayHelpers
 {
     public static void DisplayTruncated(string text, int lineWidth, int maxLines)
     {
-        if (string.IsNullOrEmpty(text)) return;
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
 
         // Count lines and find their start positions without allocating substrings
         var lineStarts = new List<int>(maxLines > 0 ? Math.Min(maxLines + 1, 256) : 256);
@@ -717,30 +819,42 @@ public static class DisplayHelpers
             {
                 totalLines++;
                 if (totalLines <= maxLines && i + 1 < text.Length)
+                {
                     lineStarts.Add(i + 1);
+                }
             }
         }
+
         // Handle last line if no trailing newline
         if (text.Length > 0 && text[^1] != '\n')
+        {
             totalLines++;
+        }
 
         int shown = 0;
         for (int i = 0; i < lineStarts.Count && shown < maxLines; i++, shown++)
         {
             int start = lineStarts[i];
-            int end = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : text.Length;
+            int end = i + 1 < lineStarts.Count ? lineStarts[i + 1] : text.Length;
             // Strip trailing \r if present
-            if (end > start && text[end - 1] == '\r') end--;
-            // Strip trailing \n if present (for last line)
-            if (end > start && text[end - 1] == '\n') end--;
+            if (end > start && text[end - 1] == '\r')
+            {
+                end--;
+            }
 
-            var line = text.AsSpan(start, end - start);
+            // Strip trailing \n if present (for last line)
+            if (end > start && text[end - 1] == '\n')
+            {
+                end--;
+            }
+
+            ReadOnlySpan<char> line = text.AsSpan(start, end - start);
             Console.WriteLine(TruncateLine(line, lineWidth));
         }
 
         if (totalLines > maxLines)
         {
-            var prev = Console.ForegroundColor;
+            ConsoleColor prev = Console.ForegroundColor;
             Console.ForegroundColor = ConsoleColor.DarkGray;
             Console.WriteLine($"  [display limit: {maxLines}/{totalLines:N0} lines, width {lineWidth}]");
             Console.ResetColor();
@@ -749,10 +863,16 @@ public static class DisplayHelpers
 
     private static string TruncateLine(ReadOnlySpan<char> line, int maxWidth)
     {
-        if (line.Length <= maxWidth) return line.ToString();
+        if (line.Length <= maxWidth)
+        {
+            return line.ToString();
+        }
+
         return string.Concat(line[..(maxWidth - 1)], "\u2026");
     }
 
     public static string Truncate(this string value, int maxLength)
-        => value.Length <= maxLength ? value : value[..(maxLength - 1)] + "\u2026";
+    {
+        return value.Length <= maxLength ? value : value[..(maxLength - 1)] + "\u2026";
+    }
 }

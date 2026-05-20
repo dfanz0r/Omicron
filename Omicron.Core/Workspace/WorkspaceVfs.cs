@@ -7,18 +7,21 @@ namespace Omicron.Core.Workspace;
 // ============================================================
 
 /// <summary>
-/// A path within the workspace.
-/// Callers should obtain instances via IWorkspaceFileSystem.ResolveAsync
-/// to guarantee containment. Manually constructing with unsafe values
-/// will be rejected by VFS operations at the boundary.
+///     A path within the workspace.
+///     Callers should obtain instances via IWorkspaceFileSystem.ResolveAsync
+///     to guarantee containment. Manually constructing with unsafe values
+///     will be rejected by VFS operations at the boundary.
 /// </summary>
 public readonly record struct WorkspacePath(string Value)
 {
-    public override string ToString() => Value;
+    public override string ToString()
+    {
+        return Value;
+    }
 }
 
 /// <summary>
-/// Metadata for a file system entry.
+///     Metadata for a file system entry.
 /// </summary>
 public sealed record FileStat(
     string Path,
@@ -31,7 +34,7 @@ public sealed record FileStat(
 }
 
 /// <summary>
-/// A directory entry (file or subdirectory).
+///     A directory entry (file or subdirectory).
 /// </summary>
 public sealed record DirectoryEntry(
     string Name,
@@ -44,12 +47,11 @@ public sealed record DirectoryEntry(
 // ============================================================
 
 /// <summary>
-/// Host-backed virtual file system.
-/// All paths are workspace-relative and resolved with containment protection.
-/// Operations validate containment at the boundary even if a WorkspacePath
-/// was manually constructed with unsafe content.
-///
-/// Audit events are deferred (not yet emitted through IEventSink).
+///     Host-backed virtual file system.
+///     All paths are workspace-relative and resolved with containment protection.
+///     Operations validate containment at the boundary even if a WorkspacePath
+///     was manually constructed with unsafe content.
+///     Audit events are deferred (not yet emitted through IEventSink).
 /// </summary>
 public interface IWorkspaceFileSystem
 {
@@ -57,8 +59,8 @@ public interface IWorkspaceFileSystem
     string RootPath { get; }
 
     /// <summary>
-    /// Resolve a raw path to a contained WorkspacePath, or null if
-    /// the path escapes the workspace root or is invalid.
+    ///     Resolve a raw path to a contained WorkspacePath, or null if
+    ///     the path escapes the workspace root or is invalid.
     /// </summary>
     WorkspacePath? Resolve(string rawPath);
 
@@ -66,13 +68,20 @@ public interface IWorkspaceFileSystem
     ValueTask<FileStat?> StatAsync(WorkspacePath path, CancellationToken ct = default);
 
     /// <summary>List directory contents. Returns empty list if path is not a directory or doesn't exist.</summary>
-    ValueTask<IReadOnlyList<DirectoryEntry>> ReadDirectoryAsync(WorkspacePath path, CancellationToken ct = default);
+    ValueTask<IReadOnlyList<DirectoryEntry>> ReadDirectoryAsync(
+        WorkspacePath path,
+        CancellationToken ct = default);
 
     /// <summary>Read raw file bytes. Returns empty memory if file not found or unreadable.</summary>
-    ValueTask<ReadOnlyMemory<byte>> ReadFileAsync(WorkspacePath path, CancellationToken ct = default);
+    ValueTask<ReadOnlyMemory<byte>> ReadFileAsync(
+        WorkspacePath path,
+        CancellationToken ct = default);
 
     /// <summary>Write content to a file, creating parent directories if needed.</summary>
-    ValueTask WriteFileAsync(WorkspacePath path, ReadOnlyMemory<byte> content, CancellationToken ct = default);
+    ValueTask WriteFileAsync(
+        WorkspacePath path,
+        ReadOnlyMemory<byte> content,
+        CancellationToken ct = default);
 
     /// <summary>Delete a file or empty directory. Throws if directory is not empty.</summary>
     ValueTask DeleteAsync(WorkspacePath path, CancellationToken ct = default);
@@ -86,49 +95,39 @@ public interface IWorkspaceFileSystem
 // ============================================================
 
 /// <summary>
-/// IWorkspaceFileSystem backed by the local file system with path containment.
-/// Every method re-validates containment at the boundary, so even manually
-/// constructed WorkspacePath values with traversal segments are rejected.
+///     IWorkspaceFileSystem backed by the local file system with path containment.
+///     Every method re-validates containment at the boundary, so even manually
+///     constructed WorkspacePath values with traversal segments are rejected.
 /// </summary>
 public class HostWorkspaceFileSystem : IWorkspaceFileSystem
 {
-    public string RootPath { get; }
-
     public HostWorkspaceFileSystem(string rootPath)
     {
         RootPath = Path.GetFullPath(rootPath);
     }
 
-    /// <summary>
-    /// Convert a WorkspacePath to an absolute filesystem path.
-    /// Rejects paths that escape the workspace root.
-    /// </summary>
-    private string ToAbsolute(WorkspacePath path)
-    {
-        var combined = Path.Combine(RootPath, path.Value);
-        var fullPath = Path.GetFullPath(combined);
-
-        if (!fullPath.StartsWith(RootPath + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-            && !fullPath.Equals(RootPath, StringComparison.Ordinal))
-            throw new InvalidOperationException(
-                $"Path escapes workspace root: '{path.Value}' resolves to '{fullPath}' outside '{RootPath}'");
-
-        return fullPath;
-    }
+    public string RootPath { get; }
 
     public WorkspacePath? Resolve(string rawPath)
     {
-        if (rawPath is null) return null;
-
-        var normalized = rawPath.Replace('\\', '/').TrimStart('/');
-        var combined = Path.Combine(RootPath, normalized);
-        var fullPath = Path.GetFullPath(combined);
-
-        if (!fullPath.StartsWith(RootPath + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-            && !fullPath.Equals(RootPath, StringComparison.Ordinal))
+        if (rawPath is null)
+        {
             return null;
+        }
 
-        var relative = fullPath.Equals(RootPath, StringComparison.Ordinal)
+        string normalized = rawPath.Replace('\\', '/').TrimStart('/');
+        string combined = Path.Combine(RootPath, normalized);
+        string fullPath = Path.GetFullPath(combined);
+
+        if (
+            !fullPath.StartsWith(RootPath + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            && !fullPath.Equals(RootPath, StringComparison.Ordinal)
+        )
+        {
+            return null;
+        }
+
+        string relative = fullPath.Equals(RootPath, StringComparison.Ordinal)
             ? ""
             : fullPath[(RootPath.Length + 1)..];
 
@@ -137,21 +136,25 @@ public class HostWorkspaceFileSystem : IWorkspaceFileSystem
 
     public ValueTask<FileStat?> StatAsync(WorkspacePath path, CancellationToken ct = default)
     {
-        var abs = ToAbsolute(path); // may throw containment violation
+        string abs = ToAbsolute(path); // may throw containment violation
         try
         {
             if (File.Exists(abs))
             {
                 var fi = new FileInfo(abs);
-                return ValueTask.FromResult<FileStat?>(new FileStat(
-                    path.Value, fi.Length, fi.LastWriteTimeUtc, false, IsBinaryExtension(fi.Extension)));
+                return ValueTask.FromResult<FileStat?>(new FileStat(path.Value,
+                    fi.Length,
+                    fi.LastWriteTimeUtc,
+                    false,
+                    IsBinaryExtension(fi.Extension)));
             }
+
             if (Directory.Exists(abs))
             {
                 var di = new DirectoryInfo(abs);
-                return ValueTask.FromResult<FileStat?>(new FileStat(
-                    path.Value, 0, di.LastWriteTimeUtc, true, false));
+                return ValueTask.FromResult<FileStat?>(new FileStat(path.Value, 0, di.LastWriteTimeUtc, true, false));
             }
+
             return ValueTask.FromResult<FileStat?>(null);
         }
         catch (Exception ex) when (ex is not InvalidOperationException)
@@ -160,21 +163,25 @@ public class HostWorkspaceFileSystem : IWorkspaceFileSystem
         }
     }
 
-    public ValueTask<IReadOnlyList<DirectoryEntry>> ReadDirectoryAsync(WorkspacePath path, CancellationToken ct = default)
+    public ValueTask<IReadOnlyList<DirectoryEntry>> ReadDirectoryAsync(
+        WorkspacePath path,
+        CancellationToken ct = default)
     {
-        var abs = ToAbsolute(path); // may throw containment violation
+        string abs = ToAbsolute(path); // may throw containment violation
         try
         {
             if (!Directory.Exists(abs))
+            {
                 return ValueTask.FromResult<IReadOnlyList<DirectoryEntry>>(Array.Empty<DirectoryEntry>());
+            }
 
             var entries = new List<DirectoryEntry>();
-            foreach (var entry in Directory.EnumerateFileSystemEntries(abs))
+            foreach (string entry in Directory.EnumerateFileSystemEntries(abs))
             {
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    var name = Path.GetFileName(entry);
+                    string name = Path.GetFileName(entry);
 
                     if (Directory.Exists(entry))
                     {
@@ -187,12 +194,15 @@ public class HostWorkspaceFileSystem : IWorkspaceFileSystem
 
                         // Use content-based detection (more reliable than extension alone).
                         // Only count lines for text files; binary files show "(binary)" in listings.
-                        var isBinaryByExtension = IsBinaryExtension(fi.Extension);
-                        var isText = !isBinaryByExtension && TextEncodingDetector.IsTextFile(entry);
+                        bool isBinaryByExtension = IsBinaryExtension(fi.Extension);
+                        bool isText = !isBinaryByExtension && TextEncodingDetector.IsTextFile(entry);
 
                         if (isText)
                         {
-                            try { lineCount = File.ReadLines(entry).Count(); }
+                            try
+                            {
+                                lineCount = File.ReadLines(entry).Count();
+                            }
                             catch { }
                         }
 
@@ -204,6 +214,7 @@ public class HostWorkspaceFileSystem : IWorkspaceFileSystem
                     // Skip entries that can't be accessed (device files, permission errors, etc.)
                 }
             }
+
             return ValueTask.FromResult<IReadOnlyList<DirectoryEntry>>(entries);
         }
         catch (OperationCanceledException)
@@ -217,15 +228,19 @@ public class HostWorkspaceFileSystem : IWorkspaceFileSystem
         }
     }
 
-    public virtual async ValueTask<ReadOnlyMemory<byte>> ReadFileAsync(WorkspacePath path, CancellationToken ct = default)
+    public virtual async ValueTask<ReadOnlyMemory<byte>> ReadFileAsync(
+        WorkspacePath path,
+        CancellationToken ct = default)
     {
-        var abs = ToAbsolute(path); // may throw containment violation
+        string abs = ToAbsolute(path); // may throw containment violation
         try
         {
             if (!File.Exists(abs))
+            {
                 return ReadOnlyMemory<byte>.Empty;
+            }
 
-            var bytes = await File.ReadAllBytesAsync(abs, ct);
+            byte[] bytes = await File.ReadAllBytesAsync(abs, ct);
             return new ReadOnlyMemory<byte>(bytes);
         }
         catch
@@ -234,19 +249,24 @@ public class HostWorkspaceFileSystem : IWorkspaceFileSystem
         }
     }
 
-    public virtual async ValueTask WriteFileAsync(WorkspacePath path, ReadOnlyMemory<byte> content, CancellationToken ct = default)
+    public virtual async ValueTask WriteFileAsync(
+        WorkspacePath path,
+        ReadOnlyMemory<byte> content,
+        CancellationToken ct = default)
     {
-        var abs = ToAbsolute(path);
-        var dir = Path.GetDirectoryName(abs);
+        string abs = ToAbsolute(path);
+        string? dir = Path.GetDirectoryName(abs);
         if (dir is not null)
+        {
             Directory.CreateDirectory(dir);
+        }
 
         await File.WriteAllBytesAsync(abs, content.ToArray(), ct);
     }
 
     public virtual ValueTask DeleteAsync(WorkspacePath path, CancellationToken ct = default)
     {
-        var abs = ToAbsolute(path);
+        string abs = ToAbsolute(path);
         if (File.Exists(abs))
         {
             File.Delete(abs);
@@ -254,19 +274,28 @@ public class HostWorkspaceFileSystem : IWorkspaceFileSystem
         else if (Directory.Exists(abs))
         {
             if (Directory.EnumerateFileSystemEntries(abs).Any())
+            {
                 throw new InvalidOperationException($"Directory is not empty: {path.Value}");
+            }
+
             Directory.Delete(abs);
         }
+
         return ValueTask.CompletedTask;
     }
 
-    public virtual async ValueTask MoveAsync(WorkspacePath from, WorkspacePath to, CancellationToken ct = default)
+    public virtual async ValueTask MoveAsync(
+        WorkspacePath from,
+        WorkspacePath to,
+        CancellationToken ct = default)
     {
-        var absFrom = ToAbsolute(from);
-        var absTo = ToAbsolute(to);
-        var dir = Path.GetDirectoryName(absTo);
+        string absFrom = ToAbsolute(from);
+        string absTo = ToAbsolute(to);
+        string? dir = Path.GetDirectoryName(absTo);
         if (dir is not null)
+        {
             Directory.CreateDirectory(dir);
+        }
 
         if (File.Exists(absFrom))
         {
@@ -278,9 +307,30 @@ public class HostWorkspaceFileSystem : IWorkspaceFileSystem
         }
     }
 
+    /// <summary>
+    ///     Convert a WorkspacePath to an absolute filesystem path.
+    ///     Rejects paths that escape the workspace root.
+    /// </summary>
+    private string ToAbsolute(WorkspacePath path)
+    {
+        string combined = Path.Combine(RootPath, path.Value);
+        string fullPath = Path.GetFullPath(combined);
+
+        if (
+            !fullPath.StartsWith(RootPath + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            && !fullPath.Equals(RootPath, StringComparison.Ordinal)
+        )
+        {
+            throw new InvalidOperationException(
+                $"Path escapes workspace root: '{path.Value}' resolves to '{fullPath}' outside '{RootPath}'");
+        }
+
+        return fullPath;
+    }
+
     private static bool IsBinaryExtension(string extension)
     {
-        var ext = extension.ToLowerInvariant();
+        string ext = extension.ToLowerInvariant();
         return ext switch
         {
             ".dll" or ".exe" or ".so" or ".dylib" or ".node" => true,

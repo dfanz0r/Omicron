@@ -1,32 +1,53 @@
-using System.Runtime.ExceptionServices;
+using System.Text;
 
 namespace Omicron.Core.Rendering;
 
 /// <summary>
-/// Ensures terminal state (cursor visible, alternate screen exited, raw mode restored)
-/// is restored on crash, Ctrl+C, or normal exit. Hooks <see cref="AppDomain.ProcessExit"/>
-/// and <see cref="Console.CancelKeyPress"/>.
-///
-/// Singleton — one instance per process.
-/// Tracks the most recent backend for emergency recovery.
+///     Ensures terminal state (cursor visible, alternate screen exited, raw mode restored)
+///     is restored on crash, Ctrl+C, or normal exit. Hooks <see cref="AppDomain.ProcessExit" />
+///     and <see cref="Console.CancelKeyPress" />.
+///     Singleton — one instance per process.
+///     Tracks the most recent backend for emergency recovery.
 /// </summary>
 public sealed class TerminalLifecycle : IDisposable
 {
     private static readonly object _lock = new();
     private static TerminalLifecycle? _instance;
-    private bool _disposed;
 
     /// <summary>Track the most recent backend for crash recovery.</summary>
     private static ITerminalBackend? _lastBackend;
+
     private static readonly HashSet<TerminalScope.ScopeType> _activeScopeTypes = [];
 
     /// <summary>Lock for scope tracking.</summary>
     private static readonly object _trackLock = new();
 
+    private bool _disposed;
+
     private TerminalLifecycle()
     {
         AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
         Console.CancelKeyPress += OnCancelKeyPress;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
+        Console.CancelKeyPress -= OnCancelKeyPress;
+
+        EmergencyRestore();
+
+        lock (_lock)
+        {
+            _instance = null;
+        }
     }
 
     /// <summary>Initialize the global terminal lifecycle (idempotent).</summary>
@@ -39,6 +60,7 @@ public sealed class TerminalLifecycle : IDisposable
                 _instance ??= new TerminalLifecycle();
             }
         }
+
         return _instance;
     }
 
@@ -62,8 +84,8 @@ public sealed class TerminalLifecycle : IDisposable
     }
 
     /// <summary>
-    /// Force-restore all tracked backends to a safe terminal state.
-    /// Called on crash, Ctrl+C, or process exit.
+    ///     Force-restore all tracked backends to a safe terminal state.
+    ///     Called on crash, Ctrl+C, or process exit.
     /// </summary>
     public static void EmergencyRestore()
     {
@@ -71,7 +93,7 @@ public sealed class TerminalLifecycle : IDisposable
         {
             if (_lastBackend is not null)
             {
-                foreach (var type in _activeScopeTypes)
+                foreach (TerminalScope.ScopeType type in _activeScopeTypes)
                 {
                     string? exitSequence = type switch
                     {
@@ -86,7 +108,7 @@ public sealed class TerminalLifecycle : IDisposable
                     {
                         try
                         {
-                            var bytes = System.Text.Encoding.UTF8.GetBytes(exitSequence);
+                            byte[] bytes = Encoding.UTF8.GetBytes(exitSequence);
                             _lastBackend.Output.Write(bytes);
                             _lastBackend.Flush();
                         }
@@ -121,21 +143,5 @@ public sealed class TerminalLifecycle : IDisposable
     {
         EmergencyRestore();
         // Don't set e.Cancel = true — allow the process to terminate
-    }
-
-    public void Dispose()
-    {
-        if (_disposed) return;
-        _disposed = true;
-
-        AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
-        Console.CancelKeyPress -= OnCancelKeyPress;
-
-        EmergencyRestore();
-
-        lock (_lock)
-        {
-            _instance = null;
-        }
     }
 }

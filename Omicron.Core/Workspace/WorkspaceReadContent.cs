@@ -1,20 +1,21 @@
 namespace Omicron.Core.Workspace;
 
 /// <summary>
-/// Base record for workspace read results.
-/// Source-independent — can be produced from host VFS, transaction
-/// overlays, snapshots, remote workspaces, or staged edit views.
+///     Base record for workspace read results.
+///     Source-independent — can be produced from host VFS, transaction
+///     overlays, snapshots, remote workspaces, or staged edit views.
 /// </summary>
 public abstract record WorkspaceReadContent
 {
     /// <summary>The path as originally requested.</summary>
     public required string RequestedPath { get; init; }
+
     /// <summary>The resolved contained path, or null if resolution failed.</summary>
     public WorkspacePath? ResolvedPath { get; init; }
 }
 
 /// <summary>
-/// A text file with its lines loaded.
+///     A text file with its lines loaded.
 /// </summary>
 public sealed record WorkspaceFileContent : WorkspaceReadContent
 {
@@ -26,7 +27,7 @@ public sealed record WorkspaceFileContent : WorkspaceReadContent
 }
 
 /// <summary>
-/// A binary file (not displayable as text).
+///     A binary file (not displayable as text).
 /// </summary>
 public sealed record WorkspaceBinaryFileContent : WorkspaceReadContent
 {
@@ -34,7 +35,7 @@ public sealed record WorkspaceBinaryFileContent : WorkspaceReadContent
 }
 
 /// <summary>
-/// A directory listing.
+///     A directory listing.
 /// </summary>
 public sealed record WorkspaceDirectoryContent : WorkspaceReadContent
 {
@@ -45,7 +46,7 @@ public sealed record WorkspaceDirectoryContent : WorkspaceReadContent
 }
 
 /// <summary>
-/// A read error (not found, escapes root, unreadable, etc.).
+///     A read error (not found, escapes root, unreadable, etc.).
 /// </summary>
 public sealed record WorkspaceReadErrorContent : WorkspaceReadContent
 {
@@ -54,14 +55,12 @@ public sealed record WorkspaceReadErrorContent : WorkspaceReadContent
 }
 
 /// <summary>
-/// A single line from a text file.
+///     A single line from a text file.
 /// </summary>
-public sealed record WorkspaceTextLine(
-    int Number,
-    string Text);
+public sealed record WorkspaceTextLine(int Number, string Text);
 
 /// <summary>
-/// Kinds of read errors.
+///     Kinds of read errors.
 /// </summary>
 public enum WorkspaceReadErrorKind
 {

@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Buffers.Text;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -10,17 +9,100 @@ using Omicron.Core.Text;
 namespace Omicron.Core.Content;
 
 /// <summary>
-/// Immutable UTF-8 text with explicit ownership. Supports three storage modes:
-/// <see cref="Utf8StringStorageKind.Empty"/> (singleton), <see cref="Utf8StringStorageKind.ManagedArray"/>
-/// (owned <c>byte[]</c>), and <see cref="Utf8StringStorageKind.StaticLiteral"/> (trusted compiler-emitted
-/// <c>u8</c> literal data, zero-copy, internal construction only).
-/// String materialization via <see cref="ToString()"/> is explicit and lazy-cached.
+///     Immutable UTF-8 text with explicit ownership. Supports three storage modes:
+///     <see cref="Utf8StringStorageKind.Empty" /> (singleton), <see cref="Utf8StringStorageKind.ManagedArray" />
+///     (owned <c>byte[]</c>), and <see cref="Utf8StringStorageKind.StaticLiteral" /> (trusted compiler-emitted
+///     <c>u8</c> literal data, zero-copy, internal construction only).
+///     String materialization via <see cref="ToString()" /> is explicit and lazy-cached.
 /// </summary>
 [JsonConverter(typeof(Utf8StringJsonConverter))]
 public sealed class Utf8String : IEquatable<Utf8String>, IUtf8SpanFormattable
 {
-    /// <inheritdoc/>
-    bool IUtf8SpanFormattable.TryFormat(Span<byte> destination, out int written, ReadOnlySpan<char> format, IFormatProvider? provider)
+    // ManagedArray storage
+    private readonly byte[]? _managedBytes;
+
+    // StaticLiteral storage (pointer to module static data)
+    private readonly unsafe byte* _ptr;
+    private string? _decoded;
+
+    private Utf8String()
+    {
+        Kind = Utf8StringStorageKind.Empty;
+        unsafe
+        {
+            _ptr = null;
+        }
+
+        Length = 0;
+    }
+
+    private Utf8String(byte[] bytes, int length)
+    {
+        Kind = Utf8StringStorageKind.ManagedArray;
+        _managedBytes = bytes;
+        Length = length;
+        unsafe
+        {
+            _ptr = null;
+        }
+    }
+
+    private unsafe Utf8String(byte* ptr, int length)
+    {
+        Kind = Utf8StringStorageKind.StaticLiteral;
+        _ptr = ptr;
+        Length = length;
+    }
+
+    /// <summary>Empty singleton instance.</summary>
+    public static Utf8String Empty { get; } = new();
+
+    /// <summary>Storage kind of this instance.</summary>
+    public Utf8StringStorageKind Kind { get; }
+
+    /// <summary>Byte length of the UTF-8 content.</summary>
+    public int Length { get; }
+
+    /// <summary>Whether this instance contains no text.</summary>
+    public bool IsEmpty => Length == 0;
+
+    /// <summary>UTF-8 byte span of the text content. Zero-alloc.</summary>
+    public ReadOnlySpan<byte> Utf8Span =>
+        Kind switch
+        {
+            Utf8StringStorageKind.ManagedArray => new ReadOnlySpan<byte>(_managedBytes, 0, Length),
+            Utf8StringStorageKind.StaticLiteral => GetSpanFromLiteral(),
+            _ => ReadOnlySpan<byte>.Empty
+        };
+
+    // ── Equality ──
+
+    public bool Equals(Utf8String? other)
+    {
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+
+        if (other is null)
+        {
+            return false;
+        }
+
+        if (Length != other.Length)
+        {
+            return false;
+        }
+
+        return Utf8Span.SequenceEqual(other.Utf8Span);
+    }
+
+    /// <inheritdoc />
+    bool IUtf8SpanFormattable.TryFormat(
+        Span<byte> destination,
+        out int written,
+        ReadOnlySpan<char> format,
+        IFormatProvider? provider)
     {
         // Reject non-empty format specifiers — Utf8String cannot honor them.
         if (!format.IsEmpty)
@@ -29,71 +111,22 @@ public sealed class Utf8String : IEquatable<Utf8String>, IUtf8SpanFormattable
             return false;
         }
 
-        var span = Utf8Span;
+        ReadOnlySpan<byte> span = Utf8Span;
         if (span.Length > destination.Length)
         {
             written = 0;
             return false;
         }
+
         span.CopyTo(destination);
         written = span.Length;
         return true;
     }
 
-    /// <summary>Empty singleton instance.</summary>
-    public static Utf8String Empty { get; } = new();
-
-    private readonly Utf8StringStorageKind _kind;
-
-    // ManagedArray storage
-    private readonly byte[]? _managedBytes;
-
-    // StaticLiteral storage (pointer to module static data)
-    private readonly unsafe byte* _ptr;
-
-    private readonly int _length;
-    private string? _decoded;
-
-    private Utf8String()
+    private unsafe ReadOnlySpan<byte> GetSpanFromLiteral()
     {
-        _kind = Utf8StringStorageKind.Empty;
-        unsafe { _ptr = null; }
-        _length = 0;
+        return new ReadOnlySpan<byte>(_ptr, Length);
     }
-
-    private Utf8String(byte[] bytes, int length)
-    {
-        _kind = Utf8StringStorageKind.ManagedArray;
-        _managedBytes = bytes;
-        _length = length;
-        unsafe { _ptr = null; }
-    }
-
-    private unsafe Utf8String(byte* ptr, int length)
-    {
-        _kind = Utf8StringStorageKind.StaticLiteral;
-        _ptr = ptr;
-        _length = length;
-    }
-
-    /// <summary>Storage kind of this instance.</summary>
-    public Utf8StringStorageKind Kind => _kind;
-
-    /// <summary>Byte length of the UTF-8 content.</summary>
-    public int Length => _length;
-
-    /// <summary>Whether this instance contains no text.</summary>
-    public bool IsEmpty => _length == 0;
-
-    /// <summary>UTF-8 byte span of the text content. Zero-alloc.</summary>
-    public ReadOnlySpan<byte> Utf8Span => _kind switch
-    {
-        Utf8StringStorageKind.ManagedArray => new ReadOnlySpan<byte>(_managedBytes, 0, _length),
-        Utf8StringStorageKind.StaticLiteral => GetSpanFromLiteral(),
-        _ => ReadOnlySpan<byte>.Empty,
-    };
-
-    private unsafe ReadOnlySpan<byte> GetSpanFromLiteral() => new ReadOnlySpan<byte>(_ptr, _length);
 
     // ── Public factories ──
 
@@ -101,39 +134,51 @@ public sealed class Utf8String : IEquatable<Utf8String>, IUtf8SpanFormattable
     public static Utf8String FromString(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        if (text.Length == 0) return Empty;
-        var bytes = Encoding.UTF8.GetBytes(text);
+        if (text.Length == 0)
+        {
+            return Empty;
+        }
+
+        byte[] bytes = Encoding.UTF8.GetBytes(text);
         return new Utf8String(bytes, bytes.Length);
     }
 
     /// <summary>Create from a UTF-8 byte span. Copies into an owned managed array.</summary>
     public static Utf8String FromUtf8(ReadOnlySpan<byte> utf8)
     {
-        if (utf8.IsEmpty) return Empty;
-        var arr = new byte[utf8.Length];
+        if (utf8.IsEmpty)
+        {
+            return Empty;
+        }
+
+        byte[] arr = new byte[utf8.Length];
         utf8.CopyTo(arr);
         return new Utf8String(arr, arr.Length);
     }
 
     /// <summary>
-    /// Implicit conversion from a UTF-8 byte span for convenience-oriented call sites,
-    /// especially tests and other places already constructing a fresh <see cref="Utf8String"/>.
-    /// This conversion always copies the bytes into managed owned storage.
-    /// It is not the zero-copy static-literal path.
-    /// Prefer explicit factories in performance-sensitive or ownership-sensitive code.
+    ///     Implicit conversion from a UTF-8 byte span for convenience-oriented call sites,
+    ///     especially tests and other places already constructing a fresh <see cref="Utf8String" />.
+    ///     This conversion always copies the bytes into managed owned storage.
+    ///     It is not the zero-copy static-literal path.
+    ///     Prefer explicit factories in performance-sensitive or ownership-sensitive code.
     /// </summary>
-    public static implicit operator Utf8String(ReadOnlySpan<byte> utf8) => FromUtf8(utf8);
+    public static implicit operator Utf8String(ReadOnlySpan<byte> utf8)
+    {
+        return FromUtf8(utf8);
+    }
 
-    /// <summary>Create from a <see cref="Utf8ContentBuffer"/>. Copies content and disposes the buffer.</summary>
+    /// <summary>Create from a <see cref="Utf8ContentBuffer" />. Copies content and disposes the buffer.</summary>
     public static Utf8String FromBuffer(Utf8ContentBuffer buffer)
     {
-        var span = buffer.AsSpan();
+        ReadOnlySpan<byte> span = buffer.AsSpan();
         if (span.IsEmpty)
         {
             buffer.Dispose();
             return Empty;
         }
-        var arr = new byte[span.Length];
+
+        byte[] arr = new byte[span.Length];
         span.CopyTo(arr);
         buffer.Dispose();
         return new Utf8String(arr, arr.Length);
@@ -142,30 +187,44 @@ public sealed class Utf8String : IEquatable<Utf8String>, IUtf8SpanFormattable
     // ── Internal factories ──
 
     /// <summary>
-    /// Create from a pre-allocated owned byte array. Takes ownership — the array must not
-    /// be modified or shared after this call. <paramref name="length"/> may be less than
-    /// <c>bytes.Length</c> to allow oversized buffers (e.g. from ArrayPool).
+    ///     Create from a pre-allocated owned byte array. Takes ownership — the array must not
+    ///     be modified or shared after this call. <paramref name="length" /> may be less than
+    ///     <c>bytes.Length</c> to allow oversized buffers (e.g. from ArrayPool).
     /// </summary>
     internal static Utf8String FromOwnedArray(byte[] bytes, int length)
     {
         ArgumentNullException.ThrowIfNull(bytes);
         if (length < 0)
+        {
             throw new ArgumentOutOfRangeException(nameof(length), "length must be non-negative");
-        if (length == 0) return Empty;
+        }
+
+        if (length == 0)
+        {
+            return Empty;
+        }
+
         if (length > bytes.Length)
+        {
             throw new ArgumentException("length exceeds array length", nameof(length));
+        }
+
         return new Utf8String(bytes, length);
     }
 
     /// <summary>
-    /// Create from a trusted compiler-emitted <c>u8</c> literal. Zero-copy — the pointer
-    /// points to module static data that is valid for the process lifetime.
-    /// This MUST only be called with spans backed by true compile-time <c>u8</c> literals,
-    /// not spans backed by stack memory, movable managed arrays, or pooled buffers.
+    ///     Create from a trusted compiler-emitted <c>u8</c> literal. Zero-copy — the pointer
+    ///     points to module static data that is valid for the process lifetime.
+    ///     This MUST only be called with spans backed by true compile-time <c>u8</c> literals,
+    ///     not spans backed by stack memory, movable managed arrays, or pooled buffers.
     /// </summary>
     internal static unsafe Utf8String FromTrustedUtf8Literal(ReadOnlySpan<byte> literal)
     {
-        if (literal.IsEmpty) return Empty;
+        if (literal.IsEmpty)
+        {
+            return Empty;
+        }
+
         ref byte first = ref MemoryMarshal.GetReference(literal);
         byte* ptr = (byte*)Unsafe.AsPointer(ref first);
         return new Utf8String(ptr, literal.Length);
@@ -178,13 +237,16 @@ public sealed class Utf8String : IEquatable<Utf8String>, IUtf8SpanFormattable
     {
         if (_decoded is null)
         {
-            _decoded = _kind switch
+            _decoded = Kind switch
             {
-                Utf8StringStorageKind.ManagedArray => Encoding.UTF8.GetString(_managedBytes!, 0, _length),
+                Utf8StringStorageKind.ManagedArray => Encoding.UTF8.GetString(_managedBytes!,
+                    0,
+                    Length),
                 Utf8StringStorageKind.StaticLiteral => Encoding.UTF8.GetString(Utf8Span),
-                _ => string.Empty,
+                _ => string.Empty
             };
         }
+
         return _decoded;
     }
 
@@ -206,47 +268,47 @@ public sealed class Utf8String : IEquatable<Utf8String>, IUtf8SpanFormattable
         writer.WriteStringValue(Utf8Span);
     }
 
-    // ── Equality ──
-
-    public bool Equals(Utf8String? other)
+    public override bool Equals(object? obj)
     {
-        if (ReferenceEquals(this, other)) return true;
-        if (other is null) return false;
-        if (_length != other._length) return false;
-        return Utf8Span.SequenceEqual(other.Utf8Span);
+        return obj is Utf8String other && Equals(other);
     }
-
-    public override bool Equals(object? obj) => obj is Utf8String other && Equals(other);
 
     public override int GetHashCode()
     {
         var hash = new HashCode();
-        var span = Utf8Span;
+        ReadOnlySpan<byte> span = Utf8Span;
         hash.AddBytes(span);
         return hash.ToHashCode();
     }
 }
 
-/// <summary>Storage backing kind for <see cref="Utf8String"/>.</summary>
+/// <summary>Storage backing kind for <see cref="Utf8String" />.</summary>
 public enum Utf8StringStorageKind : byte
 {
     /// <summary>Zero-length singleton.</summary>
     Empty,
+
     /// <summary>Owned managed byte array.</summary>
     ManagedArray,
+
     /// <summary>Trusted compiler-emitted <c>u8</c> literal data (module static).</summary>
-    StaticLiteral,
+    StaticLiteral
 }
 
 /// <summary>
-/// JSON converter for <see cref="Utf8String"/>. Persists as a JSON string (not base64).
+///     JSON converter for <see cref="Utf8String" />. Persists as a JSON string (not base64).
 /// </summary>
 public sealed class Utf8StringJsonConverter : JsonConverter<Utf8String>
 {
-    public override Utf8String? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    public override Utf8String? Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
     {
         if (reader.TokenType == JsonTokenType.Null)
+        {
             return null;
+        }
 
         // Estimate upper bound: raw span length (escaped sequences shrink on decode).
         int maxLen = reader.HasValueSequence
@@ -254,15 +316,20 @@ public sealed class Utf8StringJsonConverter : JsonConverter<Utf8String>
             : reader.ValueSpan.Length;
 
         if (maxLen == 0)
+        {
             return Utf8String.Empty;
+        }
 
         byte[] buffer = ArrayPool<byte>.Shared.Rent(maxLen);
         try
         {
             int written = reader.CopyString(buffer.AsSpan());
             if (written == 0)
+            {
                 return Utf8String.Empty;
-            var bytes = new byte[written];
+            }
+
+            byte[] bytes = new byte[written];
             buffer.AsSpan(0, written).CopyTo(bytes);
             return Utf8String.FromOwnedArray(bytes, bytes.Length);
         }
@@ -272,18 +339,23 @@ public sealed class Utf8StringJsonConverter : JsonConverter<Utf8String>
         }
     }
 
-    public override void Write(Utf8JsonWriter writer, Utf8String value, JsonSerializerOptions options)
+    public override void Write(
+        Utf8JsonWriter writer,
+        Utf8String value,
+        JsonSerializerOptions options)
     {
         if (value is null)
         {
             writer.WriteNullValue();
             return;
         }
+
         if (value.IsEmpty)
         {
             writer.WriteStringValue("");
             return;
         }
+
         writer.WriteStringValue(value.Utf8Span);
     }
 }

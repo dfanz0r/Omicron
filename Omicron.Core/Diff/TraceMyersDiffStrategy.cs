@@ -1,8 +1,8 @@
 namespace Omicron.Core.Diff;
 
 /// <summary>
-/// Classic trace-based Myers O(ND) diff strategy.
-/// Good for small/medium inputs. Stores full V-array snapshots for each D level.
+///     Classic trace-based Myers O(ND) diff strategy.
+///     Good for small/medium inputs. Stores full V-array snapshots for each D level.
 /// </summary>
 internal sealed class TraceMyersDiffStrategy : ITextDiffStrategy
 {
@@ -15,7 +15,7 @@ internal sealed class TraceMyersDiffStrategy : ITextDiffStrategy
 
         for (int D = 0; D <= maxD; D++)
         {
-            var snapshot = new int[V.Length];
+            int[] snapshot = new int[V.Length];
             Array.Copy(V, snapshot, V.Length);
             trace.Add(snapshot);
 
@@ -23,19 +23,26 @@ internal sealed class TraceMyersDiffStrategy : ITextDiffStrategy
             {
                 int x;
                 if (k == -D || (k != D && V[k - 1 + offset] < V[k + 1 + offset]))
+                {
                     x = V[k + 1 + offset];
+                }
                 else
+                {
                     x = V[k - 1 + offset] + 1;
+                }
 
                 int y = x - k;
                 while (x < oldLen && y < newLen && oldCodes[x] == newCodes[y])
                 {
-                    x++; y++;
+                    x++;
+                    y++;
                 }
 
                 V[k + offset] = x;
                 if (x >= oldLen && y >= newLen)
+                {
                     return ReconstructPath(trace, D, oldLen, newLen, offset);
+                }
             }
         }
 
@@ -43,21 +50,30 @@ internal sealed class TraceMyersDiffStrategy : ITextDiffStrategy
     }
 
     private static List<TextDiffEdit> ReconstructPath(
-        List<int[]> trace, int maxD, int N, int M, int offset)
+        List<int[]> trace,
+        int maxD,
+        int N,
+        int M,
+        int offset)
     {
-        int x = N, y = M;
+        int x = N,
+            y = M;
         var edits = new List<(int oldPos, int newPos, bool isInsert)>();
 
         for (int D = maxD; D > 0; D--)
         {
-            var V = trace[D];
+            int[] V = trace[D];
             int k = x - y;
 
             bool fromDown;
             if (k == -D || (k != D && V[k - 1 + offset] < V[k + 1 + offset]))
+            {
                 fromDown = true;
+            }
             else
+            {
                 fromDown = false;
+            }
 
             int prevK = fromDown ? k + 1 : k - 1;
             int prevX = V[prevK + offset];
@@ -68,7 +84,11 @@ internal sealed class TraceMyersDiffStrategy : ITextDiffStrategy
                 x--;
                 y--;
             }
-            if (D == 0) break;
+
+            if (D == 0)
+            {
+                break;
+            }
 
             if (x == prevX)
             {
@@ -92,20 +112,34 @@ internal sealed class TraceMyersDiffStrategy : ITextDiffStrategy
         int i = 0;
         while (i < path.Count)
         {
-            var (op, np, isIns) = path[i];
+            (int op, int np, bool isIns) = path[i];
             if (isIns)
             {
                 int count = 1;
-                while (i + count < path.Count && path[i + count].oldPos == op && path[i + count].isInsert)
+                while (
+                    i + count < path.Count
+                    && path[i + count].oldPos == op
+                    && path[i + count].isInsert
+                )
+                {
                     count++;
+                }
+
                 result.Add(new TextDiffEdit(op, 0, np, count));
                 i += count;
             }
             else
             {
                 int count = 1;
-                while (i + count < path.Count && !path[i + count].isInsert && path[i + count].newPos == np)
+                while (
+                    i + count < path.Count
+                    && !path[i + count].isInsert
+                    && path[i + count].newPos == np
+                )
+                {
                     count++;
+                }
+
                 result.Add(new TextDiffEdit(op, count, np, 0));
                 i += count;
             }

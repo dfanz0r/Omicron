@@ -1,8 +1,8 @@
 namespace Omicron.Core.Diff;
 
 /// <summary>
-/// Divide-and-conquer Myers diff strategy.
-/// Finds the middle snake and recurses, avoiding full trace storage.
+///     Divide-and-conquer Myers diff strategy.
+///     Finds the middle snake and recurses, avoiding full trace storage.
 /// </summary>
 internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
 {
@@ -14,8 +14,12 @@ internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
     }
 
     private static void BuildEdits(
-        int[] oldArr, int[] newArr,
-        int oldLo, int oldHi, int newLo, int newHi,
+        int[] oldArr,
+        int[] newArr,
+        int oldLo,
+        int oldHi,
+        int newLo,
+        int newHi,
         List<TextDiffEdit> edits)
     {
         // Trim common prefix
@@ -35,19 +39,24 @@ internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
         int oldLen = oldHi - oldLo;
         int newLen = newHi - newLo;
 
-        if (oldLen == 0 && newLen == 0) return;
+        if (oldLen == 0 && newLen == 0)
+        {
+            return;
+        }
+
         if (oldLen == 0)
         {
             edits.Add(new TextDiffEdit(oldLo, 0, newLo, newLen));
             return;
         }
+
         if (newLen == 0)
         {
             edits.Add(new TextDiffEdit(oldLo, oldLen, newLo, 0));
             return;
         }
 
-        var (midOld, midNew) = FindMiddleSnake(oldArr, newArr, oldLo, oldHi, newLo, newHi);
+        (int midOld, int midNew) = FindMiddleSnake(oldArr, newArr, oldLo, oldHi, newLo, newHi);
 
         // Clamp midpoint to valid range
         midOld = Math.Clamp(midOld, oldLo, oldHi);
@@ -65,12 +74,16 @@ internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
     }
 
     /// <summary>
-    /// Find the middle snake using Myers' bidirectional algorithm.
-    /// Forward and backward passes each step by 2, preserving the parity of D.
+    ///     Find the middle snake using Myers' bidirectional algorithm.
+    ///     Forward and backward passes each step by 2, preserving the parity of D.
     /// </summary>
     private static (int midOld, int midNew) FindMiddleSnake(
-        int[] oldArr, int[] newArr,
-        int oldLo, int oldHi, int newLo, int newHi)
+        int[] oldArr,
+        int[] newArr,
+        int oldLo,
+        int oldHi,
+        int newLo,
+        int newHi)
     {
         int oldLen = oldHi - oldLo;
         int newLen = newHi - newLo;
@@ -78,7 +91,7 @@ internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
         int delta = oldLen - newLen;
         int kMax = maxD + Math.Abs(delta);
         int vSize = 2 * kMax + 5; // ample margin
-        int offset = kMax + 2;    // center at k=0
+        int offset = kMax + 2; // center at k=0
 
         int[] fwdV = new int[vSize];
         int[] revV = new int[vSize];
@@ -89,8 +102,8 @@ internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
             revV[i] = -1;
         }
 
-        fwdV[1 + offset] = oldLo;  // D=0, k=1 in forward coordinates
-        revV[1 + offset] = oldHi;  // D=0, k=1 in reverse coordinates
+        fwdV[1 + offset] = oldLo; // D=0, k=1 in forward coordinates
+        revV[1 + offset] = oldHi; // D=0, k=1 in reverse coordinates
 
         for (int D = 0; D <= maxD; D++)
         {
@@ -101,26 +114,36 @@ internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
 
                 int x;
                 if (k == -D || (k != D && fwdV[k - 1 + offset] < fwdV[k + 1 + offset]))
-                    x = fwdV[k + 1 + offset];    // vertical move (from k+1)
+                {
+                    x = fwdV[k + 1 + offset]; // vertical move (from k+1)
+                }
                 else
+                {
                     x = fwdV[k - 1 + offset] + 1; // horizontal move (from k-1)
+                }
 
                 int y = x - k;
-                int x0 = x, y0 = y;
+                int x0 = x,
+                    y0 = y;
 
                 // Follow diagonal snake
                 while (x < oldHi && y < newHi && oldArr[x] == newArr[y])
-                { x++; y++; }
+                {
+                    x++;
+                    y++;
+                }
 
                 fwdV[kIdx] = x;
 
                 // Check overlap with reverse pass (when D and delta have opposite parity)
-                if ((delta & 1) == 1)  // delta is odd
+                if ((delta & 1) == 1) // delta is odd
                 {
                     int revK = k - delta;
                     int revIdx = revK + offset;
                     if (revIdx >= 0 && revIdx < vSize && revV[revIdx] != -1 && revV[revIdx] <= x)
+                    {
                         return (x0, y0);
+                    }
                 }
             }
 
@@ -131,15 +154,22 @@ internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
 
                 int x;
                 if (k == -D || (k != D && revV[k - 1 + offset] > revV[k + 1 + offset]))
+                {
                     x = revV[k - 1 + offset] - 1; // horizontal reverse (from k-1)
+                }
                 else
-                    x = revV[k + 1 + offset];     // vertical reverse (from k+1)
+                {
+                    x = revV[k + 1 + offset]; // vertical reverse (from k+1)
+                }
 
                 int y = x - k;
 
                 // Follow diagonal backward
                 while (x > oldLo && y > newLo && oldArr[x - 1] == newArr[y - 1])
-                { x--; y--; }
+                {
+                    x--;
+                    y--;
+                }
 
                 revV[kIdx] = x;
 
@@ -149,7 +179,9 @@ internal sealed class DivideAndConquerMyersDiffStrategy : ITextDiffStrategy
                     int fwdK = k + delta;
                     int fwdIdx = fwdK + offset;
                     if (fwdIdx >= 0 && fwdIdx < vSize && fwdV[fwdIdx] != -1 && fwdV[fwdIdx] >= x)
+                    {
                         return (x, y);
+                    }
                 }
             }
         }

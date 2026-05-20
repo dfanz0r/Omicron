@@ -3,19 +3,55 @@ using Omicron.Core.Models;
 namespace Omicron.Core.Providers;
 
 /// <summary>
-/// Detects and assigns compatibility descriptors and API types for models
-/// based on provider name, model ID, and base URL patterns.
+///     Detects and assigns compatibility descriptors and API types for models
+///     based on provider name, model ID, and base URL patterns.
 /// </summary>
 public static class CompatibilityDetector
 {
     /// <summary>
-    /// Resolve the ApiType for a model based on its provider, model ID, and base URL.
-    /// Uses the same logic as OpenCodeProvider.ResolveApiType for OpenCode models,
-    /// and provider-specific rules for others.
+    ///     Known model IDs that use the Responses API (beyond the GPT-5+ prefix check).
     /// </summary>
-    public static ApiType ResolveApiType(string providerName, string modelId, string? baseUrl = null)
+    private static readonly HashSet<string> KnownResponsesModels = new(StringComparer.OrdinalIgnoreCase)
     {
-        var provider = providerName.ToLowerInvariant();
+        "gpt-5.5",
+        "gpt-5.5-pro",
+        "gpt-5.4",
+        "gpt-5.4-pro",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5.3-codex",
+        "gpt-5.3-codex-spark",
+        "gpt-5.2",
+        "gpt-5.2-codex",
+        "gpt-5.1",
+        "gpt-5.1-codex",
+        "gpt-5.1-codex-max",
+        "gpt-5.1-codex-mini",
+        "gpt-5",
+        "gpt-5-codex",
+        "gpt-5-nano",
+        "o1",
+        "o1-mini",
+        "o1-preview",
+        "o3",
+        "o3-mini",
+        "o4",
+        "o4-mini",
+        "o4-codex",
+        "o4-codex-mini"
+    };
+
+    /// <summary>
+    ///     Resolve the ApiType for a model based on its provider, model ID, and base URL.
+    ///     Uses the same logic as OpenCodeProvider.ResolveApiType for OpenCode models,
+    ///     and provider-specific rules for others.
+    /// </summary>
+    public static ApiType ResolveApiType(
+        string providerName,
+        string modelId,
+        string? baseUrl = null)
+    {
+        string provider = providerName.ToLowerInvariant();
 
         switch (provider)
         {
@@ -30,19 +66,28 @@ public static class CompatibilityDetector
                 // OpenRouter supports an OpenAI-compatible /responses endpoint,
                 // but Chat Completions remains the default for broad model compatibility.
                 // Route known Responses-capable model families to Responses.
-                if (IsResponsesApiModelId(modelId) ||
-                    baseUrl?.Contains("/responses", StringComparison.OrdinalIgnoreCase) == true)
+                if (
+                    IsResponsesApiModelId(modelId)
+                    || baseUrl?.Contains("/responses", StringComparison.OrdinalIgnoreCase) == true
+                )
+                {
                     return ApiType.OpenAiResponses;
+                }
+
                 return ApiType.OpenAiChat;
 
             case "openai":
                 // OpenAI: GPT-5+ and o-series models use Responses, others use Chat.
                 if (IsResponsesApiModelId(modelId))
+                {
                     return ApiType.OpenAiResponses;
+                }
 
                 // Check base URL: /responses endpoint indicates Responses API
                 if (baseUrl?.Contains("/responses", StringComparison.OrdinalIgnoreCase) == true)
+                {
                     return ApiType.OpenAiResponses;
+                }
 
                 return ApiType.OpenAiChat;
 
@@ -57,11 +102,11 @@ public static class CompatibilityDetector
     }
 
     /// <summary>
-    /// Resolve the ProviderCompatibility for a model based on its ApiType and provider.
+    ///     Resolve the ProviderCompatibility for a model based on its ApiType and provider.
     /// </summary>
     public static ProviderCompatibility ResolveCompatibility(ApiType apiType, string providerName)
     {
-        var provider = providerName.ToLowerInvariant();
+        string provider = providerName.ToLowerInvariant();
 
         return apiType switch
         {
@@ -84,11 +129,11 @@ public static class CompatibilityDetector
     }
 
     /// <summary>
-    /// Resolve the default ProviderStoragePolicy for a model.
+    ///     Resolve the default ProviderStoragePolicy for a model.
     /// </summary>
     public static ProviderStoragePolicy ResolveStoragePolicy(ApiType apiType, string providerName)
     {
-        var provider = providerName.ToLowerInvariant();
+        string provider = providerName.ToLowerInvariant();
 
         return apiType switch
         {
@@ -106,13 +151,15 @@ public static class CompatibilityDetector
     }
 
     /// <summary>
-    /// Determine whether a model supports stateful continuation based on its
-    /// ApiType and storage policy.
+    ///     Determine whether a model supports stateful continuation based on its
+    ///     ApiType and storage policy.
     /// </summary>
     public static bool SupportsStatefulContinuation(ApiType apiType, ProviderStoragePolicy policy)
     {
         if (apiType != ApiType.OpenAiResponses)
+        {
             return false;
+        }
 
         return policy switch
         {
@@ -123,34 +170,19 @@ public static class CompatibilityDetector
         };
     }
 
-    /// <summary>
-    /// Known model IDs that use the Responses API (beyond the GPT-5+ prefix check).
-    /// </summary>
-    private static readonly HashSet<string> KnownResponsesModels = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "gpt-5.5", "gpt-5.5-pro",
-        "gpt-5.4", "gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.4-nano",
-        "gpt-5.3-codex", "gpt-5.3-codex-spark",
-        "gpt-5.2", "gpt-5.2-codex",
-        "gpt-5.1", "gpt-5.1-codex", "gpt-5.1-codex-max", "gpt-5.1-codex-mini",
-        "gpt-5", "gpt-5-codex", "gpt-5-nano",
-        "o1", "o1-mini", "o1-preview",
-        "o3", "o3-mini",
-        "o4", "o4-mini",
-        "o4-codex", "o4-codex-mini"
-    };
-
     private static bool IsResponsesApiModelId(string modelId)
     {
-        var normalized = modelId;
-        var slashIndex = normalized.LastIndexOf('/');
+        string normalized = modelId;
+        int slashIndex = normalized.LastIndexOf('/');
         if (slashIndex >= 0 && slashIndex < normalized.Length - 1)
+        {
             normalized = normalized[(slashIndex + 1)..];
+        }
 
-        return normalized.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase) ||
-            normalized.StartsWith("o1-", StringComparison.OrdinalIgnoreCase) ||
-            normalized.StartsWith("o3-", StringComparison.OrdinalIgnoreCase) ||
-            normalized.StartsWith("o4-", StringComparison.OrdinalIgnoreCase) ||
-            KnownResponsesModels.Contains(normalized);
+        return normalized.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase)
+               || normalized.StartsWith("o1-", StringComparison.OrdinalIgnoreCase)
+               || normalized.StartsWith("o3-", StringComparison.OrdinalIgnoreCase)
+               || normalized.StartsWith("o4-", StringComparison.OrdinalIgnoreCase)
+               || KnownResponsesModels.Contains(normalized);
     }
 }

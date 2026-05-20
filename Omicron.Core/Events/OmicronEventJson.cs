@@ -5,49 +5,50 @@ using Omicron.Core.Content;
 namespace Omicron.Core.Events;
 
 /// <summary>
-/// Centralized JSON serializer options and helpers for Omicron events.
-/// All event serialization paths (store, session resume, fork, export)
-/// should use this class to ensure consistent converter registration and
-/// <c>$type</c> discriminator handling.
+///     Centralized JSON serializer options and helpers for Omicron events.
+///     All event serialization paths (store, session resume, fork, export)
+///     should use this class to ensure consistent converter registration and
+///     <c>$type</c> discriminator handling.
 /// </summary>
 internal static class OmicronEventJson
 {
-    private static readonly JsonSerializerOptions Options = CreateOptions();
+    /// <summary>Get the shared singleton options instance.</summary>
+    public static JsonSerializerOptions Default { get; } = CreateOptions();
 
-    /// <summary>Create a new <see cref="JsonSerializerOptions"/> with standard event settings.</summary>
+    /// <summary>Create a new <see cref="JsonSerializerOptions" /> with standard event settings.</summary>
     public static JsonSerializerOptions CreateOptions()
     {
         return new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
             WriteIndented = false,
-            Converters = { new ContentBlockJsonConverter() }
+            Converters =
+            {
+                new ContentBlockJsonConverter()
+            }
         };
     }
-
-    /// <summary>Get the shared singleton options instance.</summary>
-    public static JsonSerializerOptions Default => Options;
 
     // ============================================================
     // Event serialization helpers
     // ============================================================
 
-    /// <summary>Serialize an <see cref="OmicronEvent"/> to UTF-8 JSON bytes with a <c>$type</c> discriminator.</summary>
+    /// <summary>Serialize an <see cref="OmicronEvent" /> to UTF-8 JSON bytes with a <c>$type</c> discriminator.</summary>
     /// <remarks>
-    /// Injects the <c>$type</c> field via direct byte insertion into the
-    /// serialized concrete-typed JSON, avoiding a parse/rewrite round-trip.
+    ///     Injects the <c>$type</c> field via direct byte insertion into the
+    ///     serialized concrete-typed JSON, avoiding a parse/rewrite round-trip.
     /// </remarks>
     public static byte[] SerializeEvent(OmicronEvent evt)
     {
-        var typeName = OmicronEventRegistry.GetName(evt.GetType());
-        var evtType = evt.GetType();
+        string typeName = OmicronEventRegistry.GetName(evt.GetType());
+        Type evtType = evt.GetType();
 
         // Step 1: serialize the concrete event type to bytes
         // Output is like: { "envelope":..., "delta":..., ... }
         var payloadBuffer = new ArrayBufferWriter<byte>();
         using (var innerWriter = new Utf8JsonWriter(payloadBuffer))
         {
-            JsonSerializer.Serialize(innerWriter, evt, evtType, Options);
+            JsonSerializer.Serialize(innerWriter, evt, evtType, Default);
             innerWriter.Flush();
         }
 
@@ -67,14 +68,14 @@ internal static class OmicronEventJson
         //   raw payload:    { <concrete-props> }
         //   type interior:  "$type":"TypeName"
         //   result:         { "$type":"TypeName", <concrete-props> }
-        var payload = payloadBuffer.WrittenSpan;
-        var typeField = typeFieldBuffer.WrittenSpan;
+        ReadOnlySpan<byte> payload = payloadBuffer.WrittenSpan;
+        ReadOnlySpan<byte> typeField = typeFieldBuffer.WrittenSpan;
 
         // typeField = {"$type":"TypeName"}, we want just the interior
-        var typeInterior = typeField[1..^1];
+        ReadOnlySpan<byte> typeInterior = typeField[1..^1];
 
         // result = { + typeInterior + , + payload interior + }
-        var result = new byte[1 + typeInterior.Length + 1 + payload.Length - 2 + 1];
+        byte[] result = new byte[1 + typeInterior.Length + 1 + payload.Length - 2 + 1];
         int pos = 0;
         result[pos++] = (byte)'{';
         typeInterior.CopyTo(result.AsSpan(pos));
@@ -87,28 +88,36 @@ internal static class OmicronEventJson
         return result;
     }
 
-    /// <summary>Deserialize an <see cref="OmicronEvent"/> from UTF-8 JSON bytes with a <c>$type</c> discriminator.</summary>
+    /// <summary>Deserialize an <see cref="OmicronEvent" /> from UTF-8 JSON bytes with a <c>$type</c> discriminator.</summary>
     /// <remarks>
-    /// Returns <c>null</c> on malformed JSON, missing or unknown <c>$type</c>, or any
-    /// deserialization failure. Callers should log or report errors at their discretion.
+    ///     Returns <c>null</c> on malformed JSON, missing or unknown <c>$type</c>, or any
+    ///     deserialization failure. Callers should log or report errors at their discretion.
     /// </remarks>
     public static OmicronEvent? DeserializeEvent(ReadOnlyMemory<byte> json)
     {
         try
         {
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
+            JsonElement root = doc.RootElement;
 
-            if (!root.TryGetProperty("$type"u8, out var typeEl))
+            if (!root.TryGetProperty("$type"u8, out JsonElement typeEl))
+            {
                 return null;
+            }
 
-            var typeName = typeEl.GetString();
-            if (typeName is null) return null;
+            string? typeName = typeEl.GetString();
+            if (typeName is null)
+            {
+                return null;
+            }
 
-            var type = OmicronEventRegistry.GetType(typeName);
-            if (type is null) return null;
+            Type? type = OmicronEventRegistry.GetType(typeName);
+            if (type is null)
+            {
+                return null;
+            }
 
-            return (OmicronEvent?)JsonSerializer.Deserialize(json.Span, type, Options);
+            return (OmicronEvent?)JsonSerializer.Deserialize(json.Span, type, Default);
         }
         catch
         {

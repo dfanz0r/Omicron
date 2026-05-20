@@ -11,7 +11,7 @@ public class ProviderCompatibilityTests
     [Fact]
     public void ProviderCompatibility_OpenAiChat_Defaults()
     {
-        var compat = ProviderCompatibility.OpenAiChat;
+        ProviderCompatibility compat = ProviderCompatibility.OpenAiChat;
         Assert.True(compat.SupportsStreamingUsage);
         Assert.True(compat.SupportsReasoningEffort);
         Assert.True(compat.SupportsImages);
@@ -23,7 +23,7 @@ public class ProviderCompatibilityTests
     [Fact]
     public void ProviderCompatibility_OpenAiResponses_Defaults()
     {
-        var compat = ProviderCompatibility.OpenAiResponses;
+        ProviderCompatibility compat = ProviderCompatibility.OpenAiResponses;
         Assert.True(compat.SupportsStore);
         Assert.True(compat.SupportsStreamingUsage);
         Assert.True(compat.SupportsReasoningEffort);
@@ -34,7 +34,7 @@ public class ProviderCompatibilityTests
     [Fact]
     public void ProviderCompatibility_AnthropicMessages_Defaults()
     {
-        var compat = ProviderCompatibility.AnthropicMessages;
+        ProviderCompatibility compat = ProviderCompatibility.AnthropicMessages;
         Assert.False(compat.SupportsStreamingUsage);
         Assert.True(compat.SupportsImages);
         Assert.True(compat.RequiresAssistantAfterToolResult);
@@ -44,7 +44,7 @@ public class ProviderCompatibilityTests
     [Fact]
     public void ProviderCompatibility_GoogleGenAi_Defaults()
     {
-        var compat = ProviderCompatibility.GoogleGenAi;
+        ProviderCompatibility compat = ProviderCompatibility.GoogleGenAi;
         Assert.False(compat.SupportsStreamingUsage);
         Assert.True(compat.SupportsImages);
     }
@@ -86,8 +86,11 @@ public class ProviderStoragePolicyTests
     [Fact]
     public void ProviderTurnState_DefaultStoragePolicy()
     {
-        var key = ProviderStateKey.Create(
-            SessionId.New(), AgentId.New(), "test", "model", ApiType.OpenAiChat);
+        var key = ProviderStateKey.Create(SessionId.New(),
+            AgentId.New(),
+            "test",
+            "model",
+            ApiType.OpenAiChat);
         var state = new ProviderTurnState(key, null, null, null, null);
 
         Assert.Equal(ProviderStoragePolicy.AllowProviderStateNoStore, state.StoragePolicy);
@@ -96,8 +99,11 @@ public class ProviderStoragePolicyTests
     [Fact]
     public void ProviderTurnState_CustomStoragePolicy()
     {
-        var key = ProviderStateKey.Create(
-            SessionId.New(), AgentId.New(), "test", "model", ApiType.OpenAiChat);
+        var key = ProviderStateKey.Create(SessionId.New(),
+            AgentId.New(),
+            "test",
+            "model",
+            ApiType.OpenAiChat);
         var state = new ProviderTurnState(key, null, null, null, null)
         {
             StoragePolicy = ProviderStoragePolicy.PreferStateless
@@ -109,8 +115,11 @@ public class ProviderStoragePolicyTests
     [Fact]
     public void ProviderTurnState_IsStateful_WithPreviousResponseId()
     {
-        var key = ProviderStateKey.Create(
-            SessionId.New(), AgentId.New(), "test", "model", ApiType.OpenAiResponses);
+        var key = ProviderStateKey.Create(SessionId.New(),
+            AgentId.New(),
+            "test",
+            "model",
+            ApiType.OpenAiResponses);
         var state = new ProviderTurnState(key, "resp_123", null, null, null);
 
         Assert.True(state.IsStateful);
@@ -119,8 +128,11 @@ public class ProviderStoragePolicyTests
     [Fact]
     public void ProviderTurnState_IsStateful_WithoutPreviousResponseId()
     {
-        var key = ProviderStateKey.Create(
-            SessionId.New(), AgentId.New(), "test", "model", ApiType.OpenAiResponses);
+        var key = ProviderStateKey.Create(SessionId.New(),
+            AgentId.New(),
+            "test",
+            "model",
+            ApiType.OpenAiResponses);
         var state = new ProviderTurnState(key, null, null, null, null);
 
         Assert.False(state.IsStateful);
@@ -129,11 +141,14 @@ public class ProviderStoragePolicyTests
     [Fact]
     public void ProviderTurnState_ClearContinuation()
     {
-        var key = ProviderStateKey.Create(
-            SessionId.New(), AgentId.New(), "test", "model", ApiType.OpenAiResponses);
+        var key = ProviderStateKey.Create(SessionId.New(),
+            AgentId.New(),
+            "test",
+            "model",
+            ApiType.OpenAiResponses);
         var state = new ProviderTurnState(key, "resp_123", "conv_456", null, null);
 
-        var cleared = state.ClearContinuation();
+        ProviderTurnState cleared = state.ClearContinuation();
 
         Assert.Null(cleared.PreviousResponseId);
         Assert.Null(cleared.ConversationId);
@@ -145,8 +160,11 @@ public class ProviderStoragePolicyTests
     [Fact]
     public void ProviderTurnState_CanFork_ReturnsFalse()
     {
-        var key = ProviderStateKey.Create(
-            SessionId.New(), AgentId.New(), "test", "model", ApiType.OpenAiResponses);
+        var key = ProviderStateKey.Create(SessionId.New(),
+            AgentId.New(),
+            "test",
+            "model",
+            ApiType.OpenAiResponses);
         var state = new ProviderTurnState(key, "resp_123", null, null, null);
 
         Assert.False(state.CanFork());
@@ -165,7 +183,7 @@ public class ModelCompatibilityTests
             ApiType = ApiType.OpenAiChat
         };
 
-        var compat = model.GetEffectiveCompatibility();
+        ProviderCompatibility compat = model.GetEffectiveCompatibility();
         Assert.True(compat.SupportsStreamingUsage);
         Assert.True(compat.SupportsImages);
     }
@@ -180,7 +198,7 @@ public class ModelCompatibilityTests
             ApiType = ApiType.OpenAiResponses
         };
 
-        var compat = model.GetEffectiveCompatibility();
+        ProviderCompatibility compat = model.GetEffectiveCompatibility();
         Assert.True(compat.SupportsStore);
     }
 
@@ -194,7 +212,7 @@ public class ModelCompatibilityTests
             ApiType = ApiType.AnthropicMessages
         };
 
-        var compat = model.GetEffectiveCompatibility();
+        ProviderCompatibility compat = model.GetEffectiveCompatibility();
         Assert.True(compat.RequiresAssistantAfterToolResult);
         Assert.Equal(ToolCallIdFormat.Anthropic, compat.ToolCallIdFormat);
     }
@@ -216,7 +234,7 @@ public class ModelCompatibilityTests
             Compatibility = custom
         };
 
-        var compat = model.GetEffectiveCompatibility();
+        ProviderCompatibility compat = model.GetEffectiveCompatibility();
         Assert.False(compat.SupportsStore);
         Assert.False(compat.SupportsImages);
     }

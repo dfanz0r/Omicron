@@ -5,16 +5,23 @@ namespace Omicron.Core.Workspace;
 // ============================================================
 
 /// <summary>
-/// Unique identifier for a workspace transaction.
+///     Unique identifier for a workspace transaction.
 /// </summary>
 public readonly record struct WorkspaceTransactionId(Guid Value)
 {
-    public static WorkspaceTransactionId New() => new(Guid.NewGuid());
-    public override string ToString() => Value.ToString("N");
+    public static WorkspaceTransactionId New()
+    {
+        return new WorkspaceTransactionId(Guid.NewGuid());
+    }
+
+    public override string ToString()
+    {
+        return Value.ToString("N");
+    }
 }
 
 /// <summary>
-/// Kind of change in a workspace file diff.
+///     Kind of change in a workspace file diff.
 /// </summary>
 public enum WorkspaceChangeKind
 {
@@ -25,7 +32,7 @@ public enum WorkspaceChangeKind
 }
 
 /// <summary>
-/// Diff result for a single file in a workspace transaction.
+///     Diff result for a single file in a workspace transaction.
 /// </summary>
 public sealed record WorkspaceFileDiff(
     WorkspacePath Path,
@@ -36,7 +43,7 @@ public sealed record WorkspaceFileDiff(
     bool IsDirectory);
 
 /// <summary>
-/// Complete diff result for a workspace transaction.
+///     Complete diff result for a workspace transaction.
 /// </summary>
 public sealed record WorkspaceDiff(
     WorkspaceTransactionId TransactionId,

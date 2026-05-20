@@ -8,24 +8,24 @@ namespace Omicron.Core.Rendering;
 public enum GradientDirection
 {
     Horizontal,
-    Vertical,
+    Vertical
 }
 
 /// <summary>A single stop in a multi-stop color gradient.</summary>
 public readonly record struct ColorStop(double Position, byte R, byte G, byte B);
 
 /// <summary>
-/// Fills a rectangular region with a linear multi-stop gradient, or draws
-/// text with a per-character foreground gradient while preserving existing
-/// backgrounds. Works directly through <see cref="RenderContext"/> so
-/// clipping is respected.
+///     Fills a rectangular region with a linear multi-stop gradient, or draws
+///     text with a per-character foreground gradient while preserving existing
+///     backgrounds. Works directly through <see cref="RenderContext" /> so
+///     clipping is respected.
 /// </summary>
 public static class GradientHelper
 {
     /// <summary>
-    /// Fill <paramref name="bounds"/> with a linear gradient using an arbitrary
-    /// number of color stops. Each cell inside the clipped region gets its own
-    /// interpolated background colour.
+    ///     Fill <paramref name="bounds" /> with a linear gradient using an arbitrary
+    ///     number of color stops. Each cell inside the clipped region gets its own
+    ///     interpolated background colour.
     /// </summary>
     public static void Fill(
         RenderContext context,
@@ -33,12 +33,18 @@ public static class GradientHelper
         GradientDirection direction,
         ReadOnlySpan<ColorStop> stops)
     {
-        if (stops.Length == 0) return;
+        if (stops.Length == 0)
+        {
+            return;
+        }
 
-        var clipped = bounds.Intersect(context.Clip);
-        if (clipped.Width <= 0 || clipped.Height <= 0) return;
+        Rect clipped = bounds.Intersect(context.Clip);
+        if (clipped.Width <= 0 || clipped.Height <= 0)
+        {
+            return;
+        }
 
-        var cells = context.Frame.Cells;
+        RenderCell[] cells = context.Frame.Cells;
         int frameWidth = context.Frame.Width;
 
         for (int row = clipped.Y; row < clipped.Bottom; row++)
@@ -46,16 +52,19 @@ public static class GradientHelper
             int baseIdx = row * frameWidth + clipped.X;
             for (int col = clipped.X; col < clipped.Right; col++)
             {
-                double t = direction == GradientDirection.Horizontal
-                    ? (bounds.Width > 1 ? (col - bounds.X) / (double)(bounds.Width - 1) : 0.0)
-                    : (bounds.Height > 1 ? (row - bounds.Y) / (double)(bounds.Height - 1) : 0.0);
+                double t =
+                    direction == GradientDirection.Horizontal
+                        ? bounds.Width > 1 ? (col - bounds.X) / (double)(bounds.Width - 1) : 0.0
+                        : bounds.Height > 1
+                            ? (row - bounds.Y) / (double)(bounds.Height - 1)
+                            : 0.0;
 
-                var (r, g, b) = Sample(stops, t);
+                (byte r, byte g, byte b) = Sample(stops, t);
                 cells[baseIdx++] = new RenderCell
                 {
                     Glyph = GlyphRef.Ascii((byte)' '),
                     Width = 1,
-                    Style = new TextStyle(255, 255, 255, r, g, b, false, false, false),
+                    Style = new TextStyle(255, 255, 255, r, g, b, false, false, false)
                 };
             }
         }
@@ -76,13 +85,20 @@ public static class GradientHelper
     }
 
     /// <summary>
-    /// Sample the gradient at a normalized position <paramref name="t"/> (0.0–1.0).
-    /// Returns the interpolated RGB colour.
+    ///     Sample the gradient at a normalized position <paramref name="t" /> (0.0–1.0).
+    ///     Returns the interpolated RGB colour.
     /// </summary>
     public static (byte R, byte G, byte B) Sample(ReadOnlySpan<ColorStop> stops, double t)
     {
-        if (stops.Length == 0) return (0, 0, 0);
-        if (stops.Length == 1) return (stops[0].R, stops[0].G, stops[0].B);
+        if (stops.Length == 0)
+        {
+            return (0, 0, 0);
+        }
+
+        if (stops.Length == 1)
+        {
+            return (stops[0].R, stops[0].G, stops[0].B);
+        }
 
         t = Math.Clamp(t, 0.0, 1.0);
 
@@ -91,66 +107,95 @@ public static class GradientHelper
         {
             if (t <= stops[i].Position)
             {
-                var prev = stops[i - 1];
-                var next = stops[i];
+                ColorStop prev = stops[i - 1];
+                ColorStop next = stops[i];
                 double range = next.Position - prev.Position;
-                if (range <= 0) return (prev.R, prev.G, prev.B);
+                if (range <= 0)
+                {
+                    return (prev.R, prev.G, prev.B);
+                }
+
                 double localT = (t - prev.Position) / range;
                 return Lerp((prev.R, prev.G, prev.B), (next.R, next.G, next.B), localT);
             }
         }
 
         // Past the last stop
-        var last = stops[stops.Length - 1];
+        ColorStop last = stops[stops.Length - 1];
         return (last.R, last.G, last.B);
     }
 
     /// <summary>
-    /// Draw UTF-8 text at (<paramref name="x"/>, <paramref name="y"/>) with a
-    /// per-character foreground gradient. Existing cell backgrounds are preserved.
+    ///     Draw UTF-8 text at (<paramref name="x" />, <paramref name="y" />) with a
+    ///     per-character foreground gradient. Existing cell backgrounds are preserved.
     /// </summary>
     /// <param name="gradientDomain">
-    /// The rectangle that defines the 0.0 → 1.0 gradient range.
-    /// If null, the gradient domain defaults to the text's own bounding box
-    /// (width = byte count, height = 1).
+    ///     The rectangle that defines the 0.0 → 1.0 gradient range.
+    ///     If null, the gradient domain defaults to the text's own bounding box
+    ///     (width = byte count, height = 1).
     /// </param>
     public static void DrawText(
         RenderContext context,
-        int x, int y,
+        int x,
+        int y,
         ReadOnlySpan<byte> utf8,
         GradientDirection direction,
         ReadOnlySpan<ColorStop> stops,
         Rect? gradientDomain = null)
     {
-        if (stops.Length == 0 || utf8.IsEmpty) return;
-        if (y < context.Clip.Y || y >= context.Clip.Bottom) return;
-        if (x >= context.Clip.Right) return;
+        if (stops.Length == 0 || utf8.IsEmpty)
+        {
+            return;
+        }
+
+        if (y < context.Clip.Y || y >= context.Clip.Bottom)
+        {
+            return;
+        }
+
+        if (x >= context.Clip.Right)
+        {
+            return;
+        }
 
         int maxWidth = context.Clip.Right - x;
-        if (maxWidth <= 0) return;
+        if (maxWidth <= 0)
+        {
+            return;
+        }
 
-        var domain = gradientDomain ?? new Rect(x, y, utf8.Length, 1);
-        var cells = context.Frame.Cells;
+        Rect domain = gradientDomain ?? new Rect(x, y, utf8.Length, 1);
+        RenderCell[] cells = context.Frame.Cells;
         int frameWidth = context.Frame.Width;
 
-        var clusters = GraphemeSegmenter.SegmentUtf8(utf8);
+        List<GraphemeCluster> clusters = GraphemeSegmenter.SegmentUtf8(utf8);
         int currentCol = x;
 
-        foreach (var cluster in clusters)
+        foreach (GraphemeCluster cluster in clusters)
         {
-            if (currentCol >= context.Clip.Right) break;
+            if (currentCol >= context.Clip.Right)
+            {
+                break;
+            }
 
-            int w = CellWidthCalculator.GetWidth(
-                utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength));
-            if (w == 0) continue;
+            int w = CellWidthCalculator.GetWidth(utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength));
+            if (w == 0)
+            {
+                continue;
+            }
 
-            double t = direction == GradientDirection.Horizontal
-                ? (domain.Width > 1 ? (currentCol - domain.X) / (double)(domain.Width - 1) : 0.0)
-                : (domain.Height > 1 ? (y - domain.Y) / (double)(domain.Height - 1) : 0.0);
+            double t =
+                direction == GradientDirection.Horizontal
+                    ? domain.Width > 1
+                        ? (currentCol - domain.X) / (double)(domain.Width - 1)
+                        : 0.0
+                    : domain.Height > 1
+                        ? (y - domain.Y) / (double)(domain.Height - 1)
+                        : 0.0;
 
-            var (r, g, b) = Sample(stops, t);
+            (byte r, byte g, byte b) = Sample(stops, t);
             int idx = y * frameWidth + currentCol;
-            var existingBg = cells[idx].Style;
+            TextStyle existingBg = cells[idx].Style;
 
             // ASCII fast path
             if (cluster.ByteLength == 1 && utf8[(int)cluster.ByteOffset] < 0x80)
@@ -159,18 +204,34 @@ public static class GradientHelper
                 {
                     Glyph = GlyphRef.Ascii(utf8[(int)cluster.ByteOffset]),
                     Width = (byte)Math.Min(w, 2),
-                    Style = new TextStyle(r, g, b, existingBg.BgR, existingBg.BgG, existingBg.BgB, false, false, false),
+                    Style = new TextStyle(r,
+                        g,
+                        b,
+                        existingBg.BgR,
+                        existingBg.BgG,
+                        existingBg.BgB,
+                        false,
+                        false,
+                        false)
                 };
             }
             else
             {
-                var glyphBytes = utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength);
+                ReadOnlySpan<byte> glyphBytes = utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength);
                 int internId = context.Frame.GlyphTable.Intern(glyphBytes);
                 cells[idx] = new RenderCell
                 {
                     Glyph = GlyphRef.Interned(internId),
                     Width = (byte)Math.Min(w, 2),
-                    Style = new TextStyle(r, g, b, existingBg.BgR, existingBg.BgG, existingBg.BgB, false, false, false),
+                    Style = new TextStyle(r,
+                        g,
+                        b,
+                        existingBg.BgR,
+                        existingBg.BgG,
+                        existingBg.BgB,
+                        false,
+                        false,
+                        false)
                 };
             }
 
@@ -181,7 +242,15 @@ public static class GradientHelper
                 {
                     Glyph = GlyphRef.Ascii((byte)' '),
                     Width = 0,
-                    Style = new TextStyle(r, g, b, existingBg.BgR, existingBg.BgG, existingBg.BgB, false, false, false),
+                    Style = new TextStyle(r,
+                        g,
+                        b,
+                        existingBg.BgR,
+                        existingBg.BgG,
+                        existingBg.BgB,
+                        false,
+                        false,
+                        false)
                 };
             }
 
@@ -190,12 +259,13 @@ public static class GradientHelper
     }
 
     /// <summary>
-    /// Draw a string at (<paramref name="x"/>, <paramref name="y"/>) with a
-    /// per-character foreground gradient. Existing cell backgrounds are preserved.
+    ///     Draw a string at (<paramref name="x" />, <paramref name="y" />) with a
+    ///     per-character foreground gradient. Existing cell backgrounds are preserved.
     /// </summary>
     public static void DrawText(
         RenderContext context,
-        int x, int y,
+        int x,
+        int y,
         string text,
         GradientDirection direction,
         ReadOnlySpan<ColorStop> stops,
@@ -207,7 +277,8 @@ public static class GradientHelper
     /// <summary>Convenience overload: two-stop foreground gradient on text.</summary>
     public static void DrawText(
         RenderContext context,
-        int x, int y,
+        int x,
+        int y,
         string text,
         GradientDirection direction,
         (byte R, byte G, byte B) start,
@@ -221,55 +292,72 @@ public static class GradientHelper
     }
 
     /// <summary>
-    /// Draw text with a single uniform foreground colour, preserving existing
-    /// backgrounds. No gradient — just a constant colour across the whole string.
+    ///     Draw text with a single uniform foreground colour, preserving existing
+    ///     backgrounds. No gradient — just a constant colour across the whole string.
     /// </summary>
     public static void DrawText(
         RenderContext context,
-        int x, int y,
+        int x,
+        int y,
         string text,
         (byte R, byte G, byte B) foreground)
     {
         Span<ColorStop> stops = stackalloc ColorStop[1];
         stops[0] = new ColorStop(0.0, foreground.R, foreground.G, foreground.B);
-        DrawText(context, x, y, text, GradientDirection.Horizontal, stops, null);
+        DrawText(context, x, y, text, GradientDirection.Horizontal, stops);
     }
 
     /// <summary>
-    /// Draw UTF-8 text at (<paramref name="x"/>, <paramref name="y"/>) by
-    /// changing only the glyph and width, preserving the existing cell style
-    /// (foreground and background colours). Useful when the background and
-    /// foreground gradients have already been filled (e.g. by
-    /// <see cref="Fill"/>) and only the glyph needs to be stamped on top.
+    ///     Draw UTF-8 text at (<paramref name="x" />, <paramref name="y" />) by
+    ///     changing only the glyph and width, preserving the existing cell style
+    ///     (foreground and background colours). Useful when the background and
+    ///     foreground gradients have already been filled (e.g. by
+    ///     <see cref="Fill" />) and only the glyph needs to be stamped on top.
     /// </summary>
-    public static void DrawGlyphsOnly(
-        RenderContext context,
-        int x, int y,
-        ReadOnlySpan<byte> utf8)
+    public static void DrawGlyphsOnly(RenderContext context, int x, int y, ReadOnlySpan<byte> utf8)
     {
-        if (utf8.IsEmpty) return;
-        if (y < context.Clip.Y || y >= context.Clip.Bottom) return;
-        if (x >= context.Clip.Right) return;
+        if (utf8.IsEmpty)
+        {
+            return;
+        }
+
+        if (y < context.Clip.Y || y >= context.Clip.Bottom)
+        {
+            return;
+        }
+
+        if (x >= context.Clip.Right)
+        {
+            return;
+        }
 
         int maxWidth = context.Clip.Right - x;
-        if (maxWidth <= 0) return;
+        if (maxWidth <= 0)
+        {
+            return;
+        }
 
-        var cells = context.Frame.Cells;
+        RenderCell[] cells = context.Frame.Cells;
         int frameWidth = context.Frame.Width;
 
-        var clusters = GraphemeSegmenter.SegmentUtf8(utf8);
+        List<GraphemeCluster> clusters = GraphemeSegmenter.SegmentUtf8(utf8);
         int currentCol = x;
 
-        foreach (var cluster in clusters)
+        foreach (GraphemeCluster cluster in clusters)
         {
-            if (currentCol >= context.Clip.Right) break;
+            if (currentCol >= context.Clip.Right)
+            {
+                break;
+            }
 
-            int w = CellWidthCalculator.GetWidth(
-                utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength));
-            if (w == 0) continue;
+            int w = CellWidthCalculator.GetWidth(utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength));
+            if (w == 0)
+            {
+                continue;
+            }
 
             int idx = y * frameWidth + currentCol;
-            var existingStyle = cells[idx].Style;
+            TextStyle existingStyle = cells[idx].Style;
 
             // ASCII fast path
             if (cluster.ByteLength == 1 && utf8[(int)cluster.ByteOffset] < 0x80)
@@ -278,18 +366,18 @@ public static class GradientHelper
                 {
                     Glyph = GlyphRef.Ascii(utf8[(int)cluster.ByteOffset]),
                     Width = (byte)Math.Min(w, 2),
-                    Style = existingStyle,
+                    Style = existingStyle
                 };
             }
             else
             {
-                var glyphBytes = utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength);
+                ReadOnlySpan<byte> glyphBytes = utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength);
                 int internId = context.Frame.GlyphTable.Intern(glyphBytes);
                 cells[idx] = new RenderCell
                 {
                     Glyph = GlyphRef.Interned(internId),
                     Width = (byte)Math.Min(w, 2),
-                    Style = existingStyle,
+                    Style = existingStyle
                 };
             }
 
@@ -300,7 +388,7 @@ public static class GradientHelper
                 {
                     Glyph = GlyphRef.Ascii((byte)' '),
                     Width = 0,
-                    Style = existingStyle,
+                    Style = existingStyle
                 };
             }
 
@@ -309,10 +397,7 @@ public static class GradientHelper
     }
 
     /// <summary>Convenience overload: draw a string, preserving existing style.</summary>
-    public static void DrawGlyphsOnly(
-        RenderContext context,
-        int x, int y,
-        string text)
+    public static void DrawGlyphsOnly(RenderContext context, int x, int y, string text)
     {
         DrawGlyphsOnly(context, x, y, Encoding.UTF8.GetBytes(text));
     }
@@ -326,6 +411,7 @@ public static class GradientHelper
         return (
             (byte)(a.R + (b.R - a.R) * t),
             (byte)(a.G + (b.G - a.G) * t),
-            (byte)(a.B + (b.B - a.B) * t));
+            (byte)(a.B + (b.B - a.B) * t)
+        );
     }
 }

@@ -1,41 +1,29 @@
 using System.Diagnostics;
 using System.Threading.Channels;
 using Omicron.Core.Rendering;
-using Omicron.Core.Text;
 
 namespace Omicron.CLI.Tui;
 
 /// <summary>
-/// Minimal fullscreen TUI application shell. Owns the terminal backend,
-/// differential renderer, and event/render loop. Frame-paced rendering
-/// with configurable target FPS.
+///     Minimal fullscreen TUI application shell. Owns the terminal backend,
+///     differential renderer, and event/render loop. Frame-paced rendering
+///     with configurable target FPS.
 /// </summary>
 public sealed class TuiShell : IDisposable
 {
-    private readonly ITerminalBackend _backend;
-    private readonly DifferentialRenderer _renderer;
-    private TerminalFrame _currentFrame;
     private readonly Channel<bool> _renderSignal;
+    private readonly DifferentialRenderer _renderer;
 
     private CancellationTokenSource _cts;
     private bool _disposed;
 
-    /// <summary>Target FPS for frame pacing. 0 = unlimited.</summary>
-    public int TargetFps { get; set; } = 60;
-
     private long _lastRenderTicks;
-
-    /// <summary>The terminal backend used by this shell.</summary>
-    public ITerminalBackend Backend => _backend;
-
-    /// <summary>The current frame buffer (draw into this).</summary>
-    public TerminalFrame CurrentFrame => _currentFrame;
 
     public TuiShell(ITerminalBackend backend)
     {
-        _backend = backend;
+        Backend = backend;
         _renderer = new DifferentialRenderer(backend.Size.Width, backend.Size.Height);
-        _currentFrame = new TerminalFrame(backend.Size.Width, backend.Size.Height);
+        CurrentFrame = new TerminalFrame(backend.Size.Width, backend.Size.Height);
         _renderSignal = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
         {
             FullMode = BoundedChannelFullMode.DropOldest
@@ -43,13 +31,33 @@ public sealed class TuiShell : IDisposable
         _cts = new CancellationTokenSource();
     }
 
+    /// <summary>Target FPS for frame pacing. 0 = unlimited.</summary>
+    public int TargetFps { get; set; } = 60;
+
+    /// <summary>The terminal backend used by this shell.</summary>
+    public ITerminalBackend Backend { get; }
+
+    /// <summary>The current frame buffer (draw into this).</summary>
+    public TerminalFrame CurrentFrame { get; }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _cts.Cancel();
+        _cts.Dispose();
+        Backend.Dispose();
+    }
+
     /// <summary>
-    /// Run the main event/render loop until cancellation.
+    ///     Run the main event/render loop until cancellation.
     /// </summary>
     /// <param name="onEvent">Called for each terminal event. If it returns true, a render is requested.</param>
-    /// <param name="onRender">Called when a render is due. Draw into <see cref="CurrentFrame"/>.</param>
-
-
+    /// <param name="onRender">Called when a render is due. Draw into <see cref="CurrentFrame" />.</param>
     /// <summary>Reset internal state so RunAsync can be called again.</summary>
     public void ResetState()
     {
@@ -58,16 +66,20 @@ public sealed class TuiShell : IDisposable
             _cts.Dispose();
             _cts = new CancellationTokenSource();
         }
+
         // Drain any stale render signals
         while (_renderSignal.Reader.TryRead(out _)) { }
     }
 
     /// <summary>
-    /// Force a full screen clear + full frame redraw on the next render.
-    /// Call this when switching from a modal overlay (picker, prompt) back
-    /// to the main app so the diff renderer doesn't leave modal artifacts.
+    ///     Force a full screen clear + full frame redraw on the next render.
+    ///     Call this when switching from a modal overlay (picker, prompt) back
+    ///     to the main app so the diff renderer doesn't leave modal artifacts.
     /// </summary>
-    public void ForceFullRedraw() => _renderer.ForceFullRedraw();
+    public void ForceFullRedraw()
+    {
+        _renderer.ForceFullRedraw();
+    }
 
     public async Task RunAsync(
         Func<TerminalEvent, Task<bool>> onEvent,
@@ -78,19 +90,19 @@ public sealed class TuiShell : IDisposable
         // Enter alternate screen, hide cursor, enable mouse tracking, bracketed paste
         // Kitty keyboard protocol is negotiated during backend initialization
         // during backend initialization, not as a terminal scope.
-        using var altScreen = TerminalScope.UseAlternateScreen(_backend);
-        using var hideCursor = TerminalScope.HideCursor(_backend);
-        using var mouseScope = TerminalScope.UseMouse(_backend);
-        using var bracketedPaste = TerminalScope.UseBracketedPaste(_backend);
+        using var altScreen = TerminalScope.UseAlternateScreen(Backend);
+        using var hideCursor = TerminalScope.HideCursor(Backend);
+        using var mouseScope = TerminalScope.UseMouse(Backend);
+        using var bracketedPaste = TerminalScope.UseBracketedPaste(Backend);
 
         // Ensure frame/renderer have the correct terminal size before first render.
         // On some platforms (e.g. Windows via dotnet run) the initial backend.Size
         // may be (0,0) until Initialize() has run.
-        var actualSize = _backend.Size;
-        if (_currentFrame.Width != actualSize.Width || _currentFrame.Height != actualSize.Height)
+        TerminalSize actualSize = Backend.Size;
+        if (CurrentFrame.Width != actualSize.Width || CurrentFrame.Height != actualSize.Height)
         {
             _renderer.Resize(actualSize.Width, actualSize.Height);
-            _currentFrame.Resize(actualSize.Width, actualSize.Height);
+            CurrentFrame.Resize(actualSize.Width, actualSize.Height);
         }
 
         // Render the first frame before starting the input stream. Some native
@@ -98,12 +110,12 @@ public sealed class TuiShell : IDisposable
         // suspension point; if we start MoveNextAsync first, the alternate
         // screen can be entered while the initial render signal is starved,
         // presenting as a black screen until input arrives.
-        await onRender(_currentFrame);
-        _renderer.Render(_currentFrame, _backend.Output);
+        await onRender(CurrentFrame);
+        _renderer.Render(CurrentFrame, Backend.Output);
         _lastRenderTicks = Stopwatch.GetTimestamp();
-        _backend.Flush();
+        Backend.Flush();
 
-        var eventStream = _backend.ReadEvents(_cts.Token).GetAsyncEnumerator(_cts.Token);
+        IAsyncEnumerator<TerminalEvent> eventStream = Backend.ReadEvents(_cts.Token).GetAsyncEnumerator(_cts.Token);
 
         // MoveNextAsync doesn't accept CancellationToken when used via GetAsyncEnumerator;
         // cancellation is handled by the CancellationToken passed to ReadEvents.
@@ -123,7 +135,7 @@ public sealed class TuiShell : IDisposable
                     hasPendingMoveNext = true;
                 }
 
-                var renderTask = _renderSignal.Reader.WaitToReadAsync(_cts.Token).AsTask();
+                Task<bool> renderTask = _renderSignal.Reader.WaitToReadAsync(_cts.Token).AsTask();
                 var completed = await Task.WhenAny(eventTask!, renderTask);
 
                 if (completed == renderTask)
@@ -138,17 +150,21 @@ public sealed class TuiShell : IDisposable
                             long elapsed = now - _lastRenderTicks;
                             if (elapsed < minInterval)
                             {
-                                int delayMs = (int)((minInterval - elapsed) * 1000 / Stopwatch.Frequency);
+                                int delayMs = (int)(
+                                    (minInterval - elapsed) * 1000 / Stopwatch.Frequency
+                                );
                                 if (delayMs > 0)
+                                {
                                     await Task.Delay(delayMs);
+                                }
                             }
                         }
 
                         _renderSignal.Reader.TryRead(out _);
-                        await onRender(_currentFrame);
-                        _renderer.Render(_currentFrame, _backend.Output);
+                        await onRender(CurrentFrame);
+                        _renderer.Render(CurrentFrame, Backend.Output);
                         _lastRenderTicks = Stopwatch.GetTimestamp();
-                        _backend.Flush();
+                        Backend.Flush();
                     }
                 }
                 else if (completed == eventTask)
@@ -156,20 +172,24 @@ public sealed class TuiShell : IDisposable
                     hasPendingMoveNext = false;
 
                     if (!eventTask.Result)
+                    {
                         break; // Stream ended
+                    }
 
-                    var evt = eventStream.Current;
+                    TerminalEvent evt = eventStream.Current;
 
                     if (evt is ResizeEvent resize)
                     {
                         _renderer.Resize(resize.Width, resize.Height);
-                        _currentFrame.Resize(resize.Width, resize.Height);
+                        CurrentFrame.Resize(resize.Width, resize.Height);
                         RequestFullRedraw();
                         continue;
                     }
 
                     if (await onEvent(evt))
+                    {
                         RequestRender();
+                    }
                 }
             }
         }
@@ -196,8 +216,6 @@ public sealed class TuiShell : IDisposable
         _renderSignal.Writer.TryWrite(true);
     }
 
-
-
     /// <summary>Force a full frame redraw on the next render (avoids diff flicker).</summary>
     public void RequestFullRedraw()
     {
@@ -206,22 +224,16 @@ public sealed class TuiShell : IDisposable
     }
 
     /// <summary>Request cancellation of the event/render loop.</summary>
-    public void Cancel() => _cts.Cancel();
+    public void Cancel()
+    {
+        _cts.Cancel();
+    }
 
     /// <summary>Resize the frame buffer when the terminal changes size.</summary>
     public void HandleResize(int width, int height)
     {
         _renderer.Resize(width, height);
-        _currentFrame.Resize(width, height);
+        CurrentFrame.Resize(width, height);
         RequestRender();
-    }
-
-    public void Dispose()
-    {
-        if (_disposed) return;
-        _disposed = true;
-        _cts.Cancel();
-        _cts.Dispose();
-        _backend.Dispose();
     }
 }

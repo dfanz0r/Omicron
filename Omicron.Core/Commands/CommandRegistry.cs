@@ -1,32 +1,32 @@
 namespace Omicron.Core.Commands;
 
 /// <summary>
-/// Scope where a command is valid.
+///     Scope where a command is valid.
 /// </summary>
 public enum CommandScope
 {
     /// <summary>Available globally at any time.</summary>
     Global,
+
     /// <summary>Only available during an active session/chat.</summary>
     Session,
+
     /// <summary>Only available from the configuration/view.</summary>
     Config
 }
 
 /// <summary>
-/// Context provided when a command is executed.
+///     Context provided when a command is executed.
 /// </summary>
-public sealed record CommandContext(
-    string Arguments,
-    CancellationToken CancellationToken);
+public sealed record CommandContext(string Arguments, CancellationToken CancellationToken);
 
 /// <summary>
-/// Result of executing a command.
+///     Result of executing a command.
 /// </summary>
 public sealed record CommandResult(string Output, bool IsError = false);
 
 /// <summary>
-/// Defines a user-invokable command.
+///     Defines a user-invokable command.
 /// </summary>
 public sealed record CommandDefinition(
     string Id,
@@ -36,28 +36,28 @@ public sealed record CommandDefinition(
     Func<CommandContext, Task<CommandResult>> ExecuteAsync);
 
 /// <summary>
-/// Registry of frontend/plugin commands.
+///     Registry of frontend/plugin commands.
 /// </summary>
 public interface ICommandRegistry
 {
     /// <summary>
-    /// Register a command definition.
+    ///     All registered commands.
+    /// </summary>
+    IReadOnlyList<CommandDefinition> AllCommands { get; }
+
+    /// <summary>
+    ///     Register a command definition.
     /// </summary>
     void Register(CommandDefinition command);
 
     /// <summary>
-    /// Get a command by ID. Returns null if not found.
+    ///     Get a command by ID. Returns null if not found.
     /// </summary>
     CommandDefinition? GetCommand(string id);
-
-    /// <summary>
-    /// All registered commands.
-    /// </summary>
-    IReadOnlyList<CommandDefinition> AllCommands { get; }
 }
 
 /// <summary>
-/// Default in-memory command registry.
+///     Default in-memory command registry.
 /// </summary>
 public sealed class CommandRegistry : ICommandRegistry
 {
@@ -70,7 +70,7 @@ public sealed class CommandRegistry : ICommandRegistry
 
     public CommandDefinition? GetCommand(string id)
     {
-        _commands.TryGetValue(id, out var command);
+        _commands.TryGetValue(id, out CommandDefinition? command);
         return command;
     }
 

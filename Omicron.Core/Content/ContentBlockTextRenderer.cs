@@ -3,20 +3,20 @@ using Omicron.Core.Text;
 namespace Omicron.Core.Content;
 
 /// <summary>
-/// Simple text renderer for <see cref="IContentBlock"/> instances.
-/// Produces CLI-friendly text. No markdown parsing, no syntax
-/// highlighting, no terminal-width awareness.
+///     Simple text renderer for <see cref="IContentBlock" /> instances.
+///     Produces CLI-friendly text. No markdown parsing, no syntax
+///     highlighting, no terminal-width awareness.
 /// </summary>
 public static class ContentBlockTextRenderer
 {
     /// <summary>
-    /// Render a single content block as text. This is a boundary method: hot
-    /// paths should prefer <see cref="AppendUtf8To"/> and keep the caller-owned
-    /// builder alive across render operations.
+    ///     Render a single content block as text. This is a boundary method: hot
+    ///     paths should prefer <see cref="AppendUtf8To" /> and keep the caller-owned
+    ///     builder alive across render operations.
     /// </summary>
     public static string Render(IContentBlock block)
     {
-        var sb = Utf8Text.CreateBuilder();
+        Utf8Builder sb = Utf8Text.CreateBuilder();
         try
         {
             AppendUtf8To(ref sb, block);
@@ -29,14 +29,17 @@ public static class ContentBlockTextRenderer
     }
 
     /// <summary>
-    /// Render a sequence of content blocks, separated by newlines. This is a
-    /// boundary method; prefer <see cref="AppendAllUtf8To"/> in hot paths.
+    ///     Render a sequence of content blocks, separated by newlines. This is a
+    ///     boundary method; prefer <see cref="AppendAllUtf8To" /> in hot paths.
     /// </summary>
     public static string RenderAll(List<IContentBlock> blocks)
     {
-        if (blocks.Count == 0) return "";
+        if (blocks.Count == 0)
+        {
+            return "";
+        }
 
-        var sb = Utf8Text.CreateBuilder();
+        Utf8Builder sb = Utf8Text.CreateBuilder();
         try
         {
             AppendAllUtf8To(ref sb, blocks);
@@ -87,7 +90,11 @@ public static class ContentBlockTextRenderer
     {
         for (int i = 0; i < blocks.Count; i++)
         {
-            if (i > 0) sb.AppendLine();
+            if (i > 0)
+            {
+                sb.AppendLine();
+            }
+
             AppendUtf8To(ref sb, blocks[i]);
         }
     }
@@ -102,12 +109,18 @@ public static class ContentBlockTextRenderer
 
         sb.AppendLiteral("```"u8);
         if (block.Language is not null)
+        {
             sb.Append(block.Language);
+        }
+
         sb.AppendLine();
 
         block.TextBuffer.AppendTo(ref sb);
         if (!EndsWithLineFeed(block.TextBuffer))
+        {
             sb.AppendLine();
+        }
+
         sb.AppendLiteral("```"u8);
     }
 
@@ -156,12 +169,13 @@ public static class ContentBlockTextRenderer
             sb.Append(block.ToolCallId);
             sb.Append(')');
         }
+
         sb.Append(']');
     }
 
     private static bool EndsWithLineFeed(Utf8ContentBuffer buffer)
     {
-        var span = buffer.AsSpan();
+        ReadOnlySpan<byte> span = buffer.AsSpan();
         return span.Length > 0 && span[^1] == (byte)'\n';
     }
 }

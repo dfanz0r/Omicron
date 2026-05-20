@@ -1,8 +1,8 @@
 namespace Omicron.Core.Models;
 
 /// <summary>
-/// Catalog of known models, responsible for discovery and lookup.
-/// Models are identified by catalog keys like "provider:model-id".
+///     Catalog of known models, responsible for discovery and lookup.
+///     Models are identified by catalog keys like "provider:model-id".
 /// </summary>
 public interface IModelCatalog
 {
@@ -13,18 +13,18 @@ public interface IModelCatalog
     IReadOnlySet<string> FreeModelKeys { get; }
 
     /// <summary>
-    /// Discover models from all registered provider sources.
-    /// Returns the number of new models added.
+    ///     Discover models from all registered provider sources.
+    ///     Returns the number of new models added.
     /// </summary>
     Task<int> DiscoverAsync(bool quiet = false);
 
     /// <summary>
-    /// Check if a model is free by its catalog entry key.
+    ///     Check if a model is free by its catalog entry key.
     /// </summary>
     bool IsFreeModel(string catalogKey);
 
     /// <summary>
-    /// Resolve IChatProvider instances for any unresolved models.
+    ///     Resolve IChatProvider instances for any unresolved models.
     /// </summary>
     void ResolveProviders();
 }

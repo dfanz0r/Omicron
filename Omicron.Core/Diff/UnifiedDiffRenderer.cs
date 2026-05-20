@@ -4,7 +4,7 @@ using Omicron.Core.Text;
 namespace Omicron.Core.Diff;
 
 /// <summary>
-/// Options for unified diff rendering.
+///     Options for unified diff rendering.
 /// </summary>
 internal sealed record UnifiedDiffRenderOptions
 {
@@ -14,8 +14,8 @@ internal sealed record UnifiedDiffRenderOptions
 }
 
 /// <summary>
-/// Renders a unified diff from old/new lines and a TextDiffResult.
-/// Includes a truncation marker when output limits are reached.
+///     Renders a unified diff from old/new lines and a TextDiffResult.
+///     Includes a truncation marker when output limits are reached.
 /// </summary>
 internal static class UnifiedDiffRenderer
 {
@@ -27,7 +27,7 @@ internal static class UnifiedDiffRenderer
         TextDiffResult diff,
         UnifiedDiffRenderOptions? options = null)
     {
-        var builder = Utf8Text.CreateBuilder();
+        Utf8Builder builder = Utf8Text.CreateBuilder();
         try
         {
             AppendUtf8To(ref builder, oldPath, newPath, oldLines, newLines, diff, options);
@@ -47,7 +47,7 @@ internal static class UnifiedDiffRenderer
         TextDiffResult diff,
         UnifiedDiffRenderOptions? options = null)
     {
-        var builder = Utf8Text.CreateBuilder();
+        Utf8Builder builder = Utf8Text.CreateBuilder();
         try
         {
             AppendUtf8To(ref builder, oldPath, newPath, oldLines, newLines, diff, options);
@@ -60,8 +60,8 @@ internal static class UnifiedDiffRenderer
     }
 
     /// <summary>
-    /// Append a unified diff directly to a <see cref="Utf8Builder"/>,
-    /// avoiding intermediate string allocations for callers that already use UTF-8 builders.
+    ///     Append a unified diff directly to a <see cref="Utf8Builder" />,
+    ///     avoiding intermediate string allocations for callers that already use UTF-8 builders.
     /// </summary>
     public static void AppendUtf8To(
         ref Utf8Builder builder,
@@ -75,7 +75,9 @@ internal static class UnifiedDiffRenderer
         options ??= new UnifiedDiffRenderOptions();
 
         if (!diff.HasChanges && !diff.IsTruncated)
+        {
             return;
+        }
 
         int lineCount = 0;
         int byteCount = 0;
@@ -85,40 +87,57 @@ internal static class UnifiedDiffRenderer
         {
             AppendLine(ref builder, ref lineCount, ref byteCount, options, $"--- {oldPath}");
             AppendLine(ref builder, ref lineCount, ref byteCount, options, $"+++ {newPath}");
-            AppendLine(ref builder, ref lineCount, ref byteCount, options, $"... diff truncated (input too large: {diff.TruncationReason})");
+            AppendLine(ref builder,
+                ref lineCount,
+                ref byteCount,
+                options,
+                $"... diff truncated (input too large: {diff.TruncationReason})");
             return;
         }
 
-        var hunks = TextDiffHunkBuilder.BuildHunks(
-            oldLines, newLines, diff, options.ContextLines);
+        IReadOnlyList<TextDiffHunk> hunks =
+            TextDiffHunkBuilder.BuildHunks(oldLines, newLines, diff, options.ContextLines);
 
         if (hunks.Count == 0)
+        {
             return;
+        }
 
         AppendLine(ref builder, ref lineCount, ref byteCount, options, $"--- {oldPath}");
         AppendLine(ref builder, ref lineCount, ref byteCount, options, $"+++ {newPath}");
 
-        foreach (var hunk in hunks)
+        foreach (TextDiffHunk hunk in hunks)
         {
             if (byteCount > 0 && byteCount >= options.MaxOutputBytes)
+            {
                 break;
+            }
 
-            AppendLine(ref builder, ref lineCount, ref byteCount, options,
+            AppendLine(ref builder,
+                ref lineCount,
+                ref byteCount,
+                options,
                 $"@@ -{hunk.OldStart},{hunk.OldCount} +{hunk.NewStart},{hunk.NewCount} @@");
 
-            foreach (var line in hunk.Lines)
+            foreach (TextDiffLine line in hunk.Lines)
             {
                 if (byteCount > 0 && byteCount >= options.MaxOutputBytes)
+                {
                     break;
+                }
 
-                var prefix = line.Kind switch
+                string prefix = line.Kind switch
                 {
                     TextDiffLineKind.Added => "+",
                     TextDiffLineKind.Removed => "-",
                     _ => " "
                 };
 
-                AppendLine(ref builder, ref lineCount, ref byteCount, options, $"{prefix}{line.Text}");
+                AppendLine(ref builder,
+                    ref lineCount,
+                    ref byteCount,
+                    options,
+                    $"{prefix}{line.Text}");
             }
         }
     }
@@ -135,45 +154,58 @@ internal static class UnifiedDiffRenderer
         options ??= new UnifiedDiffRenderOptions();
 
         if (!diff.HasChanges && !diff.IsTruncated)
+        {
             return;
+        }
 
-        var lineCount = 0;
-        var byteCount = 0;
+        int lineCount = 0;
+        int byteCount = 0;
 
         if (diff.IsTruncated)
         {
             AppendLine(ref builder, ref lineCount, ref byteCount, options, $"--- {oldPath}");
             AppendLine(ref builder, ref lineCount, ref byteCount, options, $"+++ {newPath}");
-            AppendLine(ref builder, ref lineCount, ref byteCount, options, $"... diff truncated (input too large: {diff.TruncationReason})");
+            AppendLine(ref builder,
+                ref lineCount,
+                ref byteCount,
+                options,
+                $"... diff truncated (input too large: {diff.TruncationReason})");
             return;
         }
 
         if (diff.Edits.Count == 0)
+        {
             return;
+        }
 
         AppendLine(ref builder, ref lineCount, ref byteCount, options, $"--- {oldPath}");
         AppendLine(ref builder, ref lineCount, ref byteCount, options, $"+++ {newPath}");
 
-        var editIdx = 0;
+        int editIdx = 0;
         while (editIdx < diff.Edits.Count)
         {
             if (byteCount > 0 && byteCount >= options.MaxOutputBytes)
+            {
                 break;
+            }
 
-            var firstEdit = diff.Edits[editIdx];
-            var hunkOldStart = Math.Max(0, firstEdit.OldStart - options.ContextLines);
-            var hunkNewStart = Math.Max(0, firstEdit.NewStart - options.ContextLines);
+            TextDiffEdit firstEdit = diff.Edits[editIdx];
+            int hunkOldStart = Math.Max(0, firstEdit.OldStart - options.ContextLines);
+            int hunkNewStart = Math.Max(0, firstEdit.NewStart - options.ContextLines);
 
-            var hunkEdits = new List<TextDiffEdit> { firstEdit };
+            var hunkEdits = new List<TextDiffEdit>
+            {
+                firstEdit
+            };
             editIdx++;
 
             while (editIdx < diff.Edits.Count)
             {
-                var prev = hunkEdits[^1];
-                var next = diff.Edits[editIdx];
+                TextDiffEdit prev = hunkEdits[^1];
+                TextDiffEdit next = diff.Edits[editIdx];
 
-                var gapOld = next.OldStart - (prev.OldStart + prev.OldCount);
-                var gapNew = next.NewStart - (prev.NewStart + prev.NewCount);
+                int gapOld = next.OldStart - (prev.OldStart + prev.OldCount);
+                int gapNew = next.NewStart - (prev.NewStart + prev.NewCount);
 
                 if (gapOld <= 2 * options.ContextLines && gapNew <= 2 * options.ContextLines)
                 {
@@ -181,42 +213,67 @@ internal static class UnifiedDiffRenderer
                     editIdx++;
                 }
                 else
+                {
                     break;
+                }
             }
 
-            var lastEdit = hunkEdits[^1];
-            var hunkOldEnd = Math.Min(oldLines.Count, lastEdit.OldStart + lastEdit.OldCount + options.ContextLines);
-            var hunkNewEnd = Math.Min(newLines.Count, lastEdit.NewStart + lastEdit.NewCount + options.ContextLines);
+            TextDiffEdit lastEdit = hunkEdits[^1];
+            int hunkOldEnd = Math.Min(oldLines.Count,
+                lastEdit.OldStart + lastEdit.OldCount + options.ContextLines);
+            int hunkNewEnd = Math.Min(newLines.Count,
+                lastEdit.NewStart + lastEdit.NewCount + options.ContextLines);
 
-            AppendLine(ref builder, ref lineCount, ref byteCount, options,
+            AppendLine(ref builder,
+                ref lineCount,
+                ref byteCount,
+                options,
                 $"@@ -{hunkOldStart + 1},{hunkOldEnd - hunkOldStart} +{hunkNewStart + 1},{hunkNewEnd - hunkNewStart} @@");
 
-            var li = hunkOldStart;
-            var lj = hunkNewStart;
-            var hei = 0;
+            int li = hunkOldStart;
+            int lj = hunkNewStart;
+            int hei = 0;
 
             while (li < hunkOldEnd || lj < hunkNewEnd)
             {
                 if (byteCount > 0 && byteCount >= options.MaxOutputBytes)
+                {
                     break;
+                }
 
-                var inEdit = hei < hunkEdits.Count
+                bool inEdit =
+                    hei < hunkEdits.Count
                     && li >= hunkEdits[hei].OldStart
                     && li < hunkEdits[hei].OldStart + hunkEdits[hei].OldCount;
 
-                var inNewEdit = hei < hunkEdits.Count
+                bool inNewEdit =
+                    hei < hunkEdits.Count
                     && lj >= hunkEdits[hei].NewStart
                     && lj < hunkEdits[hei].NewStart + hunkEdits[hei].NewCount;
 
                 if (inEdit || inNewEdit)
                 {
-                    var edit = hunkEdits[hei];
+                    TextDiffEdit edit = hunkEdits[hei];
 
-                    for (var r = 0; r < edit.OldCount; r++)
-                        AppendLine(ref builder, ref lineCount, ref byteCount, options, (byte)'-', oldLines[li++]);
+                    for (int r = 0; r < edit.OldCount; r++)
+                    {
+                        AppendLine(ref builder,
+                            ref lineCount,
+                            ref byteCount,
+                            options,
+                            (byte)'-',
+                            oldLines[li++]);
+                    }
 
-                    for (var a = 0; a < edit.NewCount; a++)
-                        AppendLine(ref builder, ref lineCount, ref byteCount, options, (byte)'+', newLines[lj++]);
+                    for (int a = 0; a < edit.NewCount; a++)
+                    {
+                        AppendLine(ref builder,
+                            ref lineCount,
+                            ref byteCount,
+                            options,
+                            (byte)'+',
+                            newLines[lj++]);
+                    }
 
                     hei++;
                 }
@@ -224,14 +281,26 @@ internal static class UnifiedDiffRenderer
                 {
                     if (li < oldLines.Count && lj < newLines.Count)
                     {
-                        AppendLine(ref builder, ref lineCount, ref byteCount, options, (byte)' ', oldLines[li]);
+                        AppendLine(ref builder,
+                            ref lineCount,
+                            ref byteCount,
+                            options,
+                            (byte)' ',
+                            oldLines[li]);
                         li++;
                         lj++;
                     }
                     else
                     {
-                        if (li < hunkOldEnd) li++;
-                        if (lj < hunkNewEnd) lj++;
+                        if (li < hunkOldEnd)
+                        {
+                            li++;
+                        }
+
+                        if (lj < hunkNewEnd)
+                        {
+                            lj++;
+                        }
                     }
                 }
             }
@@ -245,18 +314,22 @@ internal static class UnifiedDiffRenderer
         UnifiedDiffRenderOptions options,
         string text)
     {
-        var textBytes = Encoding.UTF8.GetByteCount(text) + 1;
-        if (lineCount >= options.MaxOutputLines
-            || (byteCount > 0 && byteCount + textBytes > options.MaxOutputBytes))
+        int textBytes = Encoding.UTF8.GetByteCount(text) + 1;
+        if (
+            lineCount >= options.MaxOutputLines
+            || (byteCount > 0 && byteCount + textBytes > options.MaxOutputBytes)
+        )
         {
             if (byteCount > 0 || lineCount > 0)
             {
                 builder.Append("... diff truncated (output limit reached)");
                 builder.AppendLine();
             }
+
             byteCount = int.MaxValue; // Prevent further output
             return;
         }
+
         builder.Append(text);
         builder.AppendLine();
         lineCount++;
@@ -271,15 +344,18 @@ internal static class UnifiedDiffRenderer
         byte prefix,
         ReadOnlySpan<byte> utf8Text)
     {
-        var textBytes = 1 + utf8Text.Length + 1;
-        if (lineCount >= options.MaxOutputLines
-            || (byteCount > 0 && byteCount + textBytes > options.MaxOutputBytes))
+        int textBytes = 1 + utf8Text.Length + 1;
+        if (
+            lineCount >= options.MaxOutputLines
+            || (byteCount > 0 && byteCount + textBytes > options.MaxOutputBytes)
+        )
         {
             if (byteCount > 0 || lineCount > 0)
             {
                 builder.Append("... diff truncated (output limit reached)");
                 builder.AppendLine();
             }
+
             byteCount = int.MaxValue;
             return;
         }

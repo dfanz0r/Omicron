@@ -30,10 +30,10 @@ public class EventRegistryTests
             typeof(TransactionStagedEvent),
             typeof(TransactionCommittedEvent),
             typeof(TransactionRolledBackEvent),
-            typeof(ModalityUsedEvent),
+            typeof(ModalityUsedEvent)
         };
 
-        var registered = OmicronEventRegistry.AllTypes;
+        IReadOnlyCollection<Type> registered = OmicronEventRegistry.AllTypes;
         Assert.Subset(expectedTypes, registered.ToHashSet());
         Assert.Subset(registered.ToHashSet(), expectedTypes);
     }
@@ -41,10 +41,10 @@ public class EventRegistryTests
     [Fact]
     public void OmicronEventRegistry_RoundTripsTypeNames()
     {
-        foreach (var type in OmicronEventRegistry.AllTypes)
+        foreach (Type type in OmicronEventRegistry.AllTypes)
         {
-            var name = type.Name;
-            var resolved = OmicronEventRegistry.GetType(name);
+            string name = type.Name;
+            Type? resolved = OmicronEventRegistry.GetType(name);
             Assert.NotNull(resolved);
             Assert.Equal(type, resolved);
         }
@@ -59,7 +59,9 @@ public class EventRegistryTests
     [Fact]
     public void OmicronEventRegistry_GetName_ReturnsCorrectName()
     {
-        Assert.Equal(nameof(SessionStartedEvent), OmicronEventRegistry.GetName(typeof(SessionStartedEvent)));
-        Assert.Equal(nameof(UserMessageEvent), OmicronEventRegistry.GetName(typeof(UserMessageEvent)));
+        Assert.Equal(nameof(SessionStartedEvent),
+            OmicronEventRegistry.GetName(typeof(SessionStartedEvent)));
+        Assert.Equal(nameof(UserMessageEvent),
+            OmicronEventRegistry.GetName(typeof(UserMessageEvent)));
     }
 }

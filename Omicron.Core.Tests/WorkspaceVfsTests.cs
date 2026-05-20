@@ -1,4 +1,3 @@
-using Omicron.Core;
 using Omicron.Core.Workspace;
 using Xunit;
 
@@ -18,19 +17,23 @@ public class HostWorkspaceFileSystemTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_rootDir, recursive: true); } catch { }
+        try
+        {
+            Directory.Delete(_rootDir, true);
+        }
+        catch { }
     }
 
     private WorkspacePath Resolve(string path)
     {
-        var resolved = _vfs.Resolve(path);
+        WorkspacePath? resolved = _vfs.Resolve(path);
         Assert.NotNull(resolved);
         return resolved!.Value;
     }
 
     private string WriteTestFile(string relativePath, string content)
     {
-        var abs = Path.Combine(_rootDir, relativePath);
+        string abs = Path.Combine(_rootDir, relativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(abs)!);
         File.WriteAllText(abs, content);
         return relativePath;
@@ -38,7 +41,7 @@ public class HostWorkspaceFileSystemTests : IDisposable
 
     private string CreateTestDir(string relativePath)
     {
-        var abs = Path.Combine(_rootDir, relativePath);
+        string abs = Path.Combine(_rootDir, relativePath);
         Directory.CreateDirectory(abs);
         return relativePath;
     }
@@ -47,9 +50,9 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Stat_ExistingFile_ReturnsMetadata()
     {
         WriteTestFile("test.txt", "hello world");
-        var path = Resolve("test.txt");
+        WorkspacePath path = Resolve("test.txt");
 
-        var stat = await _vfs.StatAsync(path);
+        FileStat? stat = await _vfs.StatAsync(path);
 
         Assert.NotNull(stat);
         Assert.Equal("test.txt", stat!.Path);
@@ -61,8 +64,8 @@ public class HostWorkspaceFileSystemTests : IDisposable
     [Fact]
     public async Task Stat_MissingFile_ReturnsNull()
     {
-        var path = Resolve("nonexistent.txt");
-        var stat = await _vfs.StatAsync(path);
+        WorkspacePath path = Resolve("nonexistent.txt");
+        FileStat? stat = await _vfs.StatAsync(path);
         Assert.Null(stat);
     }
 
@@ -70,8 +73,8 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Stat_Directory_ReturnsDirectory()
     {
         CreateTestDir("subdir");
-        var path = Resolve("subdir");
-        var stat = await _vfs.StatAsync(path);
+        WorkspacePath path = Resolve("subdir");
+        FileStat? stat = await _vfs.StatAsync(path);
         Assert.NotNull(stat);
         Assert.True(stat!.IsDirectory);
     }
@@ -80,8 +83,8 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Stat_BinaryFile_DetectsBinary()
     {
         WriteTestFile("image.png", "fake-png-content");
-        var path = Resolve("image.png");
-        var stat = await _vfs.StatAsync(path);
+        WorkspacePath path = Resolve("image.png");
+        FileStat? stat = await _vfs.StatAsync(path);
         Assert.NotNull(stat);
         Assert.True(stat!.IsBinary);
     }
@@ -90,16 +93,16 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task ReadFile_ExistingFile_ReturnsContent()
     {
         WriteTestFile("data.txt", "Hello, VFS!");
-        var path = Resolve("data.txt");
-        var content = await _vfs.ReadFileAsync(path);
+        WorkspacePath path = Resolve("data.txt");
+        ReadOnlyMemory<byte> content = await _vfs.ReadFileAsync(path);
         Assert.Equal("Hello, VFS!"u8.ToArray(), content.ToArray());
     }
 
     [Fact]
     public async Task ReadFile_MissingFile_ReturnsEmpty()
     {
-        var path = Resolve("missing.txt");
-        var content = await _vfs.ReadFileAsync(path);
+        WorkspacePath path = Resolve("missing.txt");
+        ReadOnlyMemory<byte> content = await _vfs.ReadFileAsync(path);
         Assert.True(content.IsEmpty);
     }
 
@@ -110,8 +113,8 @@ public class HostWorkspaceFileSystemTests : IDisposable
         WriteTestFile("b.txt", "bbb");
         CreateTestDir("sub");
 
-        var path = Resolve("");
-        var entries = await _vfs.ReadDirectoryAsync(path);
+        WorkspacePath path = Resolve("");
+        IReadOnlyList<DirectoryEntry> entries = await _vfs.ReadDirectoryAsync(path);
 
         Assert.Equal(3, entries.Count);
         Assert.Contains(entries, e => e.Name == "a.txt" && !e.IsDirectory);
@@ -122,19 +125,19 @@ public class HostWorkspaceFileSystemTests : IDisposable
     [Fact]
     public async Task ReadDirectory_NonexistentPath_ReturnsEmpty()
     {
-        var path = Resolve("nonexistent");
-        var entries = await _vfs.ReadDirectoryAsync(path);
+        WorkspacePath path = Resolve("nonexistent");
+        IReadOnlyList<DirectoryEntry> entries = await _vfs.ReadDirectoryAsync(path);
         Assert.Empty(entries);
     }
 
     [Fact]
     public async Task WriteFile_CreatesFile()
     {
-        var path = Resolve("newfile.txt");
-        var content = "written content"u8.ToArray();
+        WorkspacePath path = Resolve("newfile.txt");
+        byte[] content = "written content"u8.ToArray();
         await _vfs.WriteFileAsync(path, content);
 
-        var abs = Path.Combine(_rootDir, "newfile.txt");
+        string abs = Path.Combine(_rootDir, "newfile.txt");
         Assert.True(File.Exists(abs));
         Assert.Equal("written content", File.ReadAllText(abs));
     }
@@ -142,11 +145,11 @@ public class HostWorkspaceFileSystemTests : IDisposable
     [Fact]
     public async Task WriteFile_CreatesParentDirectories()
     {
-        var path = Resolve("a/b/c/deep.txt");
-        var content = "deep"u8.ToArray();
+        WorkspacePath path = Resolve("a/b/c/deep.txt");
+        byte[] content = "deep"u8.ToArray();
         await _vfs.WriteFileAsync(path, content);
 
-        var abs = Path.Combine(_rootDir, "a/b/c/deep.txt");
+        string abs = Path.Combine(_rootDir, "a/b/c/deep.txt");
         Assert.True(File.Exists(abs));
     }
 
@@ -154,7 +157,7 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Delete_File_RemovesIt()
     {
         WriteTestFile("todelete.txt", "delete me");
-        var path = Resolve("todelete.txt");
+        WorkspacePath path = Resolve("todelete.txt");
         await _vfs.DeleteAsync(path);
         Assert.False(File.Exists(Path.Combine(_rootDir, "todelete.txt")));
     }
@@ -163,7 +166,7 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Delete_EmptyDirectory_RemovesIt()
     {
         CreateTestDir("emptydir");
-        var path = Resolve("emptydir");
+        WorkspacePath path = Resolve("emptydir");
         await _vfs.DeleteAsync(path);
         Assert.False(Directory.Exists(Path.Combine(_rootDir, "emptydir")));
     }
@@ -172,7 +175,7 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Delete_NonEmptyDirectory_Throws()
     {
         WriteTestFile("nonempty/file.txt", "content");
-        var path = Resolve("nonempty");
+        WorkspacePath path = Resolve("nonempty");
         await Assert.ThrowsAsync<InvalidOperationException>(() => _vfs.DeleteAsync(path).AsTask());
     }
 
@@ -180,8 +183,8 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Move_File_Renames()
     {
         WriteTestFile("source.txt", "move me");
-        var from = Resolve("source.txt");
-        var to = Resolve("dest.txt");
+        WorkspacePath from = Resolve("source.txt");
+        WorkspacePath to = Resolve("dest.txt");
         await _vfs.MoveAsync(from, to);
 
         Assert.False(File.Exists(Path.Combine(_rootDir, "source.txt")));
@@ -193,8 +196,8 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Move_CreatesParentDirectories()
     {
         WriteTestFile("source.txt", "move to subdir");
-        var from = Resolve("source.txt");
-        var to = Resolve("sub/dest.txt");
+        WorkspacePath from = Resolve("source.txt");
+        WorkspacePath to = Resolve("sub/dest.txt");
         await _vfs.MoveAsync(from, to);
         Assert.True(File.Exists(Path.Combine(_rootDir, "sub/dest.txt")));
     }
@@ -215,7 +218,7 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public void Resolve_NormalPath_ReturnsWorkspacePath()
     {
         WriteTestFile("normal.txt", "content");
-        var result = _vfs.Resolve("normal.txt");
+        WorkspacePath? result = _vfs.Resolve("normal.txt");
         Assert.NotNull(result);
         Assert.Equal("normal.txt", result!.Value.Value);
     }
@@ -223,7 +226,7 @@ public class HostWorkspaceFileSystemTests : IDisposable
     [Fact]
     public void Resolve_RootDirectory_ReturnsEmptyPath()
     {
-        var result = _vfs.Resolve("");
+        WorkspacePath? result = _vfs.Resolve("");
         Assert.NotNull(result);
         Assert.Equal("", result!.Value.Value);
     }
@@ -232,7 +235,7 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public void Resolve_Whitespace_Resolves()
     {
         // Whitespace path segments are valid (file system may allow them)
-        var result = _vfs.Resolve("   ");
+        WorkspacePath? result = _vfs.Resolve("   ");
         // Path.GetFullPath normalizes the result, so we just verify it resolves
         Assert.NotNull(result);
     }
@@ -248,12 +251,17 @@ public class HostWorkspaceFileSystemTests : IDisposable
     {
         var badPath = new WorkspacePath("../../outside.txt");
 
-        var statEx = await Assert.ThrowsAsync<InvalidOperationException>(() => _vfs.StatAsync(badPath).AsTask());
+        InvalidOperationException statEx = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _vfs.StatAsync(badPath).AsTask());
         Assert.Contains("escapes", statEx.Message);
 
-        Assert.Throws<InvalidOperationException>(() => { _vfs.DeleteAsync(badPath).GetAwaiter().GetResult(); });
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            _vfs.DeleteAsync(badPath).GetAwaiter().GetResult();
+        });
 
-        var readEx = await Assert.ThrowsAsync<InvalidOperationException>(() => _vfs.ReadFileAsync(badPath).AsTask());
+        InvalidOperationException readEx = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _vfs.ReadFileAsync(badPath).AsTask());
         Assert.Contains("escapes", readEx.Message);
     }
 
@@ -261,7 +269,8 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task ReadDirectory_Traversal_Throws()
     {
         var badPath = new WorkspacePath("../../outside");
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _vfs.ReadDirectoryAsync(badPath).AsTask());
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _vfs.ReadDirectoryAsync(badPath).AsTask());
         Assert.Contains("escapes", ex.Message);
     }
 
@@ -269,10 +278,11 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Move_TraversalDestination_Throws()
     {
         WriteTestFile("safe.txt", "content");
-        var from = Resolve("safe.txt");
+        WorkspacePath from = Resolve("safe.txt");
         var badTo = new WorkspacePath("../../outside.txt");
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _vfs.MoveAsync(from, badTo).AsTask());
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _vfs.MoveAsync(from, badTo).AsTask());
         Assert.Contains("escapes", ex.Message);
     }
 
@@ -280,9 +290,10 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Move_TraversalSource_Throws()
     {
         var badFrom = new WorkspacePath("../../outside.txt");
-        var to = Resolve("dest.txt");
+        WorkspacePath to = Resolve("dest.txt");
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _vfs.MoveAsync(badFrom, to).AsTask());
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _vfs.MoveAsync(badFrom, to).AsTask());
         Assert.Contains("escapes", ex.Message);
     }
 
@@ -290,7 +301,8 @@ public class HostWorkspaceFileSystemTests : IDisposable
     public async Task Write_Traversal_Throws()
     {
         var badPath = new WorkspacePath("../../outside.txt");
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => _vfs.WriteFileAsync(badPath, "data"u8.ToArray()).AsTask());
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _vfs.WriteFileAsync(badPath, "data"u8.ToArray()).AsTask());
         Assert.Contains("escapes", ex.Message);
     }
 
@@ -304,14 +316,14 @@ public class HostWorkspaceFileSystemTests : IDisposable
         Assert.IsType<VfsWorkspaceAdapter>(host.Workspace);
 
         // Write a test file via VFS
-        var testPath = "_vfs_integration_test.txt";
-        var content = "line1\nline2\nline3"u8.ToArray();
+        string testPath = "_vfs_integration_test.txt";
+        byte[] content = "line1\nline2\nline3"u8.ToArray();
         await host.FileSystem.WriteFileAsync(new WorkspacePath(testPath), content);
 
         try
         {
             // Read via Workspace (which goes through VfsWorkspaceAdapter -> VFS)
-            var result = await host.Workspace.ReadPathAsync(testPath);
+            WorkspaceReadResult result = await host.Workspace.ReadPathAsync(testPath);
 
             Assert.False(result.IsDirectory);
             Assert.False(result.IsBinary);
@@ -323,7 +335,11 @@ public class HostWorkspaceFileSystemTests : IDisposable
         }
         finally
         {
-            try { File.Delete(Path.Combine(host.FileSystem.RootPath, testPath)); } catch { }
+            try
+            {
+                File.Delete(Path.Combine(host.FileSystem.RootPath, testPath));
+            }
+            catch { }
         }
     }
 }

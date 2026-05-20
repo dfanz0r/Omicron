@@ -1,19 +1,18 @@
 namespace Omicron.Core.Text;
 
 /// <summary>
-/// An append-only index of logical lines over a UTF-8 byte store.
-/// New bytes are scanned only once — the index never re-scans
-/// already-indexed regions.
-///
-/// Supports streaming input: incomplete lines (no trailing newline)
-/// are not committed until <see cref="Flush"/> is called or a newline
-/// is found in a subsequent <see cref="AppendScan"/> call.
+///     An append-only index of logical lines over a UTF-8 byte store.
+///     New bytes are scanned only once — the index never re-scans
+///     already-indexed regions.
+///     Supports streaming input: incomplete lines (no trailing newline)
+///     are not committed until <see cref="Flush" /> is called or a newline
+///     is found in a subsequent <see cref="AppendScan" /> call.
 /// </summary>
 public sealed class LogicalLineIndex
 {
     private readonly List<LogicalLineInfo> _lines = [];
-    private long? _pendingLineStart;
     private bool _hasPendingLine;
+    private long? _pendingLineStart;
 
     /// <summary>All finalized lines (each ended by a newline).</summary>
     public IReadOnlyList<LogicalLineInfo> Lines => _lines;
@@ -22,14 +21,16 @@ public sealed class LogicalLineIndex
     public int LineCount => _lines.Count + (_hasPendingLine ? 1 : 0);
 
     /// <summary>
-    /// Scan <paramref name="utf8"/> for line endings (LF, CRLF, CR).
-    /// Lines ending with a newline are committed immediately. Trailing
-    /// content without a newline is held as a pending line.
+    ///     Scan <paramref name="utf8" /> for line endings (LF, CRLF, CR).
+    ///     Lines ending with a newline are committed immediately. Trailing
+    ///     content without a newline is held as a pending line.
     /// </summary>
     public void AppendScan(ReadOnlySpan<byte> utf8, long globalByteStart)
     {
         if (utf8.IsEmpty)
+        {
             return;
+        }
 
         int i = 0;
 
@@ -106,14 +107,18 @@ public sealed class LogicalLineIndex
         }
 
         int length = (int)(byteEnd - _pendingLineStart!.Value);
-        if (length < 0) length = 0;
+        if (length < 0)
+        {
+            length = 0;
+        }
+
         _lines.Add(new LogicalLineInfo(_pendingLineStart!.Value, length, _lines.Count));
         _hasPendingLine = false;
         _pendingLineStart = null;
     }
 
     /// <summary>
-    /// Finalize and commit any pending incomplete line.
+    ///     Finalize and commit any pending incomplete line.
     /// </summary>
     public void Flush(long storeLength)
     {
@@ -121,32 +126,44 @@ public sealed class LogicalLineIndex
         {
             int length = (int)(storeLength - _pendingLineStart.Value);
             if (length > 0)
+            {
                 _lines.Add(new LogicalLineInfo(_pendingLineStart.Value, length, _lines.Count));
+            }
+
             _hasPendingLine = false;
             _pendingLineStart = null;
         }
     }
 
     /// <summary>
-    /// Find the line containing the given byte offset.
-    /// Returns null if the offset is outside all lines.
+    ///     Find the line containing the given byte offset.
+    ///     Returns null if the offset is outside all lines.
     /// </summary>
     public LogicalLineInfo? FindLineContaining(long byteOffset)
     {
         if (_lines.Count == 0)
+        {
             return null;
+        }
 
-        int lo = 0, hi = _lines.Count - 1;
+        int lo = 0,
+            hi = _lines.Count - 1;
         while (lo <= hi)
         {
             int mid = lo + (hi - lo) / 2;
-            var line = _lines[mid];
+            LogicalLineInfo line = _lines[mid];
             if (byteOffset < line.ByteStart)
+            {
                 hi = mid - 1;
+            }
             else if (byteOffset >= line.ByteStart + line.ByteLength)
+            {
                 lo = mid + 1;
+            }
             else
+            {
                 return line;
+            }
         }
 
         return null;

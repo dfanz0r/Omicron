@@ -1,0 +1,117 @@
+root = true
+
+# Omicron formatting/style rules.
+# Run with:
+#   dotnet format whitespace Omicron.slnx
+#   dotnet format style Omicron.slnx
+# or simply:
+#   dotnet format Omicron.slnx
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{cs,csx}]
+# Make dotnet format enforce formatter decisions.
+dotnet_diagnostic.IDE0055.severity = warning
+
+# Line width for CSharpier/ReSharper.
+max_line_length = 120
+resharper_csharp_max_line_length = 120
+
+# ReSharper: keep object/collection initializers expanded instead of compacting them.
+resharper_csharp_place_simple_initializer_on_single_line = false
+resharper_csharp_wrap_object_and_collection_initializer_style = chop_always
+resharper_csharp_max_initializer_elements_on_line = 1
+
+# ReSharper: avoid call(\n    arg\n) style where possible.
+resharper_csharp_wrap_arguments_style = wrap_if_long
+resharper_csharp_keep_existing_invocation_parens_arrangement = false
+resharper_csharp_wrap_before_invocation_lpar = false
+resharper_csharp_wrap_after_invocation_lpar = false
+resharper_csharp_wrap_before_invocation_rpar = false
+
+# ReSharper: wrap declaration parens consistently.
+resharper_csharp_wrap_after_declaration_lpar = true
+resharper_csharp_wrap_before_declaration_rpar = false
+resharper_csharp_keep_existing_declaration_parens_arrangement = false
+
+# Braces/newlines: avoid one-line blocks like `if (...) { DoThing(); }`.
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_new_line_before_members_in_object_initializers = true
+csharp_new_line_before_members_in_anonymous_types = true
+csharp_new_line_between_query_expression_clauses = true
+csharp_preserve_single_line_blocks = true
+csharp_preserve_single_line_statements = false
+
+# Indentation.
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_indent_labels = flush_left
+csharp_indent_block_contents = true
+csharp_indent_braces = false
+csharp_indent_case_contents_when_block = true
+
+# Spacing.
+csharp_space_after_cast = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_between_parentheses = false
+csharp_space_before_colon_in_inheritance_clause = true
+csharp_space_after_colon_in_inheritance_clause = true
+csharp_space_around_binary_operators = before_and_after
+csharp_space_between_method_declaration_parameter_list_parentheses = false
+csharp_space_between_method_call_parameter_list_parentheses = false
+csharp_space_between_method_call_name_and_opening_parenthesis = false
+csharp_space_between_method_declaration_name_and_open_parenthesis = false
+csharp_space_between_empty_method_call_parentheses = false
+csharp_space_between_empty_method_declaration_parentheses = false
+csharp_space_between_square_brackets = false
+
+# Prefer block bodies where available; this discourages dense expression-bodied style in normal code.
+csharp_style_expression_bodied_methods = false:suggestion
+csharp_style_expression_bodied_constructors = false:suggestion
+csharp_style_expression_bodied_operators = false:suggestion
+csharp_style_expression_bodied_properties = when_on_single_line:suggestion
+csharp_style_expression_bodied_indexers = when_on_single_line:suggestion
+csharp_style_expression_bodied_accessors = when_on_single_line:suggestion
+csharp_style_expression_bodied_lambdas = when_on_single_line:suggestion
+csharp_style_expression_bodied_local_functions = false:suggestion
+
+# Prefer braces for control flow.
+csharp_prefer_braces = true:warning
+
+# Common C#/.NET style preferences.
+dotnet_sort_system_directives_first = true
+csharp_using_directive_placement = outside_namespace:warning
+csharp_prefer_simple_using_statement = true:suggestion
+csharp_prefer_static_local_function = true:suggestion
+csharp_style_namespace_declarations = file_scoped:suggestion
+csharp_style_prefer_method_group_conversion = true:suggestion
+csharp_style_prefer_top_level_statements = false:suggestion
+
+# var preferences: keep explicit types by default in product code.
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+# Pattern/null style.
+dotnet_style_coalesce_expression = true:suggestion
+dotnet_style_null_propagation = true:suggestion
+csharp_style_pattern_matching_over_as_with_null_check = true:suggestion
+csharp_style_pattern_matching_over_is_with_cast_check = true:suggestion
+csharp_style_prefer_not_pattern = true:suggestion
+csharp_style_prefer_null_check_over_type_check = true:suggestion
+
+# Keep reference snapshots/vendor code from being analyzed/formatted by IDE tooling.
+[READ_ONLY/**]
+generated_code = true
+
+[*.{md,yml,yaml,json,toml,xml,props,targets,csproj,slnx}]
+indent_size = 2

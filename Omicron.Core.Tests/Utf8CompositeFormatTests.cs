@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Buffers.Text;
 using System.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
@@ -8,12 +7,11 @@ using Xunit;
 namespace Omicron.Core.Tests;
 
 /// <summary>
-/// Tests for <see cref="Utf8CompositeFormat"/>.
-///
-/// <see cref="Utf8CompositeFormat.TryFormat{T1}"/> requires
-/// <c>where T : IUtf8SpanFormattable</c>.  Types that do NOT
-/// implement that interface (string, bool, object, etc.) are
-/// tested via <see cref="Utf8CompositeFormat.TryFormatSlow{T1}"/>.
+///     Tests for <see cref="Utf8CompositeFormat" />.
+///     <see cref="Utf8CompositeFormat.TryFormat{T1}" /> requires
+///     <c>where T : IUtf8SpanFormattable</c>.  Types that do NOT
+///     implement that interface (string, bool, object, etc.) are
+///     tested via <see cref="Utf8CompositeFormat.TryFormatSlow{T1}" />.
 /// </summary>
 public class Utf8CompositeFormatTests
 {
@@ -25,7 +23,7 @@ public class Utf8CompositeFormatTests
     public void EmptyFormat_ProducesEmpty()
     {
         Span<byte> dest = stackalloc byte[1];
-        Assert.True(Utf8CompositeFormat.TryFormat(""u8, dest, out var written, 42));
+        Assert.True(Utf8CompositeFormat.TryFormat(""u8, dest, out int written, 42));
         Assert.Equal(0, written);
     }
 
@@ -33,7 +31,7 @@ public class Utf8CompositeFormatTests
     public void PlainLiteral_NoPlaceholders()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("Hello, world!"u8, dest, out var written, 0));
+        Assert.True(Utf8CompositeFormat.TryFormat("Hello, world!"u8, dest, out int written, 0));
         Assert.Equal("Hello, world!", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -41,7 +39,7 @@ public class Utf8CompositeFormatTests
     public void NonAsciiLiteral()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("Café naïve 日本語 ✓"u8, dest, out var written, 0));
+        Assert.True(Utf8CompositeFormat.TryFormat("Café naïve 日本語 ✓"u8, dest, out int written, 0));
         Assert.Equal("Café naïve 日本語 ✓", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -53,7 +51,7 @@ public class Utf8CompositeFormatTests
     public void SinglePlaceholder_Int()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, 12345));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, 12345));
         Assert.Equal("12345", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -61,7 +59,7 @@ public class Utf8CompositeFormatTests
     public void PlaceholderAtStart_Int()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0} world"u8, dest, out var written, 42));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0} world"u8, dest, out int written, 42));
         Assert.Equal("42 world", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -70,7 +68,7 @@ public class Utf8CompositeFormatTests
     {
         var us = (Utf8String)"hello"u8;
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("Hello {0}"u8, dest, out var written, us));
+        Assert.True(Utf8CompositeFormat.TryFormat("Hello {0}"u8, dest, out int written, us));
         Assert.Equal("Hello hello", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -78,7 +76,7 @@ public class Utf8CompositeFormatTests
     public void PlaceholderInMiddle_Int()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("abc{0}def"u8, dest, out var written, 123));
+        Assert.True(Utf8CompositeFormat.TryFormat("abc{0}def"u8, dest, out int written, 123));
         Assert.Equal("abc123def", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -86,7 +84,7 @@ public class Utf8CompositeFormatTests
     public void TwoPlaceholders_Int()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}{1}"u8, dest, out var written, 10, 20));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}{1}"u8, dest, out int written, 10, 20));
         Assert.Equal("1020", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -94,7 +92,7 @@ public class Utf8CompositeFormatTests
     public void TwoPlaceholdersWithLiteralBetween()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0} + {1}"u8, dest, out var written, 2, 3));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0} + {1}"u8, dest, out int written, 2, 3));
         Assert.Equal("2 + 3", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -102,7 +100,7 @@ public class Utf8CompositeFormatTests
     public void ThreePlaceholders()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}.{1}.{2}"u8, dest, out var written, 1, 2, 3));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}.{1}.{2}"u8, dest, out int written, 1, 2, 3));
         Assert.Equal("1.2.3", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -110,7 +108,7 @@ public class Utf8CompositeFormatTests
     public void FourPlaceholders()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}-{1}-{2}-{3}"u8, dest, out var written, 1, 2, 3, 4));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}-{1}-{2}-{3}"u8, dest, out int written, 1, 2, 3, 4));
         Assert.Equal("1-2-3-4", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -118,7 +116,7 @@ public class Utf8CompositeFormatTests
     public void RepeatedPlaceholder()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0} + {0} = {1}"u8, dest, out var written, 2, 4));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0} + {0} = {1}"u8, dest, out int written, 2, 4));
         Assert.Equal("2 + 2 = 4", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -130,7 +128,7 @@ public class Utf8CompositeFormatTests
     public void EscapedOpenBrace()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{{Hello}}"u8, dest, out var written, 0));
+        Assert.True(Utf8CompositeFormat.TryFormat("{{Hello}}"u8, dest, out int written, 0));
         Assert.Equal("{Hello}", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -138,7 +136,7 @@ public class Utf8CompositeFormatTests
     public void EscapedBracesAroundPlaceholder()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{{ {0} }}"u8, dest, out var written, 42));
+        Assert.True(Utf8CompositeFormat.TryFormat("{{ {0} }}"u8, dest, out int written, 42));
         Assert.Equal("{ 42 }", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -146,7 +144,7 @@ public class Utf8CompositeFormatTests
     public void ConsecutiveEscapedBraces()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{{{{}}}}"u8, dest, out var written, 0));
+        Assert.True(Utf8CompositeFormat.TryFormat("{{{{}}}}"u8, dest, out int written, 0));
         Assert.Equal("{{}}", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -158,7 +156,7 @@ public class Utf8CompositeFormatTests
     public void FormatsInt()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, 12345));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, 12345));
         Assert.Equal("12345", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -166,7 +164,7 @@ public class Utf8CompositeFormatTests
     public void FormatsNegativeInt()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, -42));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, -42));
         Assert.Equal("-42", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -174,7 +172,7 @@ public class Utf8CompositeFormatTests
     public void FormatsUInt()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, 4000000000u));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, 4000000000u));
         Assert.Equal("4000000000", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -182,7 +180,7 @@ public class Utf8CompositeFormatTests
     public void FormatsLong()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, 10000000000000000L));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, 10000000000000000L));
         Assert.Equal("10000000000000000", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -190,7 +188,7 @@ public class Utf8CompositeFormatTests
     public void FormatsULong()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, 18000000000000000000UL));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, 18000000000000000000UL));
         Assert.Equal("18000000000000000000", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -199,7 +197,7 @@ public class Utf8CompositeFormatTests
     {
         var guid = new Guid("a1b2c3d4-e5f6-7890-1234-567890abcdef");
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, guid));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, guid));
         Assert.Equal(guid.ToString(), Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -208,11 +206,12 @@ public class Utf8CompositeFormatTests
     {
         var dt = new DateTime(2025, 6, 15, 14, 30, 0);
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, dt));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, dt));
         // Constrained path calls IUtf8SpanFormattable.TryFormat with default format
         Span<byte> expectedBuf = stackalloc byte[64];
-        ((IUtf8SpanFormattable)dt).TryFormat(expectedBuf, out var n, default, null);
-        Assert.Equal(Encoding.UTF8.GetString(expectedBuf[..n]), Encoding.UTF8.GetString(dest[..written]));
+        dt.TryFormat(expectedBuf, out int n);
+        Assert.Equal(Encoding.UTF8.GetString(expectedBuf[..n]),
+            Encoding.UTF8.GetString(dest[..written]));
     }
 
     [Fact]
@@ -220,10 +219,11 @@ public class Utf8CompositeFormatTests
     {
         var dto = new DateTimeOffset(2025, 6, 15, 14, 30, 0, TimeSpan.FromHours(2));
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, dto));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, dto));
         Span<byte> expectedBuf = stackalloc byte[64];
-        ((IUtf8SpanFormattable)dto).TryFormat(expectedBuf, out var n, default, null);
-        Assert.Equal(Encoding.UTF8.GetString(expectedBuf[..n]), Encoding.UTF8.GetString(dest[..written]));
+        dto.TryFormat(expectedBuf, out int n);
+        Assert.Equal(Encoding.UTF8.GetString(expectedBuf[..n]),
+            Encoding.UTF8.GetString(dest[..written]));
     }
 
     [Fact]
@@ -231,7 +231,7 @@ public class Utf8CompositeFormatTests
     {
         var ts = new TimeSpan(1, 2, 30, 15);
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, ts));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, ts));
         Assert.Equal(ts.ToString(), Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -239,7 +239,7 @@ public class Utf8CompositeFormatTests
     public void FormatsDouble()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, 3.14));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, 3.14));
         Assert.Equal("3.14", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -247,7 +247,7 @@ public class Utf8CompositeFormatTests
     public void FormatsFloat()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, 2.5f));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, 2.5f));
         Assert.Equal("2.5", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -255,7 +255,7 @@ public class Utf8CompositeFormatTests
     public void FormatsByte()
     {
         Span<byte> dest = stackalloc byte[16];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, (byte)42));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, (byte)42));
         Assert.Equal("42", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -263,7 +263,7 @@ public class Utf8CompositeFormatTests
     public void FormatsDecimal()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, 123.45m));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, 123.45m));
         Assert.Equal("123.45", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -276,7 +276,7 @@ public class Utf8CompositeFormatTests
     {
         var us = (Utf8String)"Hello from Utf8String!"u8;
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, us));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, us));
         Assert.Equal("Hello from Utf8String!", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -285,7 +285,7 @@ public class Utf8CompositeFormatTests
     {
         var us = (Utf8String)"25°C — 天気良好"u8;
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, us));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, us));
         Assert.Equal("25°C — 天気良好", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -293,7 +293,7 @@ public class Utf8CompositeFormatTests
     public void FormatsEmptyUtf8String()
     {
         Span<byte> dest = stackalloc byte[16];
-        Assert.True(Utf8CompositeFormat.TryFormat("[{0}]"u8, dest, out var written, Utf8String.Empty));
+        Assert.True(Utf8CompositeFormat.TryFormat("[{0}]"u8, dest, out int written, Utf8String.Empty));
         Assert.Equal("[]", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -302,7 +302,7 @@ public class Utf8CompositeFormatTests
     {
         Utf8String? nullUs = null;
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("[{0}]"u8, dest, out var written, nullUs));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("[{0}]"u8, dest, out int written, nullUs));
         Assert.Equal("[]", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -314,7 +314,7 @@ public class Utf8CompositeFormatTests
     public void Slow_FormatsString()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0}"u8, dest, out var written, "Hello!"));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0}"u8, dest, out int written, "Hello!"));
         Assert.Equal("Hello!", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -322,7 +322,7 @@ public class Utf8CompositeFormatTests
     public void Slow_FormatsNonAsciiString()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0}"u8, dest, out var written, "25°C — ☀️"));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0}"u8, dest, out int written, "25°C — ☀️"));
         Assert.Equal("25°C — ☀️", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -330,7 +330,7 @@ public class Utf8CompositeFormatTests
     public void Slow_FormatsNullString()
     {
         Span<byte> dest = stackalloc byte[16];
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("({0})"u8, dest, out var written, (string?)null));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("({0})"u8, dest, out int written, (string?)null));
         Assert.Equal("()", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -338,7 +338,7 @@ public class Utf8CompositeFormatTests
     public void Slow_FormatsChar()
     {
         Span<byte> dest = stackalloc byte[16];
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0}"u8, dest, out var written, 'A'));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0}"u8, dest, out int written, 'A'));
         Assert.Equal("A", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -346,7 +346,7 @@ public class Utf8CompositeFormatTests
     public void Slow_FormatsBool()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0} {1}"u8, dest, out var written, true, false));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0} {1}"u8, dest, out int written, true, false));
         Assert.Equal("True False", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -361,7 +361,7 @@ public class Utf8CompositeFormatTests
     public void Slow_StringWithLiteral()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("Hello {0}"u8, dest, out var written, "world"));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("Hello {0}"u8, dest, out int written, "world"));
         Assert.Equal("Hello world", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -369,7 +369,7 @@ public class Utf8CompositeFormatTests
     public void Slow_TwoStrings()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0}{1}"u8, dest, out var written, "ab", "cd"));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0}{1}"u8, dest, out int written, "ab", "cd"));
         Assert.Equal("abcd", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -381,27 +381,27 @@ public class Utf8CompositeFormatTests
     public void InsufficientDest_ReturnsFalse()
     {
         Span<byte> dest = stackalloc byte[3];
-        Assert.False(Utf8CompositeFormat.TryFormat("Hello"u8, dest, out var written, 0));
+        Assert.False(Utf8CompositeFormat.TryFormat("Hello"u8, dest, out int written, 0));
     }
 
     [Fact]
     public void InsufficientDest_PlaceholderExpansion()
     {
         Span<byte> dest = stackalloc byte[3];
-        Assert.False(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, 12345));
+        Assert.False(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, 12345));
     }
 
     [Fact]
     public void InsufficientDest_PartialLiteralBeforeFailure()
     {
-        var dest = new byte[2];
-        Assert.False(Utf8CompositeFormat.TryFormat("abc{0}"u8, dest, out var written, 99));
+        byte[] dest = new byte[2];
+        Assert.False(Utf8CompositeFormat.TryFormat("abc{0}"u8, dest, out int written, 99));
     }
 
     [Fact]
     public void MalformedOpenBraceNoDigits_Throws()
     {
-        var dest = new byte[16];
+        byte[] dest = new byte[16];
         Assert.Throws<FormatException>(() =>
             Utf8CompositeFormat.TryFormat("abc{}def"u8, dest, out _, 42));
     }
@@ -409,7 +409,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void MalformedUnclosedBrace_Throws()
     {
-        var dest = new byte[16];
+        byte[] dest = new byte[16];
         Assert.Throws<FormatException>(() =>
             Utf8CompositeFormat.TryFormat("abc{0"u8, dest, out _, 42));
     }
@@ -417,7 +417,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void MalformedUnmatchedCloseBrace_Throws()
     {
-        var dest = new byte[16];
+        byte[] dest = new byte[16];
         Assert.Throws<FormatException>(() =>
             Utf8CompositeFormat.TryFormat("abc}def"u8, dest, out _, 42));
     }
@@ -425,7 +425,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void MalformedNonDigitInPlaceholder_Throws()
     {
-        var dest = new byte[16];
+        byte[] dest = new byte[16];
         Assert.Throws<FormatException>(() =>
             Utf8CompositeFormat.TryFormat("{0a}"u8, dest, out _, 42));
     }
@@ -433,7 +433,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void IndexOutOfRange_Throws()
     {
-        var dest = new byte[16];
+        byte[] dest = new byte[16];
         Assert.Throws<FormatException>(() =>
             Utf8CompositeFormat.TryFormat("{0}{1}"u8, dest, out _, 42));
     }
@@ -441,7 +441,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void IndexOutOfRange_ThreeArgs()
     {
-        var dest = new byte[16];
+        byte[] dest = new byte[16];
         Assert.Throws<FormatException>(() =>
             Utf8CompositeFormat.TryFormat("{0}{3}"u8, dest, out _, 1, 2, 3));
     }
@@ -454,7 +454,7 @@ public class Utf8CompositeFormatTests
     public void DictFormatterSyntax()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("Test {0} 123 {1}"u8, dest, out var written, 321, 456));
+        Assert.True(Utf8CompositeFormat.TryFormat("Test {0} 123 {1}"u8, dest, out int written, 321, 456));
         Assert.Equal("Test 321 123 456", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -462,7 +462,7 @@ public class Utf8CompositeFormatTests
     public void LiteralWithEscapedBracesAndPlaceholder()
     {
         Span<byte> dest = stackalloc byte[256];
-        Assert.True(Utf8CompositeFormat.TryFormat("{{literal {0} braces}}"u8, dest, out var written, 42));
+        Assert.True(Utf8CompositeFormat.TryFormat("{{literal {0} braces}}"u8, dest, out int written, 42));
         Assert.Equal("{literal 42 braces}", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -470,9 +470,10 @@ public class Utf8CompositeFormatTests
     public void EscapedBracesOnly()
     {
         Span<byte> dest = stackalloc byte[16];
-        Assert.True(Utf8CompositeFormat.TryFormat("{{{{}}}}"u8, dest, out var written, 0));
+        Assert.True(Utf8CompositeFormat.TryFormat("{{{{}}}}"u8, dest, out int written, 0));
         Assert.Equal("{{}}", Encoding.UTF8.GetString(dest[..written]));
     }
+
     // ──────────────────────────────────────────────
     //  Writer/builder API (Phase 2)
     // ──────────────────────────────────────────────
@@ -480,7 +481,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void FormatToWriter_Int()
     {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var buffer = new ArrayBufferWriter<byte>();
         Utf8CompositeFormat.Format(ref buffer, "Value: {0}"u8, 42);
         Assert.Equal("Value: 42", Encoding.UTF8.GetString(buffer.WrittenSpan));
     }
@@ -488,7 +489,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void FormatToWriter_Utf8String()
     {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var buffer = new ArrayBufferWriter<byte>();
         var us = (Utf8String)"hello"u8;
         Utf8CompositeFormat.Format(ref buffer, "[{0}]"u8, us);
         Assert.Equal("[hello]", Encoding.UTF8.GetString(buffer.WrittenSpan));
@@ -497,7 +498,7 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void FormatToWriter_TwoArgs()
     {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var buffer = new ArrayBufferWriter<byte>();
         Utf8CompositeFormat.Format(ref buffer, "{0}-{1}"u8, 10, 20);
         Assert.Equal("10-20", Encoding.UTF8.GetString(buffer.WrittenSpan));
     }
@@ -505,19 +506,22 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void AppendFormatUtf8Builder_Int()
     {
-        var builder = Utf8Text.CreateBuilder();
+        Utf8Builder builder = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8(ref builder, "Score: {0}"u8, 99);
             Assert.Equal("Score: 99", builder.ToString());
         }
-        finally { builder.Dispose(); }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
     [Fact]
     public void AppendFormatUtf8Builder_Mixed()
     {
-        var builder = Utf8Text.CreateBuilder();
+        Utf8Builder builder = Utf8Text.CreateBuilder();
         try
         {
             builder.AppendLiteral("Start|"u8);
@@ -525,13 +529,16 @@ public class Utf8CompositeFormatTests
             builder.AppendLiteral("|End"u8);
             Assert.Equal("Start|1-2|End", builder.ToString());
         }
-        finally { builder.Dispose(); }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
     [Fact]
     public void FormatSlowToWriter_String()
     {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var buffer = new ArrayBufferWriter<byte>();
         Utf8CompositeFormat.FormatSlow(ref buffer, "Hello {0}"u8, "world");
         Assert.Equal("Hello world", Encoding.UTF8.GetString(buffer.WrittenSpan));
     }
@@ -539,13 +546,16 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void AppendFormatUtf8SlowBuilder_String()
     {
-        var builder = Utf8Text.CreateBuilder();
+        Utf8Builder builder = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref builder, "{0}"u8, "test");
             Assert.Equal("test", builder.ToString());
         }
-        finally { builder.Dispose(); }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
     [Fact]
@@ -553,13 +563,13 @@ public class Utf8CompositeFormatTests
     {
         var format = "{0} + {1} = {2}"u8;
         Span<byte> span = stackalloc byte[64];
-        Utf8CompositeFormat.TryFormat(format, span, out var written, 1, 2, 3);
+        Utf8CompositeFormat.TryFormat(format, span, out int written, 1, 2, 3);
 
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var buffer = new ArrayBufferWriter<byte>();
         Utf8CompositeFormat.Format(ref buffer, format, 1, 2, 3);
 
-        var expected = Encoding.UTF8.GetString(span[..written]);
-        var actual = Encoding.UTF8.GetString(buffer.WrittenSpan);
+        string expected = Encoding.UTF8.GetString(span[..written]);
+        string actual = Encoding.UTF8.GetString(buffer.WrittenSpan);
         Assert.Equal(expected, actual);
     }
 
@@ -568,15 +578,18 @@ public class Utf8CompositeFormatTests
     {
         var format = "Hello {0}"u8;
         Span<byte> span = stackalloc byte[64];
-        Utf8CompositeFormat.TryFormat(format, span, out var written, 42);
+        Utf8CompositeFormat.TryFormat(format, span, out int written, 42);
 
-        var builder = Utf8Text.CreateBuilder();
+        Utf8Builder builder = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8(ref builder, format, 42);
             Assert.Equal(Encoding.UTF8.GetString(span[..written]), builder.ToString());
         }
-        finally { builder.Dispose(); }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
     [Fact]
@@ -584,38 +597,43 @@ public class Utf8CompositeFormatTests
     {
         var val = new CustomFormattable(42);
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out var written, val));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0}"u8, dest, out int written, val));
         Assert.Equal("Custom(42)", Encoding.UTF8.GetString(dest[..written]));
     }
 
     [Fact]
     public void LargeString_FormatSlowToWriter()
     {
-        var large = new string('A', 50000);
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        string large = new('A', 50000);
+        var buffer = new ArrayBufferWriter<byte>();
         Utf8CompositeFormat.FormatSlow(ref buffer, "{0}"u8, large);
         Assert.Equal(50000, buffer.WrittenSpan.Length);
         for (int i = 0; i < buffer.WrittenSpan.Length; i++)
+        {
             Assert.Equal((byte)'A', buffer.WrittenSpan[i]);
+        }
     }
 
     [Fact]
     public void LargeString_AppendFormatUtf8Slow()
     {
-        var large = new string('B', 50000);
-        var builder = Utf8Text.CreateBuilder();
+        string large = new('B', 50000);
+        Utf8Builder builder = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref builder, "{0}"u8, large);
             Assert.Equal(50000, builder.Length);
         }
-        finally { builder.Dispose(); }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
     [Fact]
     public void UnsupportedType_FormatSlowToWriter_Throws()
     {
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        var buffer = new ArrayBufferWriter<byte>();
         Assert.Throws<InvalidOperationException>(() =>
             Utf8CompositeFormat.FormatSlow(ref buffer, "{0}"u8, new object()));
     }
@@ -623,13 +641,16 @@ public class Utf8CompositeFormatTests
     [Fact]
     public void UnsupportedType_AppendFormatUtf8Slow_Throws()
     {
-        var builder = Utf8Text.CreateBuilder();
+        Utf8Builder builder = Utf8Text.CreateBuilder();
         try
         {
             Assert.Throws<InvalidOperationException>(() =>
                 Utf8CompositeFormat.AppendFormatUtf8Slow(ref builder, "{0}"u8, new object()));
         }
-        finally { builder.Dispose(); }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 }
 
@@ -647,7 +668,7 @@ public class Utf8CompositeFormatPhase4Tests
     public void FormatHexSpecifier()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0:X2}"u8, dest, out var written, 255));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0:X2}"u8, dest, out int written, 255));
         Assert.Equal("FF", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -655,7 +676,7 @@ public class Utf8CompositeFormatPhase4Tests
     public void FormatDecimalSpecifier()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0:D5}"u8, dest, out var written, 42));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0:D5}"u8, dest, out int written, 42));
         Assert.Equal("00042", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -663,7 +684,7 @@ public class Utf8CompositeFormatPhase4Tests
     public void FormatNumberSpecifier()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0:N}"u8, dest, out var written, 1234));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0:N}"u8, dest, out int written, 1234));
         Assert.Contains("1,234", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -671,7 +692,7 @@ public class Utf8CompositeFormatPhase4Tests
     public void FormatFixedPointSpecifier()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0:F2}"u8, dest, out var written, 3.14));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0:F2}"u8, dest, out int written, 3.14));
         Assert.Equal("3.14", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -683,8 +704,8 @@ public class Utf8CompositeFormatPhase4Tests
     public void AlignRight()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("'{0,10}'"u8, dest, out var written, 42));
-        var s = Encoding.UTF8.GetString(dest[..written]);
+        Assert.True(Utf8CompositeFormat.TryFormat("'{0,10}'"u8, dest, out int written, 42));
+        string s = Encoding.UTF8.GetString(dest[..written]);
         Assert.Equal("'        42'", s);
     }
 
@@ -692,8 +713,8 @@ public class Utf8CompositeFormatPhase4Tests
     public void AlignLeft()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("'{0,-10}'"u8, dest, out var written, 42));
-        var s = Encoding.UTF8.GetString(dest[..written]);
+        Assert.True(Utf8CompositeFormat.TryFormat("'{0,-10}'"u8, dest, out int written, 42));
+        string s = Encoding.UTF8.GetString(dest[..written]);
         Assert.Equal("'42        '", s);
     }
 
@@ -701,8 +722,8 @@ public class Utf8CompositeFormatPhase4Tests
     public void FormatSpecAndAlignment()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("'{0,8:X2}'"u8, dest, out var written, 255));
-        var s = Encoding.UTF8.GetString(dest[..written]);
+        Assert.True(Utf8CompositeFormat.TryFormat("'{0,8:X2}'"u8, dest, out int written, 255));
+        string s = Encoding.UTF8.GetString(dest[..written]);
         Assert.Equal("'      FF'", s);
     }
 
@@ -710,7 +731,7 @@ public class Utf8CompositeFormatPhase4Tests
     public void PlaceholderWithSpecifierAndLiteral()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("Hex: {0:X}"u8, dest, out var written, 255));
+        Assert.True(Utf8CompositeFormat.TryFormat("Hex: {0:X}"u8, dest, out int written, 255));
         Assert.Equal("Hex: FF", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -718,7 +739,7 @@ public class Utf8CompositeFormatPhase4Tests
     public void MultipleSpecifiers()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormat("{0:X2} {1:D3}"u8, dest, out var written, 255, 7));
+        Assert.True(Utf8CompositeFormat.TryFormat("{0:X2} {1:D3}"u8, dest, out int written, 255, 7));
         Assert.Equal("FF 007", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -729,7 +750,7 @@ public class Utf8CompositeFormatPhase4Tests
         // But for string/bool/char, specifiers are not applied (they just format default).
         // For string, format spec has no meaning, so the output is the string itself.
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0}"u8, dest, out var written, "hello"));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0}"u8, dest, out int written, "hello"));
         Assert.Equal("hello", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -738,7 +759,7 @@ public class Utf8CompositeFormatPhase4Tests
     {
         Span<byte> dest = stackalloc byte[64];
         // string + alignment through slow path
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("'{0,10}'"u8, dest, out var written, "hi"));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("'{0,10}'"u8, dest, out int written, "hi"));
         Assert.Equal("'        hi'", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -747,7 +768,7 @@ public class Utf8CompositeFormatPhase4Tests
     {
         Span<byte> dest = stackalloc byte[64];
         // Format specifier :X2 through the slow path should produce "FF" not "255"
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0:X2}"u8, dest, out var written, 255));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0:X2}"u8, dest, out int written, 255));
         Assert.Equal("FF", Encoding.UTF8.GetString(dest[..written]));
     }
 
@@ -755,14 +776,14 @@ public class Utf8CompositeFormatPhase4Tests
     public void SlowPath_FormatSpecifier_IntDecimal()
     {
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0:D5}"u8, dest, out var written, 42));
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0:D5}"u8, dest, out int written, 42));
         Assert.Equal("00042", Encoding.UTF8.GetString(dest[..written]));
     }
 
     [Fact]
     public void NonAsciiSpecifier_Throws()
     {
-        var dest = new byte[64];
+        byte[] dest = new byte[64];
         Assert.Throws<FormatException>(() =>
             Utf8CompositeFormat.TryFormat("{0:\u00e9}"u8, dest, out _, 42));
     }
@@ -770,26 +791,25 @@ public class Utf8CompositeFormatPhase4Tests
     [Fact]
     public void PreparedFormat_WithHexSpecifier()
     {
-        var prepared = Utf8CompositeFormat.Prepare<int>("{0:X2}"u8);
+        PreparedUtf8CompositeFormat<int> prepared = Utf8CompositeFormat.Prepare<int>("{0:X2}"u8);
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(prepared.TryFormat(dest, out var written, 255));
+        Assert.True(prepared.TryFormat(dest, out int written, 255));
         Assert.Equal("FF", Encoding.UTF8.GetString(dest[..written]));
     }
 
     [Fact]
     public void PreparedFormat_WithAlignment()
     {
-        var prepared = Utf8CompositeFormat.Prepare<int>("'{0,8}'"u8);
+        PreparedUtf8CompositeFormat<int> prepared = Utf8CompositeFormat.Prepare<int>("'{0,8}'"u8);
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(prepared.TryFormat(dest, out var written, 42));
+        Assert.True(prepared.TryFormat(dest, out int written, 42));
         Assert.Equal("'      42'", Encoding.UTF8.GetString(dest[..written]));
     }
 
     [Fact]
     public void Prepared_NonAsciiSpecifier_ThrowsAtPrepare()
     {
-        Assert.Throws<FormatException>(() =>
-            Utf8CompositeFormat.Prepare<int>("{0:\u00e9}"u8));
+        Assert.Throws<FormatException>(() => Utf8CompositeFormat.Prepare<int>("{0:\u00e9}"u8));
     }
 }
 
@@ -798,47 +818,47 @@ public class Utf8CompositeFormatPreparedTests
     [Fact]
     public void PreparedFormat_OneArg_MatchesTryFormat()
     {
-        var prepared = Utf8CompositeFormat.Prepare<int>("Value: {0}"u8);
+        PreparedUtf8CompositeFormat<int> prepared = Utf8CompositeFormat.Prepare<int>("Value: {0}"u8);
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(prepared.TryFormat(dest, out var written, 42));
+        Assert.True(prepared.TryFormat(dest, out int written, 42));
         Assert.Equal("Value: 42", Encoding.UTF8.GetString(dest[..written]));
     }
 
     [Fact]
     public void PreparedFormat_TwoArgs_MatchesTryFormat()
     {
-        var prepared = Utf8CompositeFormat.Prepare<int, int>("{0} + {1}"u8);
+        PreparedUtf8CompositeFormat<int, int> prepared = Utf8CompositeFormat.Prepare<int, int>("{0} + {1}"u8);
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(prepared.TryFormat(dest, out var written, 3, 4));
+        Assert.True(prepared.TryFormat(dest, out int written, 3, 4));
         Assert.Equal("3 + 4", Encoding.UTF8.GetString(dest[..written]));
     }
 
     [Fact]
     public void PreparedFormat_WithEscapedBraces()
     {
-        var prepared = Utf8CompositeFormat.Prepare<int>("{{literal {0}}}"u8);
+        PreparedUtf8CompositeFormat<int> prepared = Utf8CompositeFormat.Prepare<int>("{{literal {0}}}"u8);
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(prepared.TryFormat(dest, out var written, 99));
+        Assert.True(prepared.TryFormat(dest, out int written, 99));
         Assert.Equal("{literal 99}", Encoding.UTF8.GetString(dest[..written]));
     }
 
     [Fact]
     public void PreparedFormat_Utf8StringArg()
     {
-        var prepared = Utf8CompositeFormat.Prepare<Utf8String>("Hello {0}"u8);
+        PreparedUtf8CompositeFormat<Utf8String> prepared = Utf8CompositeFormat.Prepare<Utf8String>("Hello {0}"u8);
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(prepared.TryFormat(dest, out var written, (Utf8String)"world"u8));
+        Assert.True(prepared.TryFormat(dest, out int written, "world"u8));
         Assert.Equal("Hello world", Encoding.UTF8.GetString(dest[..written]));
     }
 
     [Fact]
     public void PreparedFormat_RepeatedUses_ProduceSameOutput()
     {
-        var prepared = Utf8CompositeFormat.Prepare<int, int>("{0} x {1} = {0}"u8);
+        PreparedUtf8CompositeFormat<int, int> prepared = Utf8CompositeFormat.Prepare<int, int>("{0} x {1} = {0}"u8);
         Span<byte> dest1 = stackalloc byte[64];
         Span<byte> dest2 = stackalloc byte[64];
-        Assert.True(prepared.TryFormat(dest1, out var w1, 3, 4));
-        Assert.True(prepared.TryFormat(dest2, out var w2, 3, 4));
+        Assert.True(prepared.TryFormat(dest1, out int w1, 3, 4));
+        Assert.True(prepared.TryFormat(dest2, out int w2, 3, 4));
         Assert.Equal("3 x 4 = 3", Encoding.UTF8.GetString(dest1[..w1]));
         Assert.Equal(w1, w2);
     }
@@ -849,33 +869,36 @@ public class Utf8CompositeFormatPreparedTests
         // Verify prepared output matches one-shot output
         var format = "{{{0}}} - {1}"u8;
         Span<byte> dest = stackalloc byte[64];
-        Utf8CompositeFormat.TryFormat(format, dest, out var written, 1, 2);
+        Utf8CompositeFormat.TryFormat(format, dest, out int written, 1, 2);
 
-        var prepared = Utf8CompositeFormat.Prepare<int, int>(format);
+        PreparedUtf8CompositeFormat<int, int> prepared = Utf8CompositeFormat.Prepare<int, int>(format);
         Span<byte> preparedDest = stackalloc byte[64];
-        Assert.True(prepared.TryFormat(preparedDest, out var pw, 1, 2));
+        Assert.True(prepared.TryFormat(preparedDest, out int pw, 1, 2));
 
-        Assert.Equal(Encoding.UTF8.GetString(dest[..written]), Encoding.UTF8.GetString(preparedDest[..pw]));
+        Assert.Equal(Encoding.UTF8.GetString(dest[..written]),
+            Encoding.UTF8.GetString(preparedDest[..pw]));
         Assert.Equal(written, pw);
     }
 
     [Fact]
     public void PreparedFormat_FormatToWriter_MatchesTryFormat()
     {
-        var prepared = Utf8CompositeFormat.Prepare<int, int, int>("{0} + {1} = {2}"u8);
-        var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+        PreparedUtf8CompositeFormat<int, int, int> prepared =
+            Utf8CompositeFormat.Prepare<int, int, int>("{0} + {1} = {2}"u8);
+        var buffer = new ArrayBufferWriter<byte>();
         prepared.Format(ref buffer, 1, 2, 3);
 
         Span<byte> dest = stackalloc byte[64];
-        Utf8CompositeFormat.TryFormat("{0} + {1} = {2}"u8, dest, out var written, 1, 2, 3);
+        Utf8CompositeFormat.TryFormat("{0} + {1} = {2}"u8, dest, out int written, 1, 2, 3);
 
-        Assert.Equal(Encoding.UTF8.GetString(dest[..written]), Encoding.UTF8.GetString(buffer.WrittenSpan));
+        Assert.Equal(Encoding.UTF8.GetString(dest[..written]),
+            Encoding.UTF8.GetString(buffer.WrittenSpan));
     }
 
     [Fact]
     public void PreparedFormat_InsufficientSpace_ReturnsFalse()
     {
-        var prepared = Utf8CompositeFormat.Prepare<int>("{0}"u8);
+        PreparedUtf8CompositeFormat<int> prepared = Utf8CompositeFormat.Prepare<int>("{0}"u8);
         Span<byte> dest = stackalloc byte[2];
         Assert.False(prepared.TryFormat(dest, out _, 999));
     }
@@ -884,17 +907,16 @@ public class Utf8CompositeFormatPreparedTests
     public void PreparedFormat_IndexTooHigh_ThrowsAtPrepare()
     {
         // {2} exceeds max index 1 for 2-arg prepared format
-        Assert.Throws<FormatException>(() =>
-            Utf8CompositeFormat.Prepare<int, int>("{0} {2}"u8));
+        Assert.Throws<FormatException>(() => Utf8CompositeFormat.Prepare<int, int>("{0} {2}"u8));
     }
 
     [Fact]
     public void PreparedFormat_IndexWithinRange_Succeeds()
     {
         // {1} is valid for 2-arg format
-        var prepared = Utf8CompositeFormat.Prepare<int, int>("{1}"u8);
+        PreparedUtf8CompositeFormat<int, int> prepared = Utf8CompositeFormat.Prepare<int, int>("{1}"u8);
         Span<byte> dest = stackalloc byte[64];
-        Assert.True(prepared.TryFormat(dest, out var written, 0, 99));
+        Assert.True(prepared.TryFormat(dest, out int written, 0, 99));
         Assert.Equal("99", Encoding.UTF8.GetString(dest[..written]));
     }
 }
@@ -903,12 +925,25 @@ public class Utf8CompositeFormatPreparedTests
 internal sealed class CustomFormattable : IUtf8SpanFormattable
 {
     private readonly int _value;
-    public CustomFormattable(int value) => _value = value;
 
-    public bool TryFormat(Span<byte> destination, out int written, ReadOnlySpan<char> format, IFormatProvider? provider)
+    public CustomFormattable(int value)
     {
-        var text = System.Text.Encoding.UTF8.GetBytes($"Custom({_value})");
-        if (text.Length > destination.Length) { written = 0; return false; }
+        _value = value;
+    }
+
+    public bool TryFormat(
+        Span<byte> destination,
+        out int written,
+        ReadOnlySpan<char> format,
+        IFormatProvider? provider)
+    {
+        byte[] text = Encoding.UTF8.GetBytes($"Custom({_value})");
+        if (text.Length > destination.Length)
+        {
+            written = 0;
+            return false;
+        }
+
         text.CopyTo(destination);
         written = text.Length;
         return true;

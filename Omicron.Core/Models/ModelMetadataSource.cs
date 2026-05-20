@@ -1,7 +1,7 @@
 namespace Omicron.Core.Models;
 
 /// <summary>
-/// Provides model metadata from an external or internal source.
+///     Provides model metadata from an external or internal source.
 /// </summary>
 public interface IModelMetadataSource
 {
@@ -13,7 +13,7 @@ public interface IModelMetadataSource
 }
 
 /// <summary>
-/// A model metadata source scoped to a specific provider.
+///     A model metadata source scoped to a specific provider.
 /// </summary>
 public interface IProviderModelMetadataSource : IModelMetadataSource
 {
@@ -22,19 +22,19 @@ public interface IProviderModelMetadataSource : IModelMetadataSource
 }
 
 /// <summary>
-/// Merges multiple metadata sources with deterministic precedence.
-/// Earlier sources provide baseline; later sources override fields they explicitly provide (non-null).
+///     Merges multiple metadata sources with deterministic precedence.
+///     Earlier sources provide baseline; later sources override fields they explicitly provide (non-null).
 /// </summary>
 public interface IModelMetadataMerger
 {
     /// <summary>
-    /// Merge metadata from multiple sources, ordered by precedence (earlier = baseline, later = override).
+    ///     Merge metadata from multiple sources, ordered by precedence (earlier = baseline, later = override).
     /// </summary>
     IReadOnlyList<ModelMetadata> Merge(params IReadOnlyList<ModelMetadata>[] sources);
 }
 
 /// <summary>
-/// Default merger: later sources override earlier sources for non-null fields only.
+///     Default merger: later sources override earlier sources for non-null fields only.
 /// </summary>
 public sealed class ModelMetadataMerger : IModelMetadataMerger
 {
@@ -42,34 +42,49 @@ public sealed class ModelMetadataMerger : IModelMetadataMerger
 
     public IReadOnlyList<ModelMetadata> Merge(params IReadOnlyList<ModelMetadata>[] sources)
     {
-        if (sources.Length == 0) return Array.Empty<ModelMetadata>();
+        if (sources.Length == 0)
+        {
+            return Array.Empty<ModelMetadata>();
+        }
 
         var merged = new Dictionary<(string, string), ModelMetadata>(_keyComparer);
 
         foreach (var source in sources)
         {
-            if (source is null) continue;
+            if (source is null)
+            {
+                continue;
+            }
 
             foreach (var entry in source)
             {
-                if (entry is null) continue;
-                var key = (entry.ModelId, entry.ProviderName);
+                if (entry is null)
+                {
+                    continue;
+                }
 
-                if (merged.TryGetValue(key, out var existing))
+                (string ModelId, string ProviderName) key = (entry.ModelId, entry.ProviderName);
+
+                if (merged.TryGetValue(key, out ModelMetadata? existing))
+                {
                     merged[key] = Overlay(existing, entry);
+                }
                 else
+                {
                     merged[key] = entry;
+                }
             }
         }
 
-        return merged.Values
-            .OrderBy(m => m.ProviderName, StringComparer.OrdinalIgnoreCase)
+        return merged
+            .Values.OrderBy(m => m.ProviderName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(m => m.ModelId, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
     private static ModelMetadata Overlay(ModelMetadata existing, ModelMetadata overlay)
-        => existing with
+    {
+        return existing with
         {
             DisplayName = overlay.DisplayName ?? existing.DisplayName,
             ContextWindow = overlay.ContextWindow ?? existing.ContextWindow,
@@ -77,12 +92,16 @@ public sealed class ModelMetadataMerger : IModelMetadataMerger
             SupportsTools = overlay.SupportsTools ?? existing.SupportsTools,
             SupportsReasoning = overlay.SupportsReasoning ?? existing.SupportsReasoning,
             SupportsVision = overlay.SupportsVision ?? existing.SupportsVision,
-            SupportsStructuredOutput = overlay.SupportsStructuredOutput ?? existing.SupportsStructuredOutput,
-            InputPricePerMillionTokens = overlay.InputPricePerMillionTokens ?? existing.InputPricePerMillionTokens,
-            OutputPricePerMillionTokens = overlay.OutputPricePerMillionTokens ?? existing.OutputPricePerMillionTokens,
+            SupportsStructuredOutput =
+            overlay.SupportsStructuredOutput ?? existing.SupportsStructuredOutput,
+            InputPricePerMillionTokens =
+            overlay.InputPricePerMillionTokens ?? existing.InputPricePerMillionTokens,
+            OutputPricePerMillionTokens =
+            overlay.OutputPricePerMillionTokens ?? existing.OutputPricePerMillionTokens,
             LastUpdatedAt = overlay.LastUpdatedAt ?? existing.LastUpdatedAt,
-            Source = overlay.Source ?? existing.Source,
+            Source = overlay.Source ?? existing.Source
         };
+    }
 }
 
 internal sealed class CaseInsensitiveTupleComparer : IEqualityComparer<(string, string)>
@@ -90,8 +109,12 @@ internal sealed class CaseInsensitiveTupleComparer : IEqualityComparer<(string, 
     private static readonly StringComparer _cmp = StringComparer.OrdinalIgnoreCase;
 
     public bool Equals((string, string) x, (string, string) y)
-        => _cmp.Equals(x.Item1, y.Item1) && _cmp.Equals(x.Item2, y.Item2);
+    {
+        return _cmp.Equals(x.Item1, y.Item1) && _cmp.Equals(x.Item2, y.Item2);
+    }
 
     public int GetHashCode((string, string) obj)
-        => HashCode.Combine(_cmp.GetHashCode(obj.Item1), _cmp.GetHashCode(obj.Item2));
+    {
+        return HashCode.Combine(_cmp.GetHashCode(obj.Item1), _cmp.GetHashCode(obj.Item2));
+    }
 }

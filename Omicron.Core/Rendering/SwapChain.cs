@@ -3,22 +3,16 @@ using System.Buffers;
 namespace Omicron.Core.Rendering;
 
 /// <summary>
-/// Double-buffering swap chain for the terminal frame buffer.
-/// <see cref="Current"/> is the back buffer (being drawn to),
-/// <see cref="Previous"/> is the front buffer (last rendered).
-/// <see cref="Swap"/> exchanges them without copying cells.
+///     Double-buffering swap chain for the terminal frame buffer.
+///     <see cref="Current" /> is the back buffer (being drawn to),
+///     <see cref="Previous" /> is the front buffer (last rendered).
+///     <see cref="Swap" /> exchanges them without copying cells.
 /// </summary>
 public sealed class SwapChain
 {
-    private TerminalFrame _frameA;
-    private TerminalFrame _frameB;
+    private readonly TerminalFrame _frameA;
+    private readonly TerminalFrame _frameB;
     private bool _useA;
-
-    /// <summary>The back buffer (being drawn to).</summary>
-    public TerminalFrame Current => _useA ? _frameA : _frameB;
-
-    /// <summary>The front buffer (last rendered).</summary>
-    public TerminalFrame Previous => _useA ? _frameB : _frameA;
 
     public SwapChain(int width, int height)
     {
@@ -26,9 +20,15 @@ public sealed class SwapChain
         _frameB = new TerminalFrame(width, height);
     }
 
+    /// <summary>The back buffer (being drawn to).</summary>
+    public TerminalFrame Current => _useA ? _frameA : _frameB;
+
+    /// <summary>The front buffer (last rendered).</summary>
+    public TerminalFrame Previous => _useA ? _frameB : _frameA;
+
     /// <summary>
-    /// Swap buffers: the current back buffer becomes the new front buffer.
-    /// The old front buffer is cleared and becomes the new back buffer.
+    ///     Swap buffers: the current back buffer becomes the new front buffer.
+    ///     The old front buffer is cleared and becomes the new back buffer.
     /// </summary>
     public void Swap()
     {
@@ -45,17 +45,19 @@ public sealed class SwapChain
     }
 
     /// <summary>
-    /// Compute the diff between <see cref="Previous"/> and <see cref="Current"/>
-    /// and emit the minimal ANSI sequences to update the terminal.
-    ///
-    /// If <paramref name="useSynchronizedOutput"/> is true, wraps the diff
-    /// in DEC 2026 synchronization sequences.
+    ///     Compute the diff between <see cref="Previous" /> and <see cref="Current" />
+    ///     and emit the minimal ANSI sequences to update the terminal.
+    ///     If <paramref name="useSynchronizedOutput" /> is true, wraps the diff
+    ///     in DEC 2026 synchronization sequences.
     /// </summary>
-    public void Diff(IBufferWriter<byte> output, bool useSynchronizedOutput = false, GlyphInternTable? glyphTable = null)
+    public void Diff(
+        IBufferWriter<byte> output,
+        bool useSynchronizedOutput = false,
+        GlyphInternTable? glyphTable = null)
     {
-        var prev = Previous;
-        var cur = Current;
-        var glyphs = glyphTable ?? cur.GlyphTable;
+        TerminalFrame prev = Previous;
+        TerminalFrame cur = Current;
+        GlyphInternTable glyphs = glyphTable ?? cur.GlyphTable;
 
         int width = cur.Width;
         int height = cur.Height;
@@ -69,33 +71,45 @@ public sealed class SwapChain
 
             for (int col = 0; col < width; col++)
             {
-                var curCell = cur.Cells[row * width + col];
-                var prevCell = prev.Cells[row * width + col];
+                RenderCell curCell = cur.Cells[row * width + col];
+                RenderCell prevCell = prev.Cells[row * width + col];
 
-                if (curCell.Glyph != prevCell.Glyph ||
-                    curCell.Width != prevCell.Width ||
-                    curCell.Style != prevCell.Style)
+                if (
+                    curCell.Glyph != prevCell.Glyph
+                    || curCell.Width != prevCell.Width
+                    || curCell.Style != prevCell.Style
+                )
                 {
                     if (firstChanged == -1)
+                    {
                         firstChanged = col;
+                    }
+
                     lastChanged = col;
                 }
             }
 
             if (firstChanged == -1)
+            {
                 continue; // Entire row unchanged
+            }
 
             // Skip trailing empty cells
             while (lastChanged >= 0)
             {
-                var cell = cur.Cells[row * width + lastChanged];
+                RenderCell cell = cur.Cells[row * width + lastChanged];
                 if (!cell.IsEmpty || cell.Width > 0)
+                {
                     break;
+                }
+
                 lastChanged--;
             }
 
             if (lastChanged < firstChanged)
+            {
                 continue;
+            }
 
             // Start synchronized output on the first row that actually changes
             if (useSynchronizedOutput && !syncStarted)
@@ -113,15 +127,17 @@ public sealed class SwapChain
             // also happened to be Default, no style would be emitted and the
             // terminal's previous active style would bleed through.
             TextStyle? currentStyle = null;
-            ReadOnlySpan<byte> spaceSpan = " "u8;
+            var spaceSpan = " "u8;
 
             for (int col = firstChanged; col <= lastChanged; col++)
             {
-                var cell = cur.Cells[row * width + col];
+                RenderCell cell = cur.Cells[row * width + col];
 
                 // Skip continuation cells (width 0) — they're rendered as part of the wide char
                 if (cell.Width == 0)
+                {
                     continue;
+                }
 
                 // Emit style change if needed
                 if (cell.Style != currentStyle)
@@ -150,6 +166,8 @@ public sealed class SwapChain
         }
 
         if (syncStarted)
+        {
             AnsiEncoder.EndSynchronizedOutput(output);
+        }
     }
 }

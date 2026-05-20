@@ -4,17 +4,15 @@ using System.Text.Json;
 namespace Omicron.Core.Models;
 
 /// <summary>
-/// Fetches model metadata from https://models.dev/api.json.
-/// Maps response fields to <see cref="ModelMetadata"/>.
-/// Fail-closed: returns empty on any network/parse error.
-/// Propagates caller cancellation.
+///     Fetches model metadata from https://models.dev/api.json.
+///     Maps response fields to <see cref="ModelMetadata" />.
+///     Fail-closed: returns empty on any network/parse error.
+///     Propagates caller cancellation.
 /// </summary>
 public sealed class ModelsDevMetadataSource : IModelMetadataSource
 {
-    private readonly HttpClient _http;
     private readonly Uri _endpoint;
-
-    public string Name => "models.dev";
+    private readonly HttpClient _http;
 
     public ModelsDevMetadataSource(HttpClient? httpClient = null, Uri? endpoint = null)
     {
@@ -22,12 +20,17 @@ public sealed class ModelsDevMetadataSource : IModelMetadataSource
         _endpoint = endpoint ?? new Uri("https://models.dev/api.json");
     }
 
+    public string Name => "models.dev";
+
     public async ValueTask<IReadOnlyList<ModelMetadata>> LoadAsync(CancellationToken ct = default)
     {
         try
         {
-            using var doc = await _http.GetFromJsonAsync<JsonDocument>(_endpoint, ct);
-            if (doc is null) return Array.Empty<ModelMetadata>();
+            using JsonDocument? doc = await _http.GetFromJsonAsync<JsonDocument>(_endpoint, ct);
+            if (doc is null)
+            {
+                return Array.Empty<ModelMetadata>();
+            }
 
             return Parse(doc.RootElement);
         }
@@ -45,26 +48,34 @@ public sealed class ModelsDevMetadataSource : IModelMetadataSource
     public static IReadOnlyList<ModelMetadata> Parse(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object)
+        {
             return Array.Empty<ModelMetadata>();
+        }
 
         var results = new List<ModelMetadata>();
 
-        foreach (var providerProp in root.EnumerateObject())
+        foreach (JsonProperty providerProp in root.EnumerateObject())
         {
-            var providerName = providerProp.Name;
+            string providerName = providerProp.Name;
             if (providerProp.Value.ValueKind != JsonValueKind.Object)
-                continue;
-
-            foreach (var modelProp in providerProp.Value.EnumerateObject())
             {
-                var modelId = modelProp.Name;
-                if (modelProp.Value.ValueKind != JsonValueKind.Object)
-                    continue;
+                continue;
+            }
 
-                var entry = modelProp.Value;
-                var meta = ParseEntry(providerName, modelId, entry);
+            foreach (JsonProperty modelProp in providerProp.Value.EnumerateObject())
+            {
+                string modelId = modelProp.Name;
+                if (modelProp.Value.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                JsonElement entry = modelProp.Value;
+                ModelMetadata? meta = ParseEntry(providerName, modelId, entry);
                 if (meta is not null)
+                {
                     results.Add(meta);
+                }
             }
         }
 
@@ -75,86 +86,117 @@ public sealed class ModelsDevMetadataSource : IModelMetadataSource
     {
         try
         {
-            var displayName = entry.TryGetProperty("name", out var n) ? n.GetString() : null;
-            var contextWindow = entry.TryGetProperty("limit", out var limit)
-                ? (limit.TryGetProperty("context", out var ctx) ? ctx.GetInt32() : (int?)null)
+            string? displayName = entry.TryGetProperty("name", out JsonElement n) ? n.GetString() : null;
+            int? contextWindow = entry.TryGetProperty("limit", out JsonElement limit)
+                ? limit.TryGetProperty("context", out JsonElement ctx) ? ctx.GetInt32() : null
                 : null;
-            var maxOutput = entry.TryGetProperty("limit", out var limit2)
-                ? (limit2.TryGetProperty("output", out var outL) ? outL.GetInt32() : (int?)null)
+            int? maxOutput = entry.TryGetProperty("limit", out JsonElement limit2)
+                ? limit2.TryGetProperty("output", out JsonElement outL) ? outL.GetInt32() : null
                 : null;
 
-            bool? supportsTools = entry.TryGetProperty("tool_call", out var tc)
-                ? tc.GetBoolean() : null;
-            bool? supportsReasoning = entry.TryGetProperty("reasoning", out var r)
-                ? r.GetBoolean() : null;
-            bool? supportsStructuredOutput = entry.TryGetProperty("structured_output", out var so)
-                ? so.GetBoolean() : null;
+            bool? supportsTools = entry.TryGetProperty("tool_call", out JsonElement tc)
+                ? tc.GetBoolean()
+                : null;
+            bool? supportsReasoning = entry.TryGetProperty("reasoning", out JsonElement r)
+                ? r.GetBoolean()
+                : null;
+            bool? supportsStructuredOutput = entry.TryGetProperty("structured_output", out JsonElement so)
+                ? so.GetBoolean()
+                : null;
 
             // Modalities: parse modalities.input array
             IReadOnlySet<string>? modalities = null;
-            if (entry.TryGetProperty("modalities", out var modObj) && modObj.ValueKind == JsonValueKind.Object
-                && modObj.TryGetProperty("input", out var inp) && inp.ValueKind == JsonValueKind.Array)
+            if (
+                entry.TryGetProperty("modalities", out JsonElement modObj)
+                && modObj.ValueKind == JsonValueKind.Object
+                && modObj.TryGetProperty("input", out JsonElement inp)
+                && inp.ValueKind == JsonValueKind.Array
+            )
             {
                 var set = new HashSet<string>();
-                foreach (var m in inp.EnumerateArray())
+                foreach (JsonElement m in inp.EnumerateArray())
                 {
-                    var val = m.GetString();
-                    if (val is not null) set.Add(val);
+                    string? val = m.GetString();
+                    if (val is not null)
+                    {
+                        set.Add(val);
+                    }
                 }
-                if (set.Count > 0) modalities = set;
+
+                if (set.Count > 0)
+                {
+                    modalities = set;
+                }
             }
 
             // Vision: attachment capability or image input modality
             bool? supportsVision = null;
-            if (entry.TryGetProperty("attachment", out var att) && att.GetBoolean())
+            if (entry.TryGetProperty("attachment", out JsonElement att) && att.GetBoolean())
+            {
                 supportsVision = true;
+            }
             else if (modalities?.Contains("image") == true)
+            {
                 supportsVision = true;
+            }
 
             decimal? inputPrice = null;
             decimal? outputPrice = null;
             // models.dev uses "cost"; fall back to "pricing" if absent
-            if (!entry.TryGetProperty("cost", out var pricing))
+            if (!entry.TryGetProperty("cost", out JsonElement pricing))
+            {
                 entry.TryGetProperty("pricing", out pricing);
+            }
 
             if (pricing.ValueKind == JsonValueKind.Object)
             {
-                if (pricing.TryGetProperty("input", out var ip))
+                if (pricing.TryGetProperty("input", out JsonElement ip))
+                {
                     inputPrice = ip.GetDecimal();
-                if (pricing.TryGetProperty("output", out var op))
+                }
+
+                if (pricing.TryGetProperty("output", out JsonElement op))
+                {
                     outputPrice = op.GetDecimal();
+                }
             }
 
             // Convert from per-token to per-million-tokens if values are small
             if (inputPrice.HasValue && inputPrice < 1m)
+            {
                 inputPrice *= 1_000_000;
-            if (outputPrice.HasValue && outputPrice < 1m)
-                outputPrice *= 1_000_000;
+            }
 
-            DateTimeOffset? lastUpdated = entry.TryGetProperty("updated", out var upd)
-                ? (upd.TryGetDateTimeOffset(out var dt) ? dt : (DateTimeOffset?)null)
+            if (outputPrice.HasValue && outputPrice < 1m)
+            {
+                outputPrice *= 1_000_000;
+            }
+
+            DateTimeOffset? lastUpdated = entry.TryGetProperty("updated", out JsonElement upd)
+                ? upd.TryGetDateTimeOffset(out DateTimeOffset dt) ? dt : null
                 : null;
 
             // Normalize model ID: strip provider name prefix only when it matches
-            var normalizedId = modelId;
+            string normalizedId = modelId;
             if (normalizedId.StartsWith(providerName + "/", StringComparison.OrdinalIgnoreCase))
+            {
                 normalizedId = normalizedId[(providerName.Length + 1)..];
+            }
 
-            return new ModelMetadata(
-                ModelId: normalizedId,
-                ProviderName: providerName,
-                DisplayName: displayName,
-                ContextWindow: contextWindow,
-                MaxOutputTokens: maxOutput,
-                SupportsTools: supportsTools,
-                SupportsReasoning: supportsReasoning,
-                SupportsVision: supportsVision,
-                SupportsStructuredOutput: supportsStructuredOutput,
-                InputPricePerMillionTokens: inputPrice,
-                OutputPricePerMillionTokens: outputPrice,
-                LastUpdatedAt: lastUpdated,
-                Source: "models.dev",
-                Modalities: modalities);
+            return new ModelMetadata(normalizedId,
+                providerName,
+                displayName,
+                contextWindow,
+                maxOutput,
+                supportsTools,
+                supportsReasoning,
+                supportsVision,
+                supportsStructuredOutput,
+                inputPrice,
+                outputPrice,
+                lastUpdated,
+                "models.dev",
+                modalities);
         }
         catch
         {

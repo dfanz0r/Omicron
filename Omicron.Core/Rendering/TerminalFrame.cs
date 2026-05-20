@@ -3,12 +3,18 @@ using Omicron.Core.Text;
 namespace Omicron.Core.Rendering;
 
 /// <summary>
-/// A terminal frame buffer: a rectangular grid of <see cref="RenderCell"/> values.
-/// Rows × Width cells, stored in a flat array for cache locality.
+///     A terminal frame buffer: a rectangular grid of <see cref="RenderCell" /> values.
+///     Rows × Width cells, stored in a flat array for cache locality.
 /// </summary>
 public sealed class TerminalFrame
 {
-    private readonly GlyphInternTable _glyphTable = new();
+    public TerminalFrame(int width, int height)
+    {
+        Width = width;
+        Height = height;
+        Cells = new RenderCell[width * height];
+        Clear();
+    }
 
     /// <summary>Frame width in columns.</summary>
     public int Width { get; private set; }
@@ -20,15 +26,7 @@ public sealed class TerminalFrame
     public RenderCell[] Cells { get; private set; }
 
     /// <summary>The intern table for non-ASCII glyphs in this frame.</summary>
-    public GlyphInternTable GlyphTable => _glyphTable;
-
-    public TerminalFrame(int width, int height)
-    {
-        Width = width;
-        Height = height;
-        Cells = new RenderCell[width * height];
-        Clear();
-    }
+    public GlyphInternTable GlyphTable { get; } = new();
 
     /// <summary>Indexer into the cell array by row and column.</summary>
     public ref RenderCell this[int row, int col] => ref Cells[row * Width + col];
@@ -36,35 +34,43 @@ public sealed class TerminalFrame
     /// <summary>Fill every cell with the default empty cell.</summary>
     public void Clear()
     {
-        var empty = RenderCell.Empty;
+        RenderCell empty = RenderCell.Empty;
         for (int i = 0; i < Cells.Length; i++)
+        {
             Cells[i] = empty;
-        _glyphTable.Reset();
+        }
+
+        GlyphTable.Reset();
     }
 
     /// <summary>
-    /// Render a UTF-8 string into the frame starting at (row, col).
-    /// Handles grapheme clusters, wide characters, and truncation at the right edge.
+    ///     Render a UTF-8 string into the frame starting at (row, col).
+    ///     Handles grapheme clusters, wide characters, and truncation at the right edge.
     /// </summary>
     public void SetText(int row, int col, ReadOnlySpan<byte> utf8, TextStyle style)
     {
         if (row < 0 || row >= Height || col < 0 || col >= Width)
+        {
             return;
+        }
 
         int currentCol = col;
 
-        var clusters = GraphemeSegmenter.SegmentUtf8(utf8);
+        List<GraphemeCluster> clusters = GraphemeSegmenter.SegmentUtf8(utf8);
 
-        foreach (var cluster in clusters)
+        foreach (GraphemeCluster cluster in clusters)
         {
             if (currentCol >= Width)
+            {
                 break; // Truncate
+            }
 
-            int width = CellWidthCalculator.GetWidth(
-                utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength));
+            int width = CellWidthCalculator.GetWidth(utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength));
 
             if (width == 0)
+            {
                 continue; // Combining mark or zero-width — skip
+            }
 
             // Get the GlyphRef
             GlyphRef glyph;
@@ -77,8 +83,8 @@ public sealed class TerminalFrame
             else
             {
                 // Non-ASCII: intern
-                var clusterBytes = utf8.Slice(clusterOffset, cluster.ByteLength);
-                int internId = _glyphTable.Intern(clusterBytes);
+                ReadOnlySpan<byte> clusterBytes = utf8.Slice(clusterOffset, cluster.ByteLength);
+                int internId = GlyphTable.Intern(clusterBytes);
                 glyph = GlyphRef.Interned(internId);
             }
 
@@ -87,7 +93,7 @@ public sealed class TerminalFrame
             {
                 Glyph = glyph,
                 Width = (byte)Math.Min(width, 2),
-                Style = style,
+                Style = style
             };
 
             currentCol++;
@@ -99,7 +105,7 @@ public sealed class TerminalFrame
                 {
                     Glyph = GlyphRef.Ascii((byte)' '),
                     Width = 0, // Continuation marker
-                    Style = style,
+                    Style = style
                 };
                 currentCol++;
             }
@@ -107,7 +113,7 @@ public sealed class TerminalFrame
     }
 
     /// <summary>
-    /// Fill a rectangular region with a single cell value.
+    ///     Fill a rectangular region with a single cell value.
     /// </summary>
     public void FillRect(int row, int col, int w, int h, RenderCell cell)
     {
@@ -127,12 +133,16 @@ public sealed class TerminalFrame
     public void Resize(int newWidth, int newHeight)
     {
         if (newWidth == Width && newHeight == Height)
+        {
             return;
+        }
 
         var newCells = new RenderCell[newWidth * newHeight];
-        var empty = RenderCell.Empty;
+        RenderCell empty = RenderCell.Empty;
         for (int i = 0; i < newCells.Length; i++)
+        {
             newCells[i] = empty;
+        }
 
         // Copy old content that fits in new bounds
         int copyRows = Math.Min(Height, newHeight);

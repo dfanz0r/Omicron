@@ -3,43 +3,34 @@ using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
-using Omicron.Core.Rendering.Transcript;
 using Omicron.Core.Sessions;
 
 namespace Omicron.CLI.Tui;
 
 /// <summary>
-/// Main TUI application that integrates the <see cref="TuiShell"/> with
-/// <see cref="TranscriptViewportWidget"/>, <see cref="InputEditorWidget"/>,
-/// and <see cref="StatusBarWidget"/>. Supports slash commands via
-/// <see cref="TuiSlashCommandBridge"/>.
+///     Main TUI application that integrates the <see cref="TuiShell" /> with
+///     <see cref="TranscriptViewportWidget" />, <see cref="InputEditorWidget" />,
+///     and <see cref="StatusBarWidget" />. Supports slash commands via
+///     <see cref="TuiSlashCommandBridge" />.
 /// </summary>
 public sealed class AppLayout : IDisposable
 {
-    private readonly TuiShell _shell;
-    private AgentSession _session;
-    private readonly TranscriptViewportWidget _transcript = new();
-    private readonly InputEditorWidget _input = new();
-    private readonly StatusBarWidget _statusBar = new();
-    private readonly VStack _root = new();
-    private CancellationTokenSource _cts = new();
-    private TuiSlashCommandBridge? _slashBridge;
-    private string _modelKey = "";
-    private bool _exiting;
-    private bool _disposed;
-    private bool _isGenerating;
-    private bool _isFindMode;
-    private bool _isDraggingScrollbar;
-    private DateTime _lastDragRenderTime = DateTime.MinValue;
     private const int DragRenderIntervalMs = 16; // ~60 FPS cap during drag
-    private string? _toastMessage;
+    private readonly InputEditorWidget _input = new();
+    private readonly VStack _root = new();
+    private readonly TuiShell _shell;
+    private readonly StatusBarWidget _statusBar = new();
+    private readonly TranscriptViewportWidget _transcript = new();
+    private CancellationTokenSource _cts = new();
+    private bool _disposed;
+    private bool _isDraggingScrollbar;
+    private bool _isGenerating;
+    private DateTime _lastDragRenderTime = DateTime.MinValue;
+    private string _modelKey = "";
+    private AgentSession _session;
+    private TuiSlashCommandBridge? _slashBridge;
     private DateTime _toastExpiry = DateTime.MinValue;
-
-    /// <summary>Number of rows to scroll per mouse wheel tick.</summary>
-    public int MouseScrollAmount { get; set; } = 3;
-
-    /// <summary>Whether find/search mode is active.</summary>
-    public bool IsFindMode => _isFindMode;
+    private string? _toastMessage;
 
     public AppLayout(TuiShell shell, AgentSession session, string modelKey)
     {
@@ -48,10 +39,21 @@ public sealed class AppLayout : IDisposable
         _modelKey = modelKey;
 
         _root.Gap = 1;
-        _root.Add(new FlexSizeWidget { Child = _transcript });
-        _root.Add(new FixedSizeWidget { Height = 1, Child = new DividerWidget() });
+        _root.Add(new FlexSizeWidget
+        {
+            Child = _transcript
+        });
+        _root.Add(new FixedSizeWidget
+        {
+            Height = 1,
+            Child = new DividerWidget()
+        });
         _root.Add(_input); // dynamic height — may grow for completion popup
-        _root.Add(new FixedSizeWidget { Height = 1, Child = _statusBar });
+        _root.Add(new FixedSizeWidget
+        {
+            Height = 1,
+            Child = _statusBar
+        });
 
         _input.OnSubmit += OnInputSubmit;
         _transcript.RequestRender = () => _shell.RequestRender();
@@ -65,9 +67,17 @@ public sealed class AppLayout : IDisposable
         _transcript.Store.AppendNotice($"  Model: {session.Model?.Name ?? "unknown"}");
         _transcript.Store.AppendNotice("  Type a message to start. /help for commands. Ctrl+D or Escape to exit.");
         _transcript.Store.AppendNotice("");
-        _transcript.Layout.ReflowForWidth(Math.Max(1, _transcript.Layout.TerminalWidth), _transcript.Store);
-        _transcript.Viewport.UpdateTotalRows(_transcript.Layout.TotalWrappedRows, Math.Max(1, _shell.CurrentFrame.Height - 2));
+        _transcript.Layout.ReflowForWidth(Math.Max(1, _transcript.Layout.TerminalWidth),
+            _transcript.Store);
+        _transcript.Viewport.UpdateTotalRows(_transcript.Layout.TotalWrappedRows,
+            Math.Max(1, _shell.CurrentFrame.Height - 2));
     }
+
+    /// <summary>Number of rows to scroll per mouse wheel tick.</summary>
+    public int MouseScrollAmount { get; set; } = 3;
+
+    /// <summary>Whether find/search mode is active.</summary>
+    public bool IsFindMode { get; private set; }
 
     public TuiSlashCommandBridge? SlashBridge
     {
@@ -89,6 +99,20 @@ public sealed class AppLayout : IDisposable
         }
     }
 
+    public bool IsExiting { get; private set; }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+
     private void ShowToast(string message)
     {
         _toastMessage = message;
@@ -96,9 +120,10 @@ public sealed class AppLayout : IDisposable
         _shell.RequestRender();
     }
 
-    public bool IsExiting => _exiting;
-
-    public async Task RunAsync() => await _shell.RunAsync(onEvent: OnTerminalEvent, onRender: OnRender);
+    public async Task RunAsync()
+    {
+        await _shell.RunAsync(OnTerminalEvent, OnRender);
+    }
 
     public void ClearTranscript()
     {
@@ -109,7 +134,7 @@ public sealed class AppLayout : IDisposable
 
     public void Exit()
     {
-        _exiting = true;
+        IsExiting = true;
         _shell.Cancel();
     }
 
@@ -135,14 +160,18 @@ public sealed class AppLayout : IDisposable
         _transcript.Store.AppendNotice($"Switched to session {session.Id}");
         _transcript.Store.AppendNotice($"Model: {model.Name}");
         _transcript.Store.AppendNotice($"Provider: {model.ProviderName}");
-        _transcript.Layout.ReflowForWidth(Math.Max(1, _transcript.Layout.TerminalWidth), _transcript.Store);
-        _transcript.Viewport.UpdateTotalRows(_transcript.Layout.TotalWrappedRows, _transcript.ViewportHeight);
+        _transcript.Layout.ReflowForWidth(Math.Max(1, _transcript.Layout.TerminalWidth),
+            _transcript.Store);
+        _transcript.Viewport.UpdateTotalRows(_transcript.Layout.TotalWrappedRows,
+            _transcript.ViewportHeight);
         _transcript.ScrollToBottom();
         _shell.RequestRender();
     }
 
     private void HandleSessionSwitched(AgentSession session, Model model, string modelKey)
-        => SwitchSession(session, model, modelKey);
+    {
+        SwitchSession(session, model, modelKey);
+    }
 
     private async Task<bool> OnTerminalEvent(TerminalEvent evt)
     {
@@ -160,6 +189,7 @@ public sealed class AppLayout : IDisposable
                         _cts = new CancellationTokenSource();
                         _isGenerating = false;
                     }
+
                     Exit();
                     return true;
                 }
@@ -169,7 +199,7 @@ public sealed class AppLayout : IDisposable
                 // Legacy: Text?.Value == 6
                 if (ke.ResolvedText == "\x06" || (ke.Key == Key.Character && ke.Text?.Value == 6)) // Ctrl+F
                 {
-                    if (_isFindMode)
+                    if (IsFindMode)
                     {
                         ExitFindMode();
                     }
@@ -177,10 +207,11 @@ public sealed class AppLayout : IDisposable
                     {
                         EnterFindMode();
                     }
+
                     return true;
                 }
 
-                if (_isFindMode)
+                if (IsFindMode)
                 {
                     return HandleFindKey(ke);
                 }
@@ -196,6 +227,7 @@ public sealed class AppLayout : IDisposable
                         _shell.RequestRender();
                         return true;
                     }
+
                     Exit();
                     return true;
                 }
@@ -203,8 +235,11 @@ public sealed class AppLayout : IDisposable
                 if (_input.HandleKey(ke))
                 {
                     // If we were in find mode, search as the user types
-                    if (_isFindMode)
+                    if (IsFindMode)
+                    {
                         UpdateFindQuery();
+                    }
+
                     return true;
                 }
 
@@ -223,6 +258,7 @@ public sealed class AppLayout : IDisposable
                         _transcript.ScrollToBottom();
                         return true;
                 }
+
                 break;
 
             case PasteEvent pe:
@@ -238,22 +274,28 @@ public sealed class AppLayout : IDisposable
                 // the cursor left the window. Accept either while dragging.
                 if (_isDraggingScrollbar)
                 {
-                    if (me.Button == MouseButton.Left &&
-                        (me.Kind == MouseEventKind.Dragged ||
-                         me.Kind == MouseEventKind.Pressed))
+                    if (
+                        me.Button == MouseButton.Left
+                        && (me.Kind == MouseEventKind.Dragged || me.Kind == MouseEventKind.Pressed)
+                    )
                     {
                         _transcript.ScrollToMouseY(me.Row);
                         // Throttle renders during rapid dragging so the
                         // render pipeline isn't overwhelmed. The scroll
                         // position updates immediately but the screen only
                         // refreshes at ~60 FPS.
-                        if ((DateTime.UtcNow - _lastDragRenderTime).TotalMilliseconds >= DragRenderIntervalMs)
+                        if (
+                            (DateTime.UtcNow - _lastDragRenderTime).TotalMilliseconds
+                            >= DragRenderIntervalMs
+                        )
                         {
                             _lastDragRenderTime = DateTime.UtcNow;
                             _shell.RequestRender();
                         }
+
                         return true;
                     }
+
                     if (me.Kind == MouseEventKind.Released)
                     {
                         _isDraggingScrollbar = false;
@@ -264,9 +306,11 @@ public sealed class AppLayout : IDisposable
 
                 // Start a new scrollbar drag (only when Left is pressed inside
                 // the scrollbar column).
-                if (me.Button == MouseButton.Left &&
-                    me.Kind == MouseEventKind.Pressed &&
-                    _transcript.IsScrollbarHit(me.Row, me.Column))
+                if (
+                    me.Button == MouseButton.Left
+                    && me.Kind == MouseEventKind.Pressed
+                    && _transcript.IsScrollbarHit(me.Row, me.Column)
+                )
                 {
                     _isDraggingScrollbar = true;
                     _transcript.ScrollToMouseY(me.Row);
@@ -284,6 +328,7 @@ public sealed class AppLayout : IDisposable
                         _transcript.ScrollDown(MouseScrollAmount);
                         return true;
                 }
+
                 break;
         }
 
@@ -292,15 +337,16 @@ public sealed class AppLayout : IDisposable
 
     private void EnterFindMode()
     {
-        _isFindMode = true;
+        IsFindMode = true;
         _input.Clear();
-        _statusBar.StatusText = "find: type to search, Enter/Shift+Enter for next/prev, Escape to exit";
+        _statusBar.StatusText =
+            "find: type to search, Enter/Shift+Enter for next/prev, Escape to exit";
         _shell.RequestRender();
     }
 
     private void ExitFindMode()
     {
-        _isFindMode = false;
+        IsFindMode = false;
         _input.Clear();
         _transcript.ClearFind();
         _statusBar.StatusText = "ready";
@@ -319,6 +365,7 @@ public sealed class AppLayout : IDisposable
             int count = _transcript.Find(query);
             _statusBar.StatusText = $"find: {count} matches";
         }
+
         _shell.RequestRender();
     }
 
@@ -348,6 +395,7 @@ public sealed class AppLayout : IDisposable
                         _input.Insert(text);
                         UpdateFindQuery();
                     }
+
                     return true;
                 }
 
@@ -373,7 +421,9 @@ public sealed class AppLayout : IDisposable
         _root.Measure(layoutSize);
         _root.Arrange(new Rect(0, 0, frame.Width, frame.Height));
 
-        var context = new RenderContext(frame, new Rect(0, 0, frame.Width, frame.Height), TextStyle.Default);
+        var context = new RenderContext(frame,
+            new Rect(0, 0, frame.Width, frame.Height),
+            TextStyle.Default);
         _root.Render(context);
 
         // Draw toast notification overlay (if active)
@@ -389,12 +439,18 @@ public sealed class AppLayout : IDisposable
 
     private void DrawToast(TerminalFrame frame, RenderContext context)
     {
-        if (string.IsNullOrEmpty(_toastMessage)) return;
+        if (string.IsNullOrEmpty(_toastMessage))
+        {
+            return;
+        }
 
         string toast = _toastMessage.ReplaceLineEndings(" ");
         int toastWidth = Math.Min(toast.Length + 4, frame.Width - 4);
         int toastX = (frame.Width - toastWidth) / 2;
-        if (toastX < 0) toastX = 0;
+        if (toastX < 0)
+        {
+            toastX = 0;
+        }
 
         // Dark background bar at the top
         int toastY = 0;
@@ -402,29 +458,44 @@ public sealed class AppLayout : IDisposable
         {
             Glyph = GlyphRef.Ascii((byte)' '),
             Width = 1,
-            Style = new TextStyle(255, 255, 255, 30, 30, 35, false, false, false),
+            Style = new TextStyle(255, 255, 255, 30, 30, 35, false, false, false)
         };
         context.FillRect(new Rect(toastX, toastY, toastWidth, 1), toastBg);
 
         // Draw text
-        context.DrawText(toastX + 2, toastY,
-            System.Text.Encoding.UTF8.GetBytes($" {toast} "),
+        context.DrawText(toastX + 2,
+            toastY,
+            Encoding.UTF8.GetBytes($" {toast} "),
             TextStyle.ForegroundOnly(200, 200, 200));
     }
 
     private void OnInputSubmit(string text)
     {
-        if (string.IsNullOrWhiteSpace(text)) return;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
 
-        if (_slashBridge is not null && _slashBridge.TryHandle(text, this, _session, _session.Model, _modelKey, out var displayMessage))
+        if (
+            _slashBridge is not null
+            && _slashBridge.TryHandle(text,
+                this,
+                _session,
+                _session.Model,
+                _modelKey,
+                out string? displayMessage)
+        )
         {
             if (displayMessage is not null)
             {
                 _transcript.Store.AppendNotice(displayMessage);
-                _transcript.Layout.ReflowForWidth(Math.Max(1, _transcript.Layout.TerminalWidth), _transcript.Store);
-                _transcript.Viewport.UpdateTotalRows(_transcript.Layout.TotalWrappedRows, _transcript.ViewportHeight);
+                _transcript.Layout.ReflowForWidth(Math.Max(1, _transcript.Layout.TerminalWidth),
+                    _transcript.Store);
+                _transcript.Viewport.UpdateTotalRows(_transcript.Layout.TotalWrappedRows,
+                    _transcript.ViewportHeight);
                 _shell.RequestRender();
             }
+
             return;
         }
 
@@ -435,65 +506,61 @@ public sealed class AppLayout : IDisposable
 
         _isGenerating = true;
         _statusBar.StatusText = "processing...";
-        var localCts = _cts;
+        CancellationTokenSource localCts = _cts;
         _ = Task.Run(async () =>
-        {
-            try
             {
-                await foreach (var evt in _session.PromptAsync(text, localCts.Token))
+                try
                 {
-                    _transcript.UpdateFromEvent(evt);
-                    if (evt is AssistantResponseCompleteEvent complete)
+                    await foreach (OmicronEvent evt in _session.PromptAsync(text, localCts.Token))
                     {
-                        _statusBar.StatusText = $"↑{complete.Usage.InputTokens} ↓{complete.Usage.OutputTokens}";
-                        _shell.RequestRender();
+                        _transcript.UpdateFromEvent(evt);
+                        if (evt is AssistantResponseCompleteEvent complete)
+                        {
+                            _statusBar.StatusText =
+                                $"↑{complete.Usage.InputTokens} ↓{complete.Usage.OutputTokens}";
+                            _shell.RequestRender();
+                        }
+                        else if (evt is SessionErrorEvent)
+                        {
+                            _statusBar.StatusText = "error";
+                            _shell.RequestRender();
+                        }
+                        else if (evt is ToolInvocationStartedEvent)
+                        {
+                            _statusBar.StatusText = "tool call...";
+                            _shell.RequestRender();
+                        }
+                        else if (evt is ToolInvocationCompletedEvent)
+                        {
+                            _statusBar.StatusText = "response...";
+                            _shell.RequestRender();
+                        }
                     }
-                    else if (evt is SessionErrorEvent)
+
+                    if (!localCts.IsCancellationRequested)
                     {
-                        _statusBar.StatusText = "error";
-                        _shell.RequestRender();
-                    }
-                    else if (evt is ToolInvocationStartedEvent)
-                    {
-                        _statusBar.StatusText = "tool call...";
-                        _shell.RequestRender();
-                    }
-                    else if (evt is ToolInvocationCompletedEvent)
-                    {
-                        _statusBar.StatusText = "response...";
+                        _statusBar.StatusText = "ready";
                         _shell.RequestRender();
                     }
                 }
-
-                if (!localCts.IsCancellationRequested)
+                catch (OperationCanceledException)
                 {
-                    _statusBar.StatusText = "ready";
+                    _statusBar.StatusText = "cancelled";
                     _shell.RequestRender();
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                _statusBar.StatusText = "cancelled";
-                _shell.RequestRender();
-            }
-            catch (Exception ex)
-            {
-                _statusBar.StatusText = "error";
-                _transcript.UpdateFromEvent(new SessionErrorEvent(EventEnvelope.ForSession(_session.Id), ex.Message, null));
-                _shell.RequestRender();
-            }
-            finally
-            {
-                _isGenerating = false;
-            }
-        }, localCts.Token);
-    }
-
-    public void Dispose()
-    {
-        if (_disposed) return;
-        _disposed = true;
-        _cts.Cancel();
-        _cts.Dispose();
+                catch (Exception ex)
+                {
+                    _statusBar.StatusText = "error";
+                    _transcript.UpdateFromEvent(new SessionErrorEvent(EventEnvelope.ForSession(_session.Id),
+                        ex.Message,
+                        null));
+                    _shell.RequestRender();
+                }
+                finally
+                {
+                    _isGenerating = false;
+                }
+            },
+            localCts.Token);
     }
 }

@@ -6,8 +6,8 @@ namespace Omicron.Core.Tests;
 
 public class WorkspaceTransactionTests : IDisposable
 {
-    private readonly string _root;
     private readonly HostWorkspaceFileSystem _host;
+    private readonly string _root;
     private readonly WorkspaceTransaction _tx;
 
     public WorkspaceTransactionTests()
@@ -21,40 +21,51 @@ public class WorkspaceTransactionTests : IDisposable
     public void Dispose()
     {
         _tx.DisposeAsync().GetAwaiter().GetResult();
-        try { Directory.Delete(_root, recursive: true); } catch { }
+        try
+        {
+            Directory.Delete(_root, true);
+        }
+        catch { }
     }
 
-    private string ReadHostFile(string path) =>
-        File.ReadAllText(Path.Combine(_root, path));
+    private string ReadHostFile(string path)
+    {
+        return File.ReadAllText(Path.Combine(_root, path));
+    }
 
-    private bool HostFileExists(string path) =>
-        File.Exists(Path.Combine(_root, path));
+    private bool HostFileExists(string path)
+    {
+        return File.Exists(Path.Combine(_root, path));
+    }
 
     private void WriteHostFile(string path, string content)
     {
-        var abs = Path.Combine(_root, path);
+        string abs = Path.Combine(_root, path);
         Directory.CreateDirectory(Path.GetDirectoryName(abs)!);
         File.WriteAllText(abs, content);
     }
 
-    private WorkspacePath Resolve(string path) => _host.Resolve(path)!.Value;
+    private WorkspacePath Resolve(string path)
+    {
+        return _host.Resolve(path)!.Value;
+    }
 
     [Fact]
     public async Task StageWrite_VisibleInDiff_NotInHost()
     {
-        var path = Resolve("new.txt");
-        var content = "hello"u8.ToArray();
+        WorkspacePath path = Resolve("new.txt");
+        byte[] content = "hello"u8.ToArray();
 
         _tx.StageWrite(path, content);
 
         // Check host does NOT have it yet
-        var stat = await _host.StatAsync(path);
+        FileStat? stat = await _host.StatAsync(path);
         Assert.Null(stat);
 
         // Diff should show it as added
-        var diff = await _tx.GetDiffAsync();
+        WorkspaceDiff diff = await _tx.GetDiffAsync();
         Assert.True(diff.HasChanges);
-        var fileDiff = Assert.Single(diff.FileDiffs);
+        WorkspaceFileDiff fileDiff = Assert.Single(diff.FileDiffs);
         Assert.Equal(WorkspaceChangeKind.Added, fileDiff.Kind);
         Assert.Equal("new.txt", fileDiff.Path.Value);
         Assert.NotNull(fileDiff.TextDiff);
@@ -64,7 +75,7 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public async Task Commit_WritesToHost()
     {
-        var path = Resolve("commit.txt");
+        WorkspacePath path = Resolve("commit.txt");
         _tx.StageWrite(path, "committed content"u8.ToArray());
 
         await _tx.CommitAsync();
@@ -76,7 +87,7 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public async Task Rollback_DiscardsStagedChanges()
     {
-        var path = Resolve("rollback.txt");
+        WorkspacePath path = Resolve("rollback.txt");
         _tx.StageWrite(path, "will be lost"u8.ToArray());
 
         await _tx.RollbackAsync();
@@ -88,12 +99,12 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task StageWrite_ModifiedFile_ShowsDiff()
     {
         WriteHostFile("modified.txt", "line1\nline2\nline3");
-        var path = Resolve("modified.txt");
+        WorkspacePath path = Resolve("modified.txt");
 
         _tx.StageWrite(path, "line1\nchanged\nline3"u8.ToArray());
 
-        var diff = await _tx.GetDiffAsync();
-        var fileDiff = Assert.Single(diff.FileDiffs);
+        WorkspaceDiff diff = await _tx.GetDiffAsync();
+        WorkspaceFileDiff fileDiff = Assert.Single(diff.FileDiffs);
         Assert.Equal(WorkspaceChangeKind.Modified, fileDiff.Kind);
         Assert.NotNull(fileDiff.TextDiff);
         Assert.Contains("-line2", fileDiff.TextDiff);
@@ -104,12 +115,12 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task StageDelete_DeletedFile_ShowsDeletion()
     {
         WriteHostFile("todelete.txt", "delete me");
-        var path = Resolve("todelete.txt");
+        WorkspacePath path = Resolve("todelete.txt");
 
         _tx.StageDelete(path);
 
-        var diff = await _tx.GetDiffAsync();
-        var fileDiff = Assert.Single(diff.FileDiffs);
+        WorkspaceDiff diff = await _tx.GetDiffAsync();
+        WorkspaceFileDiff fileDiff = Assert.Single(diff.FileDiffs);
         Assert.Equal(WorkspaceChangeKind.Deleted, fileDiff.Kind);
         Assert.Equal("todelete.txt", fileDiff.Path.Value);
     }
@@ -118,7 +129,7 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task CommitDelete_RemovesFromHost()
     {
         WriteHostFile("todelete.txt", "delete me");
-        var path = Resolve("todelete.txt");
+        WorkspacePath path = Resolve("todelete.txt");
 
         _tx.StageDelete(path);
         await _tx.CommitAsync();
@@ -129,7 +140,7 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public async Task DisposeWithoutCommit_RollsBack()
     {
-        var path = Resolve("dispose.txt");
+        WorkspacePath path = Resolve("dispose.txt");
         _tx.StageWrite(path, "data"u8.ToArray());
 
         // Dispose without commit
@@ -142,12 +153,12 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task BinaryFile_ShowsBinaryMarker()
     {
         WriteHostFile("image.png", "fake-png-content");
-        var path = Resolve("image.png");
+        WorkspacePath path = Resolve("image.png");
 
         _tx.StageWrite(path, "modified-png"u8.ToArray());
 
-        var diff = await _tx.GetDiffAsync();
-        var fileDiff = Assert.Single(diff.FileDiffs);
+        WorkspaceDiff diff = await _tx.GetDiffAsync();
+        WorkspaceFileDiff fileDiff = Assert.Single(diff.FileDiffs);
         Assert.Equal(WorkspaceChangeKind.Modified, fileDiff.Kind);
         Assert.True(fileDiff.IsBinary);
         Assert.Null(fileDiff.TextDiff);
@@ -156,11 +167,11 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public async Task AddedFile_ShowsAddedDiff()
     {
-        var path = Resolve("added.txt");
+        WorkspacePath path = Resolve("added.txt");
         _tx.StageWrite(path, "new line"u8.ToArray());
 
-        var diff = await _tx.GetDiffAsync();
-        var fileDiff = Assert.Single(diff.FileDiffs);
+        WorkspaceDiff diff = await _tx.GetDiffAsync();
+        WorkspaceFileDiff fileDiff = Assert.Single(diff.FileDiffs);
         Assert.Equal(WorkspaceChangeKind.Added, fileDiff.Kind);
         Assert.NotNull(fileDiff.TextDiff);
         Assert.Contains("/dev/null", fileDiff.TextDiff);
@@ -170,7 +181,7 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public async Task CommitTwice_Throws()
     {
-        var path = Resolve("once.txt");
+        WorkspacePath path = Resolve("once.txt");
         _tx.StageWrite(path, "data"u8.ToArray());
 
         await _tx.CommitAsync();
@@ -181,7 +192,7 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public async Task StageWrite_CreatesParentDirectories()
     {
-        var path = Resolve("a/b/c/deep.txt");
+        WorkspacePath path = Resolve("a/b/c/deep.txt");
         _tx.StageWrite(path, "deep"u8.ToArray());
         await _tx.CommitAsync();
 
@@ -191,10 +202,10 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public async Task Overlay_ReadFile_ShowsStagedContent()
     {
-        var path = Resolve("overlay.txt");
+        WorkspacePath path = Resolve("overlay.txt");
         _tx.StageWrite(path, "staged content"u8.ToArray());
 
-        var content = await _tx.Files.ReadFileAsync(path);
+        ReadOnlyMemory<byte> content = await _tx.Files.ReadFileAsync(path);
         Assert.Equal("staged content"u8.ToArray(), content.ToArray());
     }
 
@@ -202,15 +213,15 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task Overlay_Stat_ShowsStagedFile()
     {
         WriteHostFile("existing.txt", "original");
-        var path = Resolve("existing.txt");
+        WorkspacePath path = Resolve("existing.txt");
 
-        var statBefore = await _tx.Files.StatAsync(path);
+        FileStat? statBefore = await _tx.Files.StatAsync(path);
         Assert.NotNull(statBefore);
         Assert.Equal(8, statBefore!.Size); // "original"
 
         _tx.StageWrite(path, "modified content"u8.ToArray());
 
-        var statAfter = await _tx.Files.StatAsync(path);
+        FileStat? statAfter = await _tx.Files.StatAsync(path);
         Assert.NotNull(statAfter);
         Assert.Equal(16, statAfter!.Size); // "modified content"
     }
@@ -219,11 +230,11 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task Overlay_Stat_StagedDelete_ReturnsNull()
     {
         WriteHostFile("todelete.txt", "data");
-        var path = Resolve("todelete.txt");
+        WorkspacePath path = Resolve("todelete.txt");
 
         _tx.StageDelete(path);
 
-        var stat = await _tx.Files.StatAsync(path);
+        FileStat? stat = await _tx.Files.StatAsync(path);
         Assert.Null(stat);
     }
 
@@ -231,12 +242,12 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task Diff_Paths_UseRealNames()
     {
         WriteHostFile("myfile.txt", "line1\nline2\nline3");
-        var path = Resolve("myfile.txt");
+        WorkspacePath path = Resolve("myfile.txt");
 
         _tx.StageWrite(path, "line1\nmodified\nline3"u8.ToArray());
 
-        var diff = await _tx.GetDiffAsync();
-        var fileDiff = Assert.Single(diff.FileDiffs);
+        WorkspaceDiff diff = await _tx.GetDiffAsync();
+        WorkspaceFileDiff fileDiff = Assert.Single(diff.FileDiffs);
         Assert.NotNull(fileDiff.TextDiff);
         Assert.Contains("--- myfile.txt", fileDiff.TextDiff);
         Assert.Contains("+++ myfile.txt", fileDiff.TextDiff);
@@ -245,12 +256,15 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public async Task AddedBinary_ShowsBinaryMarker()
     {
-        var path = Resolve("image.png");
+        WorkspacePath path = Resolve("image.png");
         // Content with null byte triggers binary detection
-        _tx.StageWrite(path, new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A });
+        _tx.StageWrite(path, new byte[]
+        {
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+        });
 
-        var diff = await _tx.GetDiffAsync();
-        var fileDiff = Assert.Single(diff.FileDiffs);
+        WorkspaceDiff diff = await _tx.GetDiffAsync();
+        WorkspaceFileDiff fileDiff = Assert.Single(diff.FileDiffs);
         Assert.Equal(WorkspaceChangeKind.Added, fileDiff.Kind);
         Assert.True(fileDiff.IsBinary);
         Assert.Null(fileDiff.TextDiff);
@@ -260,12 +274,12 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task MovedDiff_UsesMovedKind()
     {
         WriteHostFile("source.txt", "move me");
-        var from = Resolve("source.txt");
-        var to = Resolve("dest.txt");
+        WorkspacePath from = Resolve("source.txt");
+        WorkspacePath to = Resolve("dest.txt");
 
         _tx.StageMove(from, to);
 
-        var diff = await _tx.GetDiffAsync();
+        WorkspaceDiff diff = await _tx.GetDiffAsync();
         Assert.Contains(diff.FileDiffs, d => d.Kind == WorkspaceChangeKind.Moved);
         Assert.Contains(diff.FileDiffs, d => d.Path.Value == "dest.txt");
         Assert.Contains(diff.FileDiffs, d => d.OldPath == "source.txt");
@@ -275,8 +289,8 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task CommitMove_Works()
     {
         WriteHostFile("source.txt", "move me");
-        var from = Resolve("source.txt");
-        var to = Resolve("dest.txt");
+        WorkspacePath from = Resolve("source.txt");
+        WorkspacePath to = Resolve("dest.txt");
 
         _tx.StageMove(from, to);
         await _tx.CommitAsync();
@@ -289,11 +303,11 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public async Task Files_WriteThroughOverlay_StagesChange()
     {
-        var path = Resolve("through-overlay.txt");
+        WorkspacePath path = Resolve("through-overlay.txt");
         await _tx.Files.WriteFileAsync(path, "via overlay"u8.ToArray());
 
         // Should be visible in overlay but not host
-        var content = await _tx.Files.ReadFileAsync(path);
+        ReadOnlyMemory<byte> content = await _tx.Files.ReadFileAsync(path);
         Assert.Equal("via overlay"u8.ToArray(), content.ToArray());
         Assert.False(HostFileExists("through-overlay.txt"));
 
@@ -307,22 +321,22 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task Overlay_StagedMove_SourceHidden_DestinationVisible()
     {
         WriteHostFile("source.txt", "move content");
-        var from = Resolve("source.txt");
-        var to = Resolve("dest.txt");
+        WorkspacePath from = Resolve("source.txt");
+        WorkspacePath to = Resolve("dest.txt");
 
         _tx.StageMove(from, to);
 
         // Source should be hidden
-        var sourceStat = await _tx.Files.StatAsync(from);
+        FileStat? sourceStat = await _tx.Files.StatAsync(from);
         Assert.Null(sourceStat);
 
         // Destination should be visible
-        var destStat = await _tx.Files.StatAsync(to);
+        FileStat? destStat = await _tx.Files.StatAsync(to);
         Assert.NotNull(destStat);
         Assert.Equal("dest.txt", destStat!.Path);
 
         // Reading destination should return source content
-        var content = await _tx.Files.ReadFileAsync(to);
+        ReadOnlyMemory<byte> content = await _tx.Files.ReadFileAsync(to);
         Assert.Equal("move content"u8.ToArray(), content.ToArray());
     }
 
@@ -330,39 +344,38 @@ public class WorkspaceTransactionTests : IDisposable
     public async Task Overlay_SubdirectoryStagedDelete_NotListed()
     {
         WriteHostFile("sub/a.txt", "content");
-        var subPath = Resolve("sub");
-        var filePath = Resolve("sub/a.txt");
+        WorkspacePath subPath = Resolve("sub");
+        WorkspacePath filePath = Resolve("sub/a.txt");
 
         _tx.StageDelete(filePath);
 
-        var entries = await _tx.Files.ReadDirectoryAsync(subPath);
+        IReadOnlyList<DirectoryEntry> entries = await _tx.Files.ReadDirectoryAsync(subPath);
         Assert.DoesNotContain(entries, e => e.Name == "a.txt");
     }
 
     [Fact]
     public async Task Overlay_SubdirectoryStagedWrite_IsListed()
     {
-        var filePath = Resolve("sub/new.txt");
-        var subPath = Resolve("sub");
+        WorkspacePath filePath = Resolve("sub/new.txt");
+        WorkspacePath subPath = Resolve("sub");
         _tx.StageWrite(filePath, "new file"u8.ToArray());
 
-        var entries = await _tx.Files.ReadDirectoryAsync(subPath);
+        IReadOnlyList<DirectoryEntry> entries = await _tx.Files.ReadDirectoryAsync(subPath);
         Assert.Contains(entries, e => e.Name == "new.txt");
     }
 
     [Fact]
     public void StageWrite_AfterDelete_Throws()
     {
-        var path = Resolve("conflict.txt");
+        WorkspacePath path = Resolve("conflict.txt");
         _tx.StageDelete(path);
-        Assert.Throws<InvalidOperationException>(() =>
-            _tx.StageWrite(path, "data"u8.ToArray()));
+        Assert.Throws<InvalidOperationException>(() => _tx.StageWrite(path, "data"u8.ToArray()));
     }
 
     [Fact]
     public void StageDelete_AfterWrite_StagesDelete()
     {
-        var path = Resolve("write-then-delete.txt");
+        WorkspacePath path = Resolve("write-then-delete.txt");
         _tx.StageWrite(path, "data"u8.ToArray());
         // Delete after write should remove the write (no-op or cancel)
         _tx.StageDelete(path);
@@ -373,28 +386,26 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public void StageMove_ConflictingDelete_Throws()
     {
-        var from = Resolve("from.txt");
-        var to = Resolve("to.txt");
+        WorkspacePath from = Resolve("from.txt");
+        WorkspacePath to = Resolve("to.txt");
         _tx.StageDelete(to);
-        Assert.Throws<InvalidOperationException>(() =>
-            _tx.StageMove(from, to));
+        Assert.Throws<InvalidOperationException>(() => _tx.StageMove(from, to));
     }
 
     [Fact]
     public void StageWrite_ThenMove_Throws()
     {
-        var from = Resolve("a.txt");
-        var to = Resolve("b.txt");
+        WorkspacePath from = Resolve("a.txt");
+        WorkspacePath to = Resolve("b.txt");
         _tx.StageWrite(from, "hello"u8.ToArray());
-        Assert.Throws<InvalidOperationException>(() =>
-            _tx.StageMove(from, to));
+        Assert.Throws<InvalidOperationException>(() => _tx.StageMove(from, to));
     }
 
     [Fact]
     public void StageMove_ThenWriteSource_Throws()
     {
-        var from = Resolve("from.txt");
-        var to = Resolve("to.txt");
+        WorkspacePath from = Resolve("from.txt");
+        WorkspacePath to = Resolve("to.txt");
         _tx.StageMove(from, to);
         Assert.Throws<InvalidOperationException>(() =>
             _tx.StageWrite(from, "new content"u8.ToArray()));
@@ -403,25 +414,24 @@ public class WorkspaceTransactionTests : IDisposable
     [Fact]
     public void StageMove_ThenWriteDestination_Throws()
     {
-        var from = Resolve("src.txt");
-        var to = Resolve("dst.txt");
+        WorkspacePath from = Resolve("src.txt");
+        WorkspacePath to = Resolve("dst.txt");
         _tx.StageMove(from, to);
-        Assert.Throws<InvalidOperationException>(() =>
-            _tx.StageWrite(to, "data"u8.ToArray()));
+        Assert.Throws<InvalidOperationException>(() => _tx.StageWrite(to, "data"u8.ToArray()));
     }
 
     [Fact]
     public async Task Overlay_StagedMove_ThenReadDir_ShowsDestination()
     {
         WriteHostFile("move_me.txt", "move test");
-        var from = Resolve("move_me.txt");
-        var to = Resolve("moved.txt");
+        WorkspacePath from = Resolve("move_me.txt");
+        WorkspacePath to = Resolve("moved.txt");
 
         _tx.StageMove(from, to);
 
         // Root directory should show moved.txt but not move_me.txt
-        var root = Resolve("");
-        var entries = await _tx.Files.ReadDirectoryAsync(root);
+        WorkspacePath root = Resolve("");
+        IReadOnlyList<DirectoryEntry> entries = await _tx.Files.ReadDirectoryAsync(root);
         Assert.Contains(entries, e => e.Name == "moved.txt");
         Assert.DoesNotContain(entries, e => e.Name == "move_me.txt");
     }
@@ -438,7 +448,7 @@ public class WorkspaceTransactionTests : IDisposable
 
         await tx.Files.WriteFileAsync(Resolve("a.txt"), "hello"u8.ToArray());
 
-        var events = sink.GetAllEvents();
+        IReadOnlyList<OmicronEvent> events = sink.GetAllEvents();
         Assert.Single(events.OfType<TransactionStartedEvent>());
         Assert.Single(events.OfType<TransactionStagedEvent>());
 
@@ -454,7 +464,7 @@ public class WorkspaceTransactionTests : IDisposable
         await tx.Files.WriteFileAsync(Resolve("a.txt"), "content a"u8.ToArray());
         await tx.Files.WriteFileAsync(Resolve("b.txt"), "content b"u8.ToArray());
 
-        var events = sink.GetAllEvents();
+        IReadOnlyList<OmicronEvent> events = sink.GetAllEvents();
         var staged = events.OfType<TransactionStagedEvent>().ToList();
         Assert.Equal(2, staged.Count);
         Assert.All(staged, s => Assert.Equal("write", s.Action));
@@ -473,7 +483,7 @@ public class WorkspaceTransactionTests : IDisposable
         await tx.Files.WriteFileAsync(Resolve("c.txt"), "data"u8.ToArray());
         await tx.CommitAsync();
 
-        var events = sink.GetAllEvents();
+        IReadOnlyList<OmicronEvent> events = sink.GetAllEvents();
         Assert.Contains(events, e => e is TransactionCommittedEvent);
         Assert.DoesNotContain(events, e => e is TransactionRolledBackEvent);
 
@@ -489,7 +499,7 @@ public class WorkspaceTransactionTests : IDisposable
         await tx.Files.WriteFileAsync(Resolve("d.txt"), "data"u8.ToArray());
         await tx.RollbackAsync();
 
-        var events = sink.GetAllEvents();
+        IReadOnlyList<OmicronEvent> events = sink.GetAllEvents();
         Assert.Contains(events, e => e is TransactionRolledBackEvent);
         Assert.DoesNotContain(events, e => e is TransactionCommittedEvent);
 
@@ -505,8 +515,97 @@ public class WorkspaceTransactionTests : IDisposable
         await tx.Files.WriteFileAsync(Resolve("e.txt"), "data"u8.ToArray());
         await tx.DisposeAsync();
 
-        var events = sink.GetAllEvents();
+        IReadOnlyList<OmicronEvent> events = sink.GetAllEvents();
         Assert.Contains(events, e => e is TransactionRolledBackEvent);
+    }
+
+    [Fact]
+    public async Task CommitFailure_MidCommit_RollsBackCompletedWrites()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"omicron-tx-fail-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var failingHost = new FailingHostFileSystem(root, 1);
+            var sink = new InMemoryEventSink();
+            var tx = new WorkspaceTransaction(failingHost, sink);
+
+            // Stage 3 writes; the 2nd host write will throw (failAfter: 1)
+            await tx.Files.WriteFileAsync(new WorkspacePath("f1.txt"), "file1"u8.ToArray());
+            await tx.Files.WriteFileAsync(new WorkspacePath("f2.txt"), "file2"u8.ToArray());
+            await tx.Files.WriteFileAsync(new WorkspacePath("f3.txt"), "file3"u8.ToArray());
+
+            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                tx.CommitAsync().AsTask());
+            Assert.Contains("rolled back", ex.Message);
+
+            // The 1st file should have been rolled back (deleted)
+            Assert.False(File.Exists(Path.Combine(root, "f1.txt")),
+                "f1.txt should have been rolled back");
+
+            // The 2nd file never succeeded (threw on write)
+            Assert.False(File.Exists(Path.Combine(root, "f2.txt")),
+                "f2.txt should never have been written");
+
+            // The 3rd file was never reached
+            Assert.False(File.Exists(Path.Combine(root, "f3.txt")), "f3.txt was never reached");
+
+            // TransactionRolledBackEvent should be emitted
+            IReadOnlyList<OmicronEvent> events = sink.GetAllEvents();
+            Assert.Contains(events, e => e is TransactionRolledBackEvent);
+            Assert.DoesNotContain(events, e => e is TransactionCommittedEvent);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, true);
+            }
+            catch { }
+        }
+    }
+
+    [Fact]
+    public async Task CommitFailure_Move_RollbackReversesMove()
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"omicron-tx-move-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            // Write source file on host directly
+            string srcPath = Path.Combine(root, "source.txt");
+            File.WriteAllText(srcPath, "original");
+
+            var failingHost = new FailingHostFileSystem(root, 0);
+            var sink = new InMemoryEventSink();
+            var tx = new WorkspaceTransaction(failingHost, sink);
+
+            // Stage a move + a write; the write will throw (failAfter: 0, first write fails)
+            await tx.Files.MoveAsync(new WorkspacePath("source.txt"),
+                new WorkspacePath("dest.txt"));
+            await tx.Files.WriteFileAsync(new WorkspacePath("other.txt"), "data"u8.ToArray());
+
+            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                tx.CommitAsync().AsTask());
+            Assert.Contains("rolled back", ex.Message);
+
+            // The move should be reversed: source should still exist, dest removed
+            Assert.True(File.Exists(srcPath), "source.txt should have been restored");
+            Assert.False(File.Exists(Path.Combine(root, "dest.txt")),
+                "dest.txt should have been removed");
+            Assert.Equal("original", File.ReadAllText(srcPath));
+
+            IReadOnlyList<OmicronEvent> events = sink.GetAllEvents();
+            Assert.Contains(events, e => e is TransactionRolledBackEvent);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(root, true);
+            }
+            catch { }
+        }
     }
 
     // ============================================================
@@ -514,30 +613,40 @@ public class WorkspaceTransactionTests : IDisposable
     // ============================================================
 
     /// <summary>
-    /// Test double that extends HostWorkspaceFileSystem and throws IOException
-    /// after a configurable number of <b>successful</b> write/move calls.
-    /// Delete operations are never counted (they are used by rollback).
+    ///     Test double that extends HostWorkspaceFileSystem and throws IOException
+    ///     after a configurable number of <b>successful</b> write/move calls.
+    ///     Delete operations are never counted (they are used by rollback).
     /// </summary>
     private sealed class FailingHostFileSystem : HostWorkspaceFileSystem
     {
-        private int _callCount;
         private readonly int _failAfter;
         private readonly object _lock = new();
+        private int _callCount;
 
-        public FailingHostFileSystem(string root, int failAfter) : base(root)
+        public FailingHostFileSystem(string root, int failAfter)
+            : base(root)
         {
             _failAfter = failAfter;
         }
 
         private int NextCount()
         {
-            lock (_lock) { return ++_callCount; }
+            lock (_lock)
+            {
+                return ++_callCount;
+            }
         }
 
-        public override async ValueTask WriteFileAsync(WorkspacePath path, ReadOnlyMemory<byte> content, CancellationToken ct = default)
+        public override async ValueTask WriteFileAsync(
+            WorkspacePath path,
+            ReadOnlyMemory<byte> content,
+            CancellationToken ct = default)
         {
             if (NextCount() > _failAfter)
+            {
                 throw new IOException($"Simulated write failure after {_failAfter} writes.");
+            }
+
             await base.WriteFileAsync(path, content, ct);
         }
 
@@ -547,86 +656,14 @@ public class WorkspaceTransactionTests : IDisposable
             return base.DeleteAsync(path, ct);
         }
 
-        public override ValueTask MoveAsync(WorkspacePath from, WorkspacePath to, CancellationToken ct = default)
+        public override ValueTask MoveAsync(
+            WorkspacePath from,
+            WorkspacePath to,
+            CancellationToken ct = default)
         {
             // Move is used by rollback — only count it toward failures if we want
             // For simplicity, don't fail on move during commit either
             return base.MoveAsync(from, to, ct);
-        }
-    }
-
-    [Fact]
-    public async Task CommitFailure_MidCommit_RollsBackCompletedWrites()
-    {
-        var root = Path.Combine(Path.GetTempPath(), $"omicron-tx-fail-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(root);
-        try
-        {
-            var failingHost = new FailingHostFileSystem(root, failAfter: 1);
-            var sink = new InMemoryEventSink();
-            var tx = new WorkspaceTransaction(failingHost, sink);
-
-            // Stage 3 writes; the 2nd host write will throw (failAfter: 1)
-            await tx.Files.WriteFileAsync(new WorkspacePath("f1.txt"), "file1"u8.ToArray());
-            await tx.Files.WriteFileAsync(new WorkspacePath("f2.txt"), "file2"u8.ToArray());
-            await tx.Files.WriteFileAsync(new WorkspacePath("f3.txt"), "file3"u8.ToArray());
-
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => tx.CommitAsync().AsTask());
-            Assert.Contains("rolled back", ex.Message);
-
-            // The 1st file should have been rolled back (deleted)
-            Assert.False(File.Exists(Path.Combine(root, "f1.txt")), "f1.txt should have been rolled back");
-
-            // The 2nd file never succeeded (threw on write)
-            Assert.False(File.Exists(Path.Combine(root, "f2.txt")), "f2.txt should never have been written");
-
-            // The 3rd file was never reached
-            Assert.False(File.Exists(Path.Combine(root, "f3.txt")), "f3.txt was never reached");
-
-            // TransactionRolledBackEvent should be emitted
-            var events = sink.GetAllEvents();
-            Assert.Contains(events, e => e is TransactionRolledBackEvent);
-            Assert.DoesNotContain(events, e => e is TransactionCommittedEvent);
-        }
-        finally
-        {
-            try { Directory.Delete(root, recursive: true); } catch { }
-        }
-    }
-
-    [Fact]
-    public async Task CommitFailure_Move_RollbackReversesMove()
-    {
-        var root = Path.Combine(Path.GetTempPath(), $"omicron-tx-move-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(root);
-        try
-        {
-            // Write source file on host directly
-            var srcPath = Path.Combine(root, "source.txt");
-            File.WriteAllText(srcPath, "original");
-
-            var failingHost = new FailingHostFileSystem(root, failAfter: 0);
-            var sink = new InMemoryEventSink();
-            var tx = new WorkspaceTransaction(failingHost, sink);
-
-            // Stage a move + a write; the write will throw (failAfter: 0, first write fails)
-            await tx.Files.MoveAsync(new WorkspacePath("source.txt"), new WorkspacePath("dest.txt"));
-            await tx.Files.WriteFileAsync(new WorkspacePath("other.txt"), "data"u8.ToArray());
-
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => tx.CommitAsync().AsTask());
-            Assert.Contains("rolled back", ex.Message);
-
-            // The move should be reversed: source should still exist, dest removed
-            Assert.True(File.Exists(srcPath), "source.txt should have been restored");
-            Assert.False(File.Exists(Path.Combine(root, "dest.txt")), "dest.txt should have been removed");
-            Assert.Equal("original", File.ReadAllText(srcPath));
-
-            var events = sink.GetAllEvents();
-            Assert.Contains(events, e => e is TransactionRolledBackEvent);
-        }
-        finally
-        {
-            try { Directory.Delete(root, recursive: true); } catch { }
         }
     }
 }

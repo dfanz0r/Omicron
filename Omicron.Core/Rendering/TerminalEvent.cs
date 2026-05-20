@@ -12,29 +12,30 @@ public abstract record TerminalEvent;
 public sealed record KeyEvent(Key Key, KeyModifiers Modifiers, Rune? Text) : TerminalEvent
 {
     /// <summary>
-    /// The raw key code from the kitty protocol (Unicode codepoint of the
-    /// un-shifted key). Null for legacy events that didn't come through
-    /// the kitty protocol.
+    ///     The raw key code from the kitty protocol (Unicode codepoint of the
+    ///     un-shifted key). Null for legacy events that didn't come through
+    ///     the kitty protocol.
     /// </summary>
     public int? KeyCode { get; init; }
 
     /// <summary>
-    /// The text that would be produced by this key combination in the
-    /// current keyboard layout. Computed from KeyCode + Modifiers when
-    /// the kitty protocol is active. Null when unknown.
+    ///     The text that would be produced by this key combination in the
+    ///     current keyboard layout. Computed from KeyCode + Modifiers when
+    ///     the kitty protocol is active. Null when unknown.
     /// </summary>
     public string? ResolvedText { get; init; }
 
     /// <summary>
-    /// Event type for kitty protocol (press/repeat/release). Always
-    /// <see cref="KeyEventType.Press"/> for legacy terminals.
+    ///     Event type for kitty protocol (press/repeat/release). Always
+    ///     <see cref="KeyEventType.Press" /> for legacy terminals.
     /// </summary>
     public KeyEventType EventType { get; init; } = KeyEventType.Press;
 }
 
 /// <summary>A mouse button event (press, release, move, drag).</summary>
 public sealed record MouseEvent(
-    int Row, int Column,
+    int Row,
+    int Column,
     MouseButton Button,
     MouseEventKind Kind,
     KeyModifiers Modifiers) : TerminalEvent;
@@ -53,10 +54,12 @@ public enum KeyEventType
 {
     /// <summary>Key pressed down.</summary>
     Press,
+
     /// <summary>Key held down (auto-repeat).</summary>
     Repeat,
+
     /// <summary>Key released.</summary>
-    Release,
+    Release
 }
 
 /// <summary>Keys that can be pressed.</summary>
@@ -102,8 +105,9 @@ public enum Key
     F22,
     F23,
     F24,
-    /// <summary>A printable character; the actual value is in <see cref="KeyEvent.Text"/>.</summary>
-    Character,
+
+    /// <summary>A printable character; the actual value is in <see cref="KeyEvent.Text" />.</summary>
+    Character
 }
 
 /// <summary>Key modifier flags.</summary>
@@ -113,7 +117,7 @@ public enum KeyModifiers
     None = 0,
     Shift = 1,
     Alt = 2,
-    Control = 4,
+    Control = 4
 }
 
 /// <summary>Mouse buttons.</summary>
@@ -124,7 +128,7 @@ public enum MouseButton
     Middle,
     Right,
     ScrollUp,
-    ScrollDown,
+    ScrollDown
 }
 
 /// <summary>Kind of mouse event.</summary>
@@ -133,5 +137,5 @@ public enum MouseEventKind
     Pressed,
     Released,
     Moved,
-    Dragged,
+    Dragged
 }

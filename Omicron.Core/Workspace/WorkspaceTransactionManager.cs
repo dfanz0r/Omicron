@@ -3,8 +3,8 @@ using Omicron.Core.Events;
 namespace Omicron.Core.Workspace;
 
 /// <summary>
-/// Creates workspace transactions backed by the host file system.
-/// Optionally receives an event sink for transaction lifecycle events.
+///     Creates workspace transactions backed by the host file system.
+///     Optionally receives an event sink for transaction lifecycle events.
 /// </summary>
 public interface IWorkspaceTransactionManager
 {
@@ -13,12 +13,12 @@ public interface IWorkspaceTransactionManager
 }
 
 /// <summary>
-/// Default implementation backed by HostWorkspaceFileSystem.
+///     Default implementation backed by HostWorkspaceFileSystem.
 /// </summary>
 public sealed class WorkspaceTransactionManager : IWorkspaceTransactionManager
 {
-    private readonly HostWorkspaceFileSystem _host;
     private readonly IEventSink? _eventSink;
+    private readonly HostWorkspaceFileSystem _host;
 
     public WorkspaceTransactionManager(HostWorkspaceFileSystem host, IEventSink? eventSink = null)
     {

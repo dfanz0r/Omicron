@@ -3,8 +3,8 @@ using System.Runtime.InteropServices;
 namespace Omicron.Core.Rendering.Terminal.Unix;
 
 /// <summary>
-/// Linux-specific P/Invoke definitions for terminal I/O.
-/// Do not use these on macOS — the termios layout and ioctl constants differ.
+///     Linux-specific P/Invoke definitions for terminal I/O.
+///     Do not use these on macOS — the termios layout and ioctl constants differ.
 /// </summary>
 internal static class LinuxNative
 {
@@ -88,12 +88,38 @@ internal static class LinuxNative
     public const int F_SETFL = 4;
     public const int O_NONBLOCK = 0x800;
 
+    // ── P/Invoke ──
+
+    [DllImport("libc", SetLastError = true)]
+    public static extern int tcgetattr(int fd, out Termios termios);
+
+    [DllImport("libc", SetLastError = true)]
+    public static extern int tcsetattr(int fd, int optional_actions, ref Termios termios);
+
+    [DllImport("libc", SetLastError = true)]
+    public static extern int ioctl(int fd, int request, ref Winsize wsz);
+
+    [DllImport("libc", SetLastError = true)]
+    public static extern int poll(ref PollFd fds, nuint nfds, int timeout);
+
+    [DllImport("libc", SetLastError = true)]
+    public static extern nint read(int fd, byte[] buffer, UIntPtr count);
+
+    [DllImport("libc", SetLastError = true)]
+    public static extern int fcntl(int fd, int cmd, int arg);
+
+    [DllImport("libc", SetLastError = true)]
+    public static extern int fcntl(int fd, int cmd);
+
+    [DllImport("libc", SetLastError = true)]
+    public static extern nint write(int fd, byte[] buf, UIntPtr count);
+
     // ── Structs ──
 
     /// <summary>
-    /// Linux (glibc) termios layout:
-    /// 4× uint flags, byte c_line, byte[32] c_cc, uint c_ispeed, uint c_ospeed.
-    /// NCCS = 32 on Linux.
+    ///     Linux (glibc) termios layout:
+    ///     4× uint flags, byte c_line, byte[32] c_cc, uint c_ispeed, uint c_ospeed.
+    ///     NCCS = 32 on Linux.
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public struct Termios
@@ -127,30 +153,4 @@ internal static class LinuxNative
         public short events;
         public short revents;
     }
-
-    // ── P/Invoke ──
-
-    [DllImport("libc", SetLastError = true)]
-    public static extern int tcgetattr(int fd, out Termios termios);
-
-    [DllImport("libc", SetLastError = true)]
-    public static extern int tcsetattr(int fd, int optional_actions, ref Termios termios);
-
-    [DllImport("libc", SetLastError = true)]
-    public static extern int ioctl(int fd, int request, ref Winsize wsz);
-
-    [DllImport("libc", SetLastError = true)]
-    public static extern int poll(ref PollFd fds, nuint nfds, int timeout);
-
-    [DllImport("libc", SetLastError = true)]
-    public static extern nint read(int fd, byte[] buffer, UIntPtr count);
-
-    [DllImport("libc", SetLastError = true)]
-    public static extern int fcntl(int fd, int cmd, int arg);
-
-    [DllImport("libc", SetLastError = true)]
-    public static extern int fcntl(int fd, int cmd);
-
-    [DllImport("libc", SetLastError = true)]
-    public static extern nint write(int fd, byte[] buf, UIntPtr count);
 }

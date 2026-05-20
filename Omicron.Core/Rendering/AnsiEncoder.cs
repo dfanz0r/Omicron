@@ -1,22 +1,22 @@
 using System.Buffers;
-using System.Text;
 
 namespace Omicron.Core.Rendering;
 
 /// <summary>
-/// Static methods that emit raw UTF-8 / ANSI escape sequences into an
-/// <see cref="IBufferWriter{T}"/>. Uses UTF-8 literal spans for static
-/// sequences. Emits 24-bit RGB everywhere; the caller should detect
-/// terminal color depth via <see cref="TerminalCapabilities"/>.
+///     Static methods that emit raw UTF-8 / ANSI escape sequences into an
+///     <see cref="IBufferWriter{T}" />. Uses UTF-8 literal spans for static
+///     sequences. Emits 24-bit RGB everywhere; the caller should detect
+///     terminal color depth via <see cref="TerminalCapabilities" />.
 /// </summary>
 public static class AnsiEncoder
 {
     /// <summary>
-    /// When true, emit explicit RGB(0,0,0) for black backgrounds instead of
-    /// treating them as "terminal default" (no background). Enable this for
-    /// terminals with light or non-black default backgrounds.
+    ///     When true, emit explicit RGB(0,0,0) for black backgrounds instead of
+    ///     treating them as "terminal default" (no background). Enable this for
+    ///     terminals with light or non-black default backgrounds.
     /// </summary>
     public static bool EmitExplicitBlackBackground { get; set; } = false;
+
     // ── Screen ──
 
     /// <summary>Clear the entire screen and home the cursor.</summary>
@@ -43,15 +43,17 @@ public static class AnsiEncoder
     // ── Style ──
 
     /// <summary>
-    /// Emit ANSI style codes transitioning from <paramref name="previous"/>
-    /// to <paramref name="style"/>. If <paramref name="previous"/> is null,
-    /// emits a full reset + complete style.
-    /// If styles are identical, emits nothing.
+    ///     Emit ANSI style codes transitioning from <paramref name="previous" />
+    ///     to <paramref name="style" />. If <paramref name="previous" /> is null,
+    ///     emits a full reset + complete style.
+    ///     If styles are identical, emits nothing.
     /// </summary>
     public static void SetStyle(TextStyle style, TextStyle? previous, IBufferWriter<byte> output)
     {
         if (previous == style)
+        {
             return;
+        }
 
         // If previous is null or the style is completely different, reset first
         if (previous is null)
@@ -61,23 +63,31 @@ public static class AnsiEncoder
             return;
         }
 
-        var prev = previous.Value;
+        TextStyle prev = previous.Value;
 
         // Bold
         if (style.Bold != prev.Bold)
+        {
             output.Write(style.Bold ? "\x1b[1m"u8 : "\x1b[22m"u8);
+        }
 
         // Italic
         if (style.Italic != prev.Italic)
+        {
             output.Write(style.Italic ? "\x1b[3m"u8 : "\x1b[23m"u8);
+        }
 
         // Underline
         if (style.Underline != prev.Underline)
+        {
             output.Write(style.Underline ? "\x1b[4m"u8 : "\x1b[24m"u8);
+        }
 
         // Foreground color
         if (style.FgR != prev.FgR || style.FgG != prev.FgG || style.FgB != prev.FgB)
+        {
             WriteRgbSequence(38, style.FgR, style.FgG, style.FgB, output);
+        }
 
         // Background color.
         // Pure black background (0,0,0) is normally treated as "terminal default"
@@ -104,7 +114,10 @@ public static class AnsiEncoder
     private static bool HasExplicitBg(TextStyle style)
     {
         if (EmitExplicitBlackBackground)
+        {
             return true; // always emit explicit backgrounds
+        }
+
         return style.BgR != 0 || style.BgG != 0 || style.BgB != 0;
     }
 
@@ -112,25 +125,38 @@ public static class AnsiEncoder
     {
         // Bold
         if (style.Bold)
+        {
             output.Write("\x1b[1m"u8);
+        }
 
         // Italic
         if (style.Italic)
+        {
             output.Write("\x1b[3m"u8);
+        }
 
         // Underline
         if (style.Underline)
+        {
             output.Write("\x1b[4m"u8);
+        }
 
         // Foreground
         WriteRgbSequence(38, style.FgR, style.FgG, style.FgB, output);
 
         // Background
         if (HasExplicitBg(style))
+        {
             WriteRgbSequence(48, style.BgR, style.BgG, style.BgB, output);
+        }
     }
 
-    private static void WriteRgbSequence(byte code, byte r, byte g, byte b, IBufferWriter<byte> output)
+    private static void WriteRgbSequence(
+        byte code,
+        byte r,
+        byte g,
+        byte b,
+        IBufferWriter<byte> output)
     {
         Span<byte> buf = stackalloc byte[32];
         int pos = 0;
@@ -158,7 +184,10 @@ public static class AnsiEncoder
     // ── Glyph ──
 
     /// <summary>Write a glyph's UTF-8 bytes to the output.</summary>
-    public static void WriteGlyph(GlyphRef glyph, IBufferWriter<byte> output, GlyphInternTable? internTable)
+    public static void WriteGlyph(
+        GlyphRef glyph,
+        IBufferWriter<byte> output,
+        GlyphInternTable? internTable)
     {
         if (glyph.IsAscii)
         {
@@ -169,9 +198,11 @@ public static class AnsiEncoder
         }
         else if (internTable is not null)
         {
-            var utf8 = internTable.Resolve(glyph.InternId);
+            ReadOnlySpan<byte> utf8 = internTable.Resolve(glyph.InternId);
             if (!utf8.IsEmpty)
+            {
                 output.Write(utf8);
+            }
         }
         else
         {
@@ -184,21 +215,29 @@ public static class AnsiEncoder
 
     /// <summary>Show the cursor.</summary>
     public static void ShowCursor(IBufferWriter<byte> output)
-        => output.Write("\x1b[?25h"u8);
+    {
+        output.Write("\x1b[?25h"u8);
+    }
 
     /// <summary>Hide the cursor.</summary>
     public static void HideCursor(IBufferWriter<byte> output)
-        => output.Write("\x1b[?25l"u8);
+    {
+        output.Write("\x1b[?25l"u8);
+    }
 
     // ── Synchronized Output (DEC 2026) ──
 
     /// <summary>Begin synchronized output (atomic frame update).</summary>
     public static void BeginSynchronizedOutput(IBufferWriter<byte> output)
-        => output.Write("\x1b[?2026h"u8);
+    {
+        output.Write("\x1b[?2026h"u8);
+    }
 
     /// <summary>End synchronized output.</summary>
     public static void EndSynchronizedOutput(IBufferWriter<byte> output)
-        => output.Write("\x1b[?2026l"u8);
+    {
+        output.Write("\x1b[?2026l"u8);
+    }
 }
 
 /// <summary>Zero-allocation integer-to-ASCII formatting into a UTF-8 span.</summary>
@@ -217,18 +256,20 @@ internal static class Utf8Formatter
         int v = value;
         while (v > 0)
         {
-            destination[pos++] = (byte)('0' + (v % 10));
+            destination[pos++] = (byte)('0' + v % 10);
             v /= 10;
         }
 
         // Reverse the digits in-place
-        int left = 0, right = pos - 1;
+        int left = 0,
+            right = pos - 1;
         while (left < right)
         {
             (destination[left], destination[right]) = (destination[right], destination[left]);
             left++;
             right--;
         }
+
         return pos;
     }
 }

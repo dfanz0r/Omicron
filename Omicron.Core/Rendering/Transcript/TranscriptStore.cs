@@ -1,14 +1,14 @@
+using System.Text;
 using Omicron.Core.Content;
-using Omicron.Core.Events;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.Rendering.Transcript;
 
 /// <summary>
-/// Append-only store for conversation transcript content.
-/// Holds a <see cref="Utf8TextStore"/> for raw text and a list of
-/// <see cref="TranscriptBlock"/> records that reference byte ranges
-/// within the store.
+///     Append-only store for conversation transcript content.
+///     Holds a <see cref="Utf8TextStore" /> for raw text and a list of
+///     <see cref="TranscriptBlock" /> records that reference byte ranges
+///     within the store.
 /// </summary>
 public sealed class TranscriptStore
 {
@@ -23,12 +23,12 @@ public sealed class TranscriptStore
     public IReadOnlyList<TranscriptBlock> Blocks => _blocks;
 
     /// <summary>
-    /// Append a user message block. The text is appended to the store.
+    ///     Append a user message block. The text is appended to the store.
     /// </summary>
     public UserMessageBlock AppendUserMessage(ReadOnlySpan<byte> utf8Text)
     {
         var id = BlockId.New();
-        var pos = Text.Append(utf8Text);
+        TextPosition pos = Text.Append(utf8Text);
         var block = new UserMessageBlock(id, pos, utf8Text.Length);
         _blocks.Add(block);
         _lastAssistantBlockId = null;
@@ -37,9 +37,9 @@ public sealed class TranscriptStore
     }
 
     /// <summary>
-    /// Append a delta to the current assistant message block.
-    /// If the last block is not an assistant message, or is completed,
-    /// starts a new block.
+    ///     Append a delta to the current assistant message block.
+    ///     If the last block is not an assistant message, or is completed,
+    ///     starts a new block.
     /// </summary>
     public AssistantMessageBlock AppendAssistantDelta(ReadOnlySpan<byte> utf8Delta)
     {
@@ -53,7 +53,7 @@ public sealed class TranscriptStore
             {
                 Text.Append(utf8Delta);
                 // Update the block's byte length (text was appended at the end of the store)
-                var updated = existing with
+                AssistantMessageBlock updated = existing with
                 {
                     ByteLength = existing.ByteLength + utf8Delta.Length
                 };
@@ -63,8 +63,8 @@ public sealed class TranscriptStore
         }
 
         // Start a new block
-        var pos = Text.Append(utf8Delta);
-        block = new AssistantMessageBlock(BlockId.New(), pos, utf8Delta.Length, IsStreaming: true);
+        TextPosition pos = Text.Append(utf8Delta);
+        block = new AssistantMessageBlock(BlockId.New(), pos, utf8Delta.Length, true);
         _blocks.Add(block);
         _lastAssistantBlockId = block.Id;
         _lastAssistantCompleted = false;
@@ -72,22 +72,31 @@ public sealed class TranscriptStore
     }
 
     /// <summary>
-    /// Start a tool call block (before any output is available).
+    ///     Start a tool call block (before any output is available).
     /// </summary>
     public ToolCallBlock AppendToolCall(string toolName, string? toolCallId = null)
     {
         var id = BlockId.New();
         // Write a placeholder text
         byte[] textBytes;
-        var tempBuilder = Utf8Text.CreateBuilder();
+        Utf8Builder tempBuilder = Utf8Text.CreateBuilder();
         try
         {
             Utf8CompositeFormat.AppendFormatUtf8Slow(ref tempBuilder, "[tool: {0}]"u8, toolName);
             textBytes = tempBuilder.AsSpan().ToArray();
         }
-        finally { tempBuilder.Dispose(); }
-        var pos = Text.Append(textBytes);
-        var block = new ToolCallBlock(id, pos, textBytes.Length, toolName, toolCallId, ToolCallState.Running);
+        finally
+        {
+            tempBuilder.Dispose();
+        }
+
+        TextPosition pos = Text.Append(textBytes);
+        var block = new ToolCallBlock(id,
+            pos,
+            textBytes.Length,
+            toolName,
+            toolCallId,
+            ToolCallState.Running);
         _blocks.Add(block);
         _lastAssistantBlockId = null;
         _lastAssistantCompleted = true;
@@ -95,9 +104,13 @@ public sealed class TranscriptStore
     }
 
     /// <summary>
-    /// Update an existing tool call block with a new state and optional output text.
+    ///     Update an existing tool call block with a new state and optional output text.
     /// </summary>
-    public ToolCallBlock UpdateToolCall(BlockId blockId, ToolCallState newState, ReadOnlySpan<byte> outputText, List<IContentBlock>? contentBlocks = null)
+    public ToolCallBlock UpdateToolCall(
+        BlockId blockId,
+        ToolCallState newState,
+        ReadOnlySpan<byte> outputText,
+        List<IContentBlock>? contentBlocks = null)
     {
         for (int i = _blocks.Count - 1; i >= 0; i--)
         {
@@ -106,12 +119,14 @@ public sealed class TranscriptStore
                 // Already in the target state — don't append output again.
                 // This guards against duplicate events or double-processing.
                 if (tcb.State == newState)
+                {
                     return tcb;
+                }
 
                 // Append output text. Keep tool output on its own line so the
                 // placeholder header ("[tool: ...]") doesn't run into the
                 // first result line during live rendering or session replay.
-                var bytesAppended = 0;
+                int bytesAppended = 0;
                 if (!outputText.IsEmpty)
                 {
                     if (tcb.ByteLength > 0 && outputText[0] is not (byte)'\n' and not (byte)'\r')
@@ -124,7 +139,7 @@ public sealed class TranscriptStore
                     bytesAppended += outputText.Length;
                 }
 
-                var updated = tcb with
+                ToolCallBlock updated = tcb with
                 {
                     State = newState,
                     ByteLength = tcb.ByteLength + bytesAppended,
@@ -136,19 +151,25 @@ public sealed class TranscriptStore
         }
 
         // Block not found — create a new one
-        var pos = Text.Append(outputText);
-        var block = new ToolCallBlock(blockId, pos, outputText.Length, "unknown", null, newState, contentBlocks);
+        TextPosition pos = Text.Append(outputText);
+        var block = new ToolCallBlock(blockId,
+            pos,
+            outputText.Length,
+            "unknown",
+            null,
+            newState,
+            contentBlocks);
         _blocks.Add(block);
         return block;
     }
 
     /// <summary>
-    /// Append a system notice (error, status message).
+    ///     Append a system notice (error, status message).
     /// </summary>
     public SystemNoticeBlock AppendNotice(string text)
     {
-        var utf8 = System.Text.Encoding.UTF8.GetBytes(text);
-        var pos = Text.Append(utf8);
+        byte[] utf8 = Encoding.UTF8.GetBytes(text);
+        TextPosition pos = Text.Append(utf8);
         var block = new SystemNoticeBlock(BlockId.New(), pos, utf8.Length, text);
         _blocks.Add(block);
         _lastAssistantBlockId = null;
@@ -157,20 +178,20 @@ public sealed class TranscriptStore
     }
 
     /// <summary>
-    /// Append a blank visual separator (empty line padding between messages).
-    /// Optionally tint the separator with a background color so adjacent message
-    /// backgrounds can visually bleed into the padding.
+    ///     Append a blank visual separator (empty line padding between messages).
+    ///     Optionally tint the separator with a background color so adjacent message
+    ///     backgrounds can visually bleed into the padding.
     /// </summary>
     public void AppendSeparator(byte bgR = 0, byte bgG = 0, byte bgB = 0)
     {
-        var utf8 = System.Text.Encoding.UTF8.GetBytes(" ");
-        var pos = Text.Append(utf8);
+        byte[] utf8 = Encoding.UTF8.GetBytes(" ");
+        TextPosition pos = Text.Append(utf8);
         var block = new SeparatorBlock(BlockId.New(), pos, utf8.Length, bgR, bgG, bgB);
         _blocks.Add(block);
     }
 
     /// <summary>
-    /// Mark the last assistant block as complete (sets IsStreaming = false).
+    ///     Mark the last assistant block as complete (sets IsStreaming = false).
     /// </summary>
     public void CompleteLastAssistantBlock()
     {
@@ -178,7 +199,10 @@ public sealed class TranscriptStore
         {
             if (_blocks[^1] is AssistantMessageBlock existing)
             {
-                _blocks[^1] = existing with { IsStreaming = false };
+                _blocks[^1] = existing with
+                {
+                    IsStreaming = false
+                };
                 _lastAssistantCompleted = true;
                 _lastAssistantBlockId = null;
             }
@@ -186,8 +210,8 @@ public sealed class TranscriptStore
     }
 
     /// <summary>
-    /// Remove all blocks and optionally clear the text store.
-    /// Does NOT dispose content blocks — the event sink owns them.
+    ///     Remove all blocks and optionally clear the text store.
+    ///     Does NOT dispose content blocks — the event sink owns them.
     /// </summary>
     public void Clear()
     {

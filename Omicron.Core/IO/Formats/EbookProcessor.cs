@@ -1,21 +1,27 @@
+using System.IO.Compression;
 using System.Text;
 using System.Text.RegularExpressions;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
+using VersOne.Epub;
 
 namespace Omicron.Core.IO;
 
 /// <summary>
-/// Processes EPUB ebook files by extracting chapter text.
-/// Uses VersOne.Epub when available; falls back to ZIP-based text extraction.
+///     Processes EPUB ebook files by extracting chapter text.
+///     Uses VersOne.Epub when available; falls back to ZIP-based text extraction.
 /// </summary>
 public sealed class EbookProcessor : IContentProcessor
 {
-    private static readonly Regex HtmlWhitespaceRegex = new Regex(@"\s+", RegexOptions.Compiled);
+    private static readonly Regex HtmlWhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
     public string Id => "ebook";
 
-    public IReadOnlySet<DetectedFileType> SupportedTypes { get; }
-        = new HashSet<DetectedFileType> { DetectedFileType.Ebook };
+    public IReadOnlySet<DetectedFileType> SupportedTypes { get; } =
+        new HashSet<DetectedFileType>
+        {
+            DetectedFileType.Ebook
+        };
+
     public OutputModality OutputModality => OutputModality.Text;
 
     public ValueTask<ContentProcessorResult> ProcessAsync(
@@ -24,42 +30,47 @@ public sealed class EbookProcessor : IContentProcessor
     {
         ct.ThrowIfCancellationRequested();
 
-        var bytes = context.Bytes;
+        ReadOnlyMemory<byte> bytes = context.Bytes;
 
         if (bytes.IsEmpty)
         {
-            return ValueTask.FromResult(new ContentProcessorResult(
-                $"[FILE] {context.RelativePath}  (empty)", OutputModality.Text));
+            return ValueTask.FromResult(new ContentProcessorResult($"[FILE] {context.RelativePath}  (empty)",
+                OutputModality.Text));
         }
 
-        var output = Utf8Text.CreateBuilder();
+        Utf8Builder output = Utf8Text.CreateBuilder();
         try
         {
-            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, EPUB)"u8, context.RelativePath, FormatSize.Format(bytes.Length));
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output,
+                "[FILE] {0}  ({1}, EPUB)"u8,
+                context.RelativePath,
+                FormatSize.Format(bytes.Length));
             output.AppendLine();
             output.AppendLine();
 
             // Try to extract text from EPUB (ZIP with .opf and .xhtml)
-            var chapters = TryExtractEpubText(bytes.Span);
+            List<(string? Title, string Content)>? chapters = TryExtractEpubText(bytes.Span);
 
             if (chapters is not null && chapters.Count > 0)
             {
-                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "Chapters: {0}"u8, chapters.Count);
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output,
+                    "Chapters: {0}"u8,
+                    chapters.Count);
                 output.AppendLine();
                 output.AppendLine();
 
                 long totalBytes = 0;
                 const long maxBytes = 50 * 1024;
 
-                foreach (var (title, content) in chapters)
+                foreach ((string? title, string content) in chapters)
                 {
                     ct.ThrowIfCancellationRequested();
 
-                    var chapterText = string.IsNullOrEmpty(title)
+                    string chapterText = string.IsNullOrEmpty(title)
                         ? content
                         : $"## {title}\n\n{content}";
 
-                    var chapterBytes = Encoding.UTF8.GetByteCount(chapterText) + 1; // +1 for newline
+                    int chapterBytes = Encoding.UTF8.GetByteCount(chapterText) + 1; // +1 for newline
                     if (totalBytes + chapterBytes > maxBytes)
                     {
                         output.AppendLiteral("... (output truncated)"u8);
@@ -79,11 +90,14 @@ public sealed class EbookProcessor : IContentProcessor
                 output.AppendLine();
             }
 
-            return ValueTask.FromResult(new ContentProcessorResult(
-                output.ToString().TrimEnd(), OutputModality.Text,
-                Utf8Data: output.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
+                OutputModality.Text,
+                output.AsSpan().ToArray()));
         }
-        finally { output.Dispose(); }
+        finally
+        {
+            output.Dispose();
+        }
     }
 
     private static List<(string? Title, string Content)>? TryExtractEpubText(ReadOnlySpan<byte> bytes)
@@ -92,17 +106,24 @@ public sealed class EbookProcessor : IContentProcessor
         try
         {
             using var ms = new MemoryStream(bytes.ToArray());
-            var epub = VersOne.Epub.EpubReader.OpenBook(ms);
+            EpubBookRef epub = EpubReader.OpenBook(ms);
             var results = new List<(string? Title, string Content)>();
-            var readingOrder = epub.GetReadingOrder();
-            if (readingOrder is null) return null;
-            foreach (var textContent in readingOrder)
+            List<EpubLocalTextContentFileRef>? readingOrder = epub.GetReadingOrder();
+            if (readingOrder is null)
             {
-                var html = textContent.ReadContent();
-                var text = StripHtmlTags(html);
-                if (!string.IsNullOrWhiteSpace(text))
-                    results.Add((null, text));
+                return null;
             }
+
+            foreach (EpubLocalTextContentFileRef textContent in readingOrder)
+            {
+                string html = textContent.ReadContent();
+                string text = StripHtmlTags(html);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    results.Add((null, text));
+                }
+            }
+
             return results.Count > 0 ? results : null;
         }
         catch
@@ -114,66 +135,91 @@ public sealed class EbookProcessor : IContentProcessor
         try
         {
             using var ms = new MemoryStream(bytes.ToArray());
-            using var archive = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Read);
+            using var archive = new ZipArchive(ms,
+                ZipArchiveMode.Read);
 
             // Find the OPF file from META-INF/container.xml
-            var containerEntry = archive.GetEntry("META-INF/container.xml");
-            if (containerEntry is null) return null;
-
-            string? opfPath = null;
-            using (var reader = new System.IO.StreamReader(containerEntry.Open(), Encoding.UTF8))
+            ZipArchiveEntry? containerEntry = archive.GetEntry("META-INF/container.xml");
+            if (containerEntry is null)
             {
-                var containerXml = reader.ReadToEnd();
-                // Look for <rootfile full-path="..." />
-                var match = System.Text.RegularExpressions.Regex.Match(containerXml,
-                    "full-path\\s*=\\s*\"([^\"]+)\"", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                if (match.Success)
-                    opfPath = match.Groups[1].Value;
+                return null;
             }
 
-            if (opfPath is null) return null;
+            string? opfPath = null;
+            using (var reader = new StreamReader(containerEntry.Open(), Encoding.UTF8))
+            {
+                string containerXml = reader.ReadToEnd();
+                // Look for <rootfile full-path="..." />
+                Match match = Regex.Match(containerXml,
+                    "full-path\\s*=\\s*\"([^\"]+)\"",
+                    RegexOptions.IgnoreCase);
+                if (match.Success)
+                {
+                    opfPath = match.Groups[1].Value;
+                }
+            }
+
+            if (opfPath is null)
+            {
+                return null;
+            }
 
             // Normalize OPF path to get base directory
-            var opfDir = Path.GetDirectoryName(opfPath)?.Replace('\\', '/') ?? "";
-            if (opfDir.Length > 0) opfDir += "/";
+            string opfDir = Path.GetDirectoryName(opfPath)?.Replace('\\', '/') ?? "";
+            if (opfDir.Length > 0)
+            {
+                opfDir += "/";
+            }
 
             // Read OPF to get spine and manifest
-            var opfEntry = archive.GetEntry(opfPath);
-            if (opfEntry is null) return null;
+            ZipArchiveEntry? opfEntry = archive.GetEntry(opfPath);
+            if (opfEntry is null)
+            {
+                return null;
+            }
 
             string opfContent;
-            using (var reader = new System.IO.StreamReader(opfEntry.Open(), Encoding.UTF8))
+            using (var reader = new StreamReader(opfEntry.Open(), Encoding.UTF8))
+            {
                 opfContent = reader.ReadToEnd();
+            }
 
             // Find all <item href="..." id="..." media-type="application/xhtml+xml" />
-            var hrefMatches = System.Text.RegularExpressions.Regex.Matches(opfContent,
-                "href\\s*=\\s*\"([^\"]+)\"", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            MatchCollection hrefMatches = Regex.Matches(opfContent,
+                "href\\s*=\\s*\"([^\"]+)\"",
+                RegexOptions.IgnoreCase);
 
             var results = new List<(string?, string)>();
 
-            foreach (System.Text.RegularExpressions.Match hrefMatch in hrefMatches)
+            foreach (Match hrefMatch in hrefMatches)
             {
                 if (hrefMatch.Success)
                 {
-                    var href = hrefMatch.Groups[1].Value;
-                    var fullPath = opfDir + href;
+                    string href = hrefMatch.Groups[1].Value;
+                    string fullPath = opfDir + href;
                     fullPath = fullPath.Replace("\\", "/").Replace("//", "/");
 
-                    var entry = archive.GetEntry(fullPath);
-                    if (entry is null) continue;
+                    ZipArchiveEntry? entry = archive.GetEntry(fullPath);
+                    if (entry is null)
+                    {
+                        continue;
+                    }
 
-                    using var entryReader = new System.IO.StreamReader(entry.Open(), Encoding.UTF8);
-                    var xhtml = entryReader.ReadToEnd();
+                    using var entryReader = new StreamReader(entry.Open(), Encoding.UTF8);
+                    string xhtml = entryReader.ReadToEnd();
 
                     // Extract title from <title> tag
-                    var titleMatch = System.Text.RegularExpressions.Regex.Match(xhtml,
-                        "<title[^>]*>([^<]+)</title>", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                    var title = titleMatch.Success ? titleMatch.Groups[1].Value.Trim() : null;
+                    Match titleMatch = Regex.Match(xhtml,
+                        "<title[^>]*>([^<]+)</title>",
+                        RegexOptions.IgnoreCase);
+                    string? title = titleMatch.Success ? titleMatch.Groups[1].Value.Trim() : null;
 
                     // Extract body content (strip HTML tags)
-                    var bodyText = StripHtmlTags(xhtml);
+                    string bodyText = StripHtmlTags(xhtml);
                     if (!string.IsNullOrWhiteSpace(bodyText))
+                    {
                         results.Add((title, bodyText));
+                    }
                 }
             }
 
@@ -188,27 +234,34 @@ public sealed class EbookProcessor : IContentProcessor
     private static string StripHtmlTags(string html)
     {
         if (html.Length > 10 * 1024 * 1024) // 10 MB cap
+        {
             return "(document too large)";
+        }
 
-        using var output = Utf8Text.CreateBuilder();
+        using Utf8Builder output = Utf8Text.CreateBuilder();
         bool inTag = false;
         bool inEntity = false;
-        var entityBuf = new System.Text.StringBuilder();
+        var entityBuf = new StringBuilder();
 
         for (int i = 0; i < html.Length; i++)
         {
-            var c = html[i];
+            char c = html[i];
             if (c == '<')
             {
                 inTag = true;
                 continue;
             }
+
             if (c == '>')
             {
                 inTag = false;
                 continue;
             }
-            if (inTag) continue;
+
+            if (inTag)
+            {
+                continue;
+            }
 
             if (c == '&')
             {
@@ -216,11 +269,12 @@ public sealed class EbookProcessor : IContentProcessor
                 entityBuf.Clear();
                 continue;
             }
+
             if (c == ';' && inEntity)
             {
                 inEntity = false;
-                var entity = entityBuf.ToString();
-                var decoded = entity switch
+                string entity = entityBuf.ToString();
+                char decoded = entity switch
                 {
                     "amp" => '&',
                     "lt" => '<',
@@ -231,13 +285,21 @@ public sealed class EbookProcessor : IContentProcessor
                     _ => '\0'
                 };
                 if (decoded != '\0')
+                {
                     output.Append(decoded);
+                }
                 else if (entity.StartsWith("#x"))
+                {
                     output.Append((char)Convert.ToInt32(entity[2..], 16));
+                }
                 else if (entity.StartsWith("#"))
+                {
                     output.Append((char)Convert.ToInt32(entity[1..]));
+                }
+
                 continue;
             }
+
             if (inEntity)
             {
                 entityBuf.Append(c);
@@ -247,10 +309,8 @@ public sealed class EbookProcessor : IContentProcessor
             output.Append(c);
         }
 
-        var result = output.ToString();
+        string result = output.ToString();
         // Collapse whitespace
         return HtmlWhitespaceRegex.Replace(result, " ").Trim();
     }
-
-
 }

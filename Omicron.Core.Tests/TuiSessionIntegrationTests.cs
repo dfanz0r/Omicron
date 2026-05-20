@@ -1,10 +1,11 @@
 using System.Buffers;
 using System.Text;
+using Omicron.CLI.Tui;
+using Omicron.Core.Config;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
-using Omicron.Core.Rendering.Transcript;
 using Xunit;
 
 namespace Omicron.Core.Tests;
@@ -18,16 +19,31 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void TuiModelPicker_NavigateAndSelect()
     {
-        var picker = new Omicron.CLI.Tui.TuiModelPicker();
+        var picker = new TuiModelPicker();
 
         var models = new List<Model>
         {
-            new() { Id = "gpt-4", Name = "GPT-4", ProviderName = "openai" },
-            new() { Id = "claude-3", Name = "Claude 3", ProviderName = "anthropic" },
-            new() { Id = "gemini-pro", Name = "Gemini Pro", ProviderName = "google" },
+            new()
+            {
+                Id = "gpt-4",
+                Name = "GPT-4",
+                ProviderName = "openai"
+            },
+            new()
+            {
+                Id = "claude-3",
+                Name = "Claude 3",
+                ProviderName = "anthropic"
+            },
+            new()
+            {
+                Id = "gemini-pro",
+                Name = "Gemini Pro",
+                ProviderName = "google"
+            }
         };
 
-        picker.SetModels(models, lastModelKey: "claude-3");
+        picker.SetModels(models, "claude-3");
 
         // Measure and arrange into a frame
         var frame = new TerminalFrame(80, 24);
@@ -40,7 +56,7 @@ public class TuiSessionIntegrationTests
 
         // Navigate down, then select
         Model? selected = null;
-        picker.OnModelSelected += (m) => selected = m;
+        picker.OnModelSelected += m => selected = m;
 
         Assert.True(picker.HandleKey(new KeyEvent(Key.Down, KeyModifiers.None, null)));
         Assert.False(picker.IsCompleted);
@@ -54,14 +70,19 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void TuiModelPicker_Cancel_OnEscape()
     {
-        var picker = new Omicron.CLI.Tui.TuiModelPicker();
+        var picker = new TuiModelPicker();
 
         var models = new List<Model>
         {
-            new() { Id = "gpt-4", Name = "GPT-4", ProviderName = "openai" },
+            new()
+            {
+                Id = "gpt-4",
+                Name = "GPT-4",
+                ProviderName = "openai"
+            }
         };
 
-        picker.SetModels(models, lastModelKey: null);
+        picker.SetModels(models, null);
 
         bool cancelled = false;
         picker.OnCancelled += () => cancelled = true;
@@ -74,8 +95,8 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void TuiModelPicker_Render_DoesNotCrash()
     {
-        var picker = new Omicron.CLI.Tui.TuiModelPicker();
-        picker.SetModels(new List<Model>(), lastModelKey: null);
+        var picker = new TuiModelPicker();
+        picker.SetModels(new List<Model>(), null);
 
         var frame = new TerminalFrame(80, 24);
         var ctx = new RenderContext(frame, new Rect(0, 0, 80, 24), TextStyle.Default);
@@ -85,12 +106,23 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void TuiModelPicker_ArrangedRender_ShowsTitleAndModelRows()
     {
-        var picker = new Omicron.CLI.Tui.TuiModelPicker();
+        var picker = new TuiModelPicker();
         picker.SetModels(new List<Model>
-        {
-            new() { Id = "gpt-4", Name = "GPT-4", ProviderName = "openai" },
-            new() { Id = "claude-3", Name = "Claude 3", ProviderName = "anthropic" },
-        }, lastModelKey: null);
+            {
+                new()
+                {
+                    Id = "gpt-4",
+                    Name = "GPT-4",
+                    ProviderName = "openai"
+                },
+                new()
+                {
+                    Id = "claude-3",
+                    Name = "Claude 3",
+                    ProviderName = "anthropic"
+                }
+            },
+            null);
 
         var frame = new TerminalFrame(80, 24);
         var bounds = new Rect(0, 0, 80, 24);
@@ -99,7 +131,7 @@ public class TuiSessionIntegrationTests
         var ctx = new RenderContext(frame, bounds, TextStyle.Default);
         picker.Render(ctx);
 
-        var text = ExtractAsciiFrameText(frame);
+        string text = ExtractAsciiFrameText(frame);
         Assert.Contains("Select a model", text);
         Assert.Contains("GPT-4", text);
     }
@@ -111,7 +143,7 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void TuiApiKeyPrompt_MaskedInput()
     {
-        var prompt = new Omicron.CLI.Tui.TuiApiKeyPrompt();
+        var prompt = new TuiApiKeyPrompt();
         prompt.Reset("openai");
 
         Assert.Equal("openai", prompt.ProviderName);
@@ -119,9 +151,9 @@ public class TuiSessionIntegrationTests
         Assert.False(prompt.IsCancelled);
 
         // Type some characters
-        Assert.True(prompt.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('a'))));
-        Assert.True(prompt.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('b'))));
-        Assert.True(prompt.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('c'))));
+        Assert.True(prompt.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('a'))));
+        Assert.True(prompt.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('b'))));
+        Assert.True(prompt.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('c'))));
 
         Assert.Equal("abc", prompt.ApiKey);
 
@@ -139,10 +171,10 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void TuiApiKeyPrompt_Cancel_OnEscape()
     {
-        var prompt = new Omicron.CLI.Tui.TuiApiKeyPrompt();
+        var prompt = new TuiApiKeyPrompt();
         prompt.Reset("anthropic");
 
-        prompt.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('x')));
+        prompt.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('x')));
         prompt.HandleKey(new KeyEvent(Key.Escape, KeyModifiers.None, null));
 
         Assert.True(prompt.IsCompleted);
@@ -154,7 +186,7 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void TuiApiKeyPrompt_Insert_PasteText_IgnoresNewlines()
     {
-        var prompt = new Omicron.CLI.Tui.TuiApiKeyPrompt();
+        var prompt = new TuiApiKeyPrompt();
         prompt.Reset("openrouter");
 
         prompt.Insert("sk-or-v1-test\r\n");
@@ -166,7 +198,7 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void TuiApiKeyPrompt_Render_DoesNotCrash()
     {
-        var prompt = new Omicron.CLI.Tui.TuiApiKeyPrompt();
+        var prompt = new TuiApiKeyPrompt();
         prompt.Reset("openai");
 
         var frame = new TerminalFrame(80, 24);
@@ -184,12 +216,12 @@ public class TuiSessionIntegrationTests
         // Create a minimal bridge. The host/config can be null since we're
         // only testing the /help command which doesn't use them.
         // For this test, we mock the dependencies via a minimal setup.
-        var config = new Omicron.Core.Config.AgentConfig();
+        var config = new AgentConfig();
         // We need an OmicronHost — but we can test the bridge behavior directly
         // by checking if the command is recognized
 
         // Test the parsing logic directly
-        var result = IsHelpCommand("/help");
+        bool result = IsHelpCommand("/help");
         Assert.True(result);
     }
 
@@ -222,15 +254,15 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void InputEditorWidget_BasicInsertAndSubmit()
     {
-        var editor = new Omicron.CLI.Tui.InputEditorWidget();
+        var editor = new InputEditorWidget();
 
         Assert.Equal("", editor.Text);
         Assert.False(editor.HasContent);
 
         // Type some text
-        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('h'))));
-        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('e'))));
-        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('y'))));
+        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('h'))));
+        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('e'))));
+        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('y'))));
 
         Assert.Equal("hey", editor.Text);
         Assert.True(editor.HasContent);
@@ -238,7 +270,7 @@ public class TuiSessionIntegrationTests
 
         // Submit
         string? submitted = null;
-        editor.OnSubmit += (s) => submitted = s;
+        editor.OnSubmit += s => submitted = s;
         Assert.True(editor.HandleKey(new KeyEvent(Key.Enter, KeyModifiers.None, null)));
 
         Assert.Equal("hey", submitted);
@@ -249,7 +281,7 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void InputEditorWidget_CursorMovement()
     {
-        var editor = new Omicron.CLI.Tui.InputEditorWidget();
+        var editor = new InputEditorWidget();
         editor.Insert("hello");
         Assert.Equal(5, editor.CursorColumn);
 
@@ -268,7 +300,7 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void InputEditorWidget_BackspaceAndDelete()
     {
-        var editor = new Omicron.CLI.Tui.InputEditorWidget();
+        var editor = new InputEditorWidget();
         editor.Insert("hello");
 
         editor.Backspace();
@@ -284,19 +316,19 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void InputEditorWidget_ReadlineShortcuts()
     {
-        var editor = new Omicron.CLI.Tui.InputEditorWidget();
+        var editor = new InputEditorWidget();
         editor.Insert("hello world");
 
         // Ctrl+A → Home
-        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('\u0001'))));
+        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('\u0001'))));
         Assert.Equal(0, editor.CursorColumn);
 
         // Ctrl+E → End
-        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('\u0005'))));
+        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('\u0005'))));
         Assert.Equal(11, editor.CursorColumn);
 
         // Ctrl+U → Kill to start
-        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('\u0015'))));
+        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('\u0015'))));
         Assert.Equal("", editor.Text);
 
         // Re-insert for more testing
@@ -304,14 +336,14 @@ public class TuiSessionIntegrationTests
         editor.MoveHome();
 
         // Ctrl+K → Kill to end
-        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new System.Text.Rune('\u000B'))));
+        Assert.True(editor.HandleKey(new KeyEvent(Key.Character, KeyModifiers.None, new Rune('\u000B'))));
         Assert.Equal("", editor.Text);
     }
 
     [Fact]
     public void InputEditorWidget_History()
     {
-        var editor = new Omicron.CLI.Tui.InputEditorWidget();
+        var editor = new InputEditorWidget();
         editor.AddToHistory("first command");
         editor.AddToHistory("second command");
         editor.AddToHistory("third command");
@@ -335,7 +367,7 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void InputEditorWidget_Render_DoesNotCrash()
     {
-        var editor = new Omicron.CLI.Tui.InputEditorWidget();
+        var editor = new InputEditorWidget();
         editor.Insert("test input");
 
         var frame = new TerminalFrame(80, 1);
@@ -354,11 +386,10 @@ public class TuiSessionIntegrationTests
     {
         var stops = new ColorStop[]
         {
-            new(0.0, 0, 0, 0),
-            new(1.0, 255, 255, 255),
+            new(0.0, 0, 0, 0), new(1.0, 255, 255, 255)
         };
 
-        var (r, g, b) = GradientHelper.Sample(stops, 0.0);
+        (byte r, byte g, byte b) = GradientHelper.Sample(stops, 0.0);
         Assert.Equal(0, r);
         Assert.Equal(0, g);
         Assert.Equal(0, b);
@@ -380,8 +411,11 @@ public class TuiSessionIntegrationTests
         var frame = new TerminalFrame(80, 24);
         var ctx = new RenderContext(frame, new Rect(0, 0, 80, 24), TextStyle.Default);
 
-        GradientHelper.Fill(ctx, new Rect(0, 0, 80, 24), GradientDirection.Horizontal,
-            (255, 0, 0), (0, 0, 255));
+        GradientHelper.Fill(ctx,
+            new Rect(0, 0, 80, 24),
+            GradientDirection.Horizontal,
+            (255, 0, 0),
+            (0, 0, 255));
 
         // Check first and last cell
         Assert.NotEqual(frame[0, 0], frame[0, 79]);
@@ -394,11 +428,11 @@ public class TuiSessionIntegrationTests
     [Fact]
     public void TranscriptViewport_Find_ReturnsMatches()
     {
-        var transcript = new Omicron.CLI.Tui.TranscriptViewportWidget();
+        var transcript = new TranscriptViewportWidget();
 
         // Add some content via events
-        transcript.UpdateFromEvent(new UserMessageEvent(
-            EventEnvelope.ForSession(new SessionId(Guid.NewGuid())), "hello world"u8));
+        transcript.UpdateFromEvent(new UserMessageEvent(EventEnvelope.ForSession(new SessionId(Guid.NewGuid())),
+            "hello world"u8));
 
         // Search for existing text
         int count = transcript.Find("hello");
@@ -425,7 +459,7 @@ public class TuiSessionIntegrationTests
         {
             Glyph = GlyphRef.Ascii((byte)'X'),
             Width = 1,
-            Style = TextStyle.Inverted,
+            Style = TextStyle.Inverted
         };
 
         Assert.NotEqual(RenderCell.Empty, frame[5, 5]);
@@ -442,7 +476,7 @@ public class TuiSessionIntegrationTests
         frame.SetText(2, 3, text, TextStyle.Default);
 
         // Check the first character
-        var cell = frame[2, 3];
+        RenderCell cell = frame[2, 3];
         Assert.Equal('H', (char)cell.Glyph.AsciiValue);
     }
 
@@ -456,7 +490,7 @@ public class TuiSessionIntegrationTests
         var a = new Rect(0, 0, 10, 10);
         var b = new Rect(5, 5, 10, 10);
 
-        var c = a.Intersect(b);
+        Rect c = a.Intersect(b);
         Assert.Equal(5, c.X);
         Assert.Equal(5, c.Y);
         Assert.Equal(5, c.Width);
@@ -469,7 +503,7 @@ public class TuiSessionIntegrationTests
         var a = new Rect(0, 0, 10, 10);
         var b = new Rect(20, 20, 10, 10);
 
-        var c = a.Intersect(b);
+        Rect c = a.Intersect(b);
         Assert.Equal(0, c.Width);
         Assert.Equal(0, c.Height);
     }
@@ -483,7 +517,7 @@ public class TuiSessionIntegrationTests
     {
         var output = new ArrayBufferWriter<byte>();
         AnsiEncoder.ResetStyle(output);
-        var written = output.WrittenSpan.ToArray();
+        byte[] written = output.WrittenSpan.ToArray();
 
         // ESC[0m
         Assert.Equal(4, written.Length);
@@ -500,34 +534,51 @@ public class TuiSessionIntegrationTests
         {
             for (int col = 0; col < frame.Width; col++)
             {
-                var cell = frame.Cells[row * frame.Width + col];
+                RenderCell cell = frame.Cells[row * frame.Width + col];
                 if (cell.Width == 0)
+                {
                     continue;
+                }
+
                 sb.Append(cell.Glyph.IsAscii ? (char)cell.Glyph.AsciiValue : '?');
             }
+
             sb.Append('\n');
         }
+
         return sb.ToString();
     }
 
     private static bool IsHelpCommand(string input)
     {
-        if (!input.StartsWith('/')) return false;
-        var parts = input.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (!input.StartsWith('/'))
+        {
+            return false;
+        }
+
+        string[] parts = input.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
         return parts.Length > 0 && parts[0].ToLowerInvariant() == "/help";
     }
 
     private static bool IsClearCommand(string input)
     {
-        if (!input.StartsWith('/')) return false;
-        var parts = input.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (!input.StartsWith('/'))
+        {
+            return false;
+        }
+
+        string[] parts = input.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
         return parts.Length > 0 && parts[0].ToLowerInvariant() == "/clear";
     }
 
     private static bool IsExitCommand(string input)
     {
-        if (!input.StartsWith('/')) return false;
-        var parts = input.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (!input.StartsWith('/'))
+        {
+            return false;
+        }
+
+        string[] parts = input.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
         return parts.Length > 0 && parts[0].ToLowerInvariant() == "/exit";
     }
 }

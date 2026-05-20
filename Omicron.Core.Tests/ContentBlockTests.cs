@@ -39,7 +39,7 @@ public class ContentBlockTests
     [Fact]
     public void CodeContentBlock_StoresAllFields()
     {
-        var block = new CodeContentBlock("int x = 1;", Language: "csharp", Path: "src/Foo.cs");
+        var block = new CodeContentBlock("int x = 1;", "csharp", "src/Foo.cs");
         Assert.Equal("int x = 1;", block.Text);
         Assert.Equal("csharp", block.Language);
         Assert.Equal("src/Foo.cs", block.Path);
@@ -48,8 +48,8 @@ public class ContentBlockTests
     [Fact]
     public void DiffContentBlock_StoresDiff()
     {
-        var diff = "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new";
-        var block = new DiffContentBlock(diff, Path: "file.cs");
+        string diff = "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new";
+        var block = new DiffContentBlock(diff, "file.cs");
         Assert.Equal(diff, block.Text);
         Assert.Equal("file.cs", block.Path);
     }
@@ -57,12 +57,11 @@ public class ContentBlockTests
     [Fact]
     public void FilePreviewContentBlock_StoresAllFields()
     {
-        var block = new FilePreviewContentBlock(
-            Path: "readme.txt",
-            Preview: "line1\nline2",
-            Size: 1024,
-            LineCount: 2,
-            IsBinary: false);
+        var block = new FilePreviewContentBlock("readme.txt",
+            "line1\nline2",
+            1024,
+            2,
+            false);
         Assert.Equal("readme.txt", block.Path);
         Assert.Equal("line1\nline2", block.Text);
         Assert.Equal(1024, block.Size);
@@ -80,7 +79,7 @@ public class ContentBlockTests
     [Fact]
     public void ErrorContentBlock_WithDetails()
     {
-        var block = new ErrorContentBlock("parse failed", Details: "line 42");
+        var block = new ErrorContentBlock("parse failed", "line 42");
         Assert.Equal("parse failed", block.Text);
         Assert.Equal("line 42", block.Details);
     }
@@ -88,7 +87,10 @@ public class ContentBlockTests
     [Fact]
     public void ToolCallContentBlock_StoresCall()
     {
-        var args = new Dictionary<string, object?> { ["path"] = "test.txt" };
+        var args = new Dictionary<string, object?>
+        {
+            ["path"] = "test.txt"
+        };
         var block = new ToolCallContentBlock("call-1", "read_path", args);
         Assert.Equal("call-1", block.ToolCallId);
         Assert.Equal("read_path", block.ToolName);
@@ -109,21 +111,21 @@ public class ContentBlockTests
     [Fact]
     public void Render_PlainText()
     {
-        var result = ContentBlockTextRenderer.Render(new PlainTextContentBlock("hello world"));
+        string result = ContentBlockTextRenderer.Render(new PlainTextContentBlock("hello world"));
         Assert.Equal("hello world", result);
     }
 
     [Fact]
     public void Render_Markdown()
     {
-        var result = ContentBlockTextRenderer.Render(new MarkdownContentBlock("# Title\n\nbody"));
+        string result = ContentBlockTextRenderer.Render(new MarkdownContentBlock("# Title\n\nbody"));
         Assert.Equal("# Title\n\nbody", result);
     }
 
     [Fact]
     public void Render_Code_WithLanguage()
     {
-        var result = ContentBlockTextRenderer.Render(new CodeContentBlock("int x = 1;", Language: "csharp"));
+        string result = ContentBlockTextRenderer.Render(new CodeContentBlock("int x = 1;", "csharp"));
         Assert.Contains("```csharp", result);
         Assert.Contains("int x = 1;", result);
         Assert.Contains("```", result);
@@ -132,15 +134,15 @@ public class ContentBlockTests
     [Fact]
     public void Render_Code_WithPath()
     {
-        var result = ContentBlockTextRenderer.Render(new CodeContentBlock("print('hi')", Path: "src/test.py"));
+        string result = ContentBlockTextRenderer.Render(new CodeContentBlock("print('hi')", Path: "src/test.py"));
         Assert.Contains("// src/test.py", result);
     }
 
     [Fact]
     public void Render_Diff()
     {
-        var diff = "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new";
-        var result = ContentBlockTextRenderer.Render(new DiffContentBlock(diff));
+        string diff = "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new";
+        string result = ContentBlockTextRenderer.Render(new DiffContentBlock(diff));
         Assert.Equal(diff, result);
     }
 
@@ -148,7 +150,7 @@ public class ContentBlockTests
     public void Render_FilePreview_Text()
     {
         var block = new FilePreviewContentBlock("file.txt", "line1\nline2", 100, 2, false);
-        var result = ContentBlockTextRenderer.Render(block);
+        string result = ContentBlockTextRenderer.Render(block);
         Assert.Contains("[FILE] file.txt", result);
         Assert.Contains("100 B", result);
         Assert.Contains("2 lines", result);
@@ -159,7 +161,7 @@ public class ContentBlockTests
     public void Render_FilePreview_Binary()
     {
         var block = new FilePreviewContentBlock("data.bin", "", 500, null, true);
-        var result = ContentBlockTextRenderer.Render(block);
+        string result = ContentBlockTextRenderer.Render(block);
         Assert.Contains("[FILE] data.bin", result);
         Assert.Contains("binary", result);
     }
@@ -167,14 +169,14 @@ public class ContentBlockTests
     [Fact]
     public void Render_Error()
     {
-        var result = ContentBlockTextRenderer.Render(new ErrorContentBlock("file not found"));
+        string result = ContentBlockTextRenderer.Render(new ErrorContentBlock("file not found"));
         Assert.Contains("Error: file not found", result);
     }
 
     [Fact]
     public void Render_Error_WithDetails()
     {
-        var result = ContentBlockTextRenderer.Render(new ErrorContentBlock("parse error", Details: "at line 5"));
+        string result = ContentBlockTextRenderer.Render(new ErrorContentBlock("parse error", "at line 5"));
         Assert.Contains("Error: parse error", result);
         Assert.Contains("Details: at line 5", result);
     }
@@ -190,7 +192,7 @@ public class ContentBlockTests
     [Fact]
     public void RenderAll_SingleBlock()
     {
-        var result = ContentBlockTextRenderer.RenderAll([new PlainTextContentBlock("hello")]);
+        string result = ContentBlockTextRenderer.RenderAll([new PlainTextContentBlock("hello")]);
         Assert.Equal("hello", result);
     }
 
@@ -202,7 +204,7 @@ public class ContentBlockTests
             new PlainTextContentBlock("first"),
             new PlainTextContentBlock("second")
         };
-        var result = ContentBlockTextRenderer.RenderAll(blocks);
+        string result = ContentBlockTextRenderer.RenderAll(blocks);
         Assert.Contains("first", result);
         Assert.Contains("second", result);
         Assert.Contains("\n", result);
@@ -211,7 +213,7 @@ public class ContentBlockTests
     [Fact]
     public void RenderAll_Empty()
     {
-        var result = ContentBlockTextRenderer.RenderAll([]);
+        string result = ContentBlockTextRenderer.RenderAll([]);
         Assert.Equal("", result);
     }
 
@@ -226,13 +228,16 @@ public class ContentBlockTests
         {
             RequestedPath = "src/Foo.cs",
             Stat = new FileStat("src/Foo.cs", 100, DateTime.UtcNow, false, false),
-            Lines = new[] { new WorkspaceTextLine(1, "public class Foo") },
+            Lines = new[]
+            {
+                new WorkspaceTextLine(1, "public class Foo")
+            },
             TotalLines = 1
         };
 
-        var blocks = WorkspaceLlmTextRenderer.ToContentBlocks(file);
-        var preview = Assert.Single(blocks);
-        var fileBlock = Assert.IsType<FilePreviewContentBlock>(preview);
+        List<IContentBlock> blocks = WorkspaceLlmTextRenderer.ToContentBlocks(file);
+        IContentBlock preview = Assert.Single(blocks);
+        FilePreviewContentBlock fileBlock = Assert.IsType<FilePreviewContentBlock>(preview);
         Assert.Equal("src/Foo.cs", fileBlock.Path);
         Assert.False(fileBlock.IsBinary);
         Assert.Equal(1, fileBlock.LineCount);
@@ -248,9 +253,9 @@ public class ContentBlockTests
             Stat = new FileStat("img.png", 5000, DateTime.UtcNow, false, true)
         };
 
-        var blocks = WorkspaceLlmTextRenderer.ToContentBlocks(binary);
-        var preview = Assert.Single(blocks);
-        var fileBlock = Assert.IsType<FilePreviewContentBlock>(preview);
+        List<IContentBlock> blocks = WorkspaceLlmTextRenderer.ToContentBlocks(binary);
+        IContentBlock preview = Assert.Single(blocks);
+        FilePreviewContentBlock fileBlock = Assert.IsType<FilePreviewContentBlock>(preview);
         Assert.True(fileBlock.IsBinary);
         Assert.Equal(5000, fileBlock.Size);
     }
@@ -263,16 +268,15 @@ public class ContentBlockTests
             RequestedPath = "src/",
             Entries = new[]
             {
-                new DirectoryEntry("file.txt", false, 100, 10),
-                new DirectoryEntry("sub/", true, 0)
+                new DirectoryEntry("file.txt", false, 100, 10), new DirectoryEntry("sub/", true, 0)
             },
             TotalFileCount = 1,
             TotalDirCount = 1
         };
 
-        var blocks = WorkspaceLlmTextRenderer.ToContentBlocks(dir);
-        var block = Assert.Single(blocks);
-        var textBlock = Assert.IsType<PlainTextContentBlock>(block);
+        List<IContentBlock> blocks = WorkspaceLlmTextRenderer.ToContentBlocks(dir);
+        IContentBlock block = Assert.Single(blocks);
+        PlainTextContentBlock textBlock = Assert.IsType<PlainTextContentBlock>(block);
         Assert.Contains("file.txt", textBlock.Text);
         Assert.Contains("sub/", textBlock.Text);
     }
@@ -287,9 +291,9 @@ public class ContentBlockTests
             Kind = WorkspaceReadErrorKind.NotFound
         };
 
-        var blocks = WorkspaceLlmTextRenderer.ToContentBlocks(error);
-        var errBlock = Assert.Single(blocks);
-        var typed = Assert.IsType<ErrorContentBlock>(errBlock);
+        List<IContentBlock> blocks = WorkspaceLlmTextRenderer.ToContentBlocks(error);
+        IContentBlock errBlock = Assert.Single(blocks);
+        ErrorContentBlock typed = Assert.IsType<ErrorContentBlock>(errBlock);
         Assert.Equal("Path not found", typed.Text);
     }
 
@@ -300,16 +304,19 @@ public class ContentBlockTests
         {
             RequestedPath = "big.txt",
             Stat = new FileStat("big.txt", 9999, DateTime.UtcNow, false, false),
-            Lines = new[] { new WorkspaceTextLine(1, "first") },
+            Lines = new[]
+            {
+                new WorkspaceTextLine(1, "first")
+            },
             TotalLines = 1000,
             Truncated = true,
             NextOffset = 2
         };
 
-        var blocks = WorkspaceLlmTextRenderer.ToContentBlocks(file);
+        List<IContentBlock> blocks = WorkspaceLlmTextRenderer.ToContentBlocks(file);
         Assert.Equal(2, blocks.Count);
         Assert.IsType<FilePreviewContentBlock>(blocks[0]);
-        var warning = Assert.IsType<PlainTextContentBlock>(blocks[1]);
+        PlainTextContentBlock warning = Assert.IsType<PlainTextContentBlock>(blocks[1]);
         Assert.Contains("truncated", warning.Text);
         Assert.Contains("offset=2", warning.Text);
     }

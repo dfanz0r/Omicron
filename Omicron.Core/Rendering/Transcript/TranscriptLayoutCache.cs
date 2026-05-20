@@ -1,20 +1,18 @@
-using System.Text;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.Rendering.Transcript;
 
 /// <summary>
-/// Width-dependent layout cache that maps transcript blocks into wrapped terminal rows.
-/// Supports incremental invalidation so only changed blocks are re-laid-out.
+///     Width-dependent layout cache that maps transcript blocks into wrapped terminal rows.
+///     Supports incremental invalidation so only changed blocks are re-laid-out.
 /// </summary>
 public sealed class TranscriptLayoutCache
 {
-    private readonly List<WrappedLineInfo> _wrappedLines = [];
     private readonly Dictionary<BlockId, List<WrappedLineInfo>> _blockLines = [];
-    private int _terminalWidth = 80;
+    private readonly List<WrappedLineInfo> _wrappedLines = [];
 
     /// <summary>Current terminal width (used for wrapping).</summary>
-    public int TerminalWidth => _terminalWidth;
+    public int TerminalWidth { get; private set; } = 80;
 
     /// <summary>Total number of wrapped rows across all blocks.</summary>
     public int TotalWrappedRows => _wrappedLines.Count;
@@ -23,41 +21,43 @@ public sealed class TranscriptLayoutCache
     public IReadOnlyList<WrappedLineInfo> WrappedLines => _wrappedLines;
 
     /// <summary>
-    /// Reflow all blocks for the given terminal width.
-    /// This fully rebuilds the layout cache.
+    ///     Reflow all blocks for the given terminal width.
+    ///     This fully rebuilds the layout cache.
     /// </summary>
     public void ReflowForWidth(int terminalWidth, TranscriptStore store)
     {
-        _terminalWidth = terminalWidth;
+        TerminalWidth = terminalWidth;
         _wrappedLines.Clear();
         _blockLines.Clear();
 
-        foreach (var block in store.Blocks)
+        foreach (TranscriptBlock block in store.Blocks)
         {
-            var lines = WrapBlock(block, store, terminalWidth);
+            List<WrappedLineInfo> lines = WrapBlock(block, store, terminalWidth);
             _blockLines[block.Id] = lines;
             _wrappedLines.AddRange(lines);
         }
     }
 
     /// <summary>
-    /// Invalidate a specific block, removing its cached wrapped lines.
-    /// The next call to <see cref="GetVisibleLines"/> will trigger a re-layout
-    /// of that block when it's encountered.
-    /// For MVP, this marks the block for full reflow on next render.
+    ///     Invalidate a specific block, removing its cached wrapped lines.
+    ///     The next call to <see cref="GetVisibleLines" /> will trigger a re-layout
+    ///     of that block when it's encountered.
+    ///     For MVP, this marks the block for full reflow on next render.
     /// </summary>
     public void InvalidateBlock(BlockId blockId)
     {
-        if (_blockLines.Remove(blockId, out var lines))
+        if (_blockLines.Remove(blockId, out List<WrappedLineInfo>? lines))
         {
             // Remove the lines from the flat list and rebuild
-            foreach (var line in lines)
+            foreach (WrappedLineInfo line in lines)
+            {
                 _wrappedLines.Remove(line);
+            }
         }
     }
 
     /// <summary>
-    /// Invalidate a block and all subsequent blocks.
+    ///     Invalidate a block and all subsequent blocks.
     /// </summary>
     public void InvalidateFrom(BlockId blockId)
     {
@@ -77,23 +77,30 @@ public sealed class TranscriptLayoutCache
             // Collect all block IDs from removeFrom onwards
             var removedBlocks = new HashSet<BlockId>();
             for (int i = removeFrom; i < _wrappedLines.Count; i++)
+            {
                 removedBlocks.Add(_wrappedLines[i].BlockId);
+            }
 
             _wrappedLines.RemoveRange(removeFrom, _wrappedLines.Count - removeFrom);
 
-            foreach (var bid in removedBlocks)
+            foreach (BlockId bid in removedBlocks)
+            {
                 _blockLines.Remove(bid);
+            }
         }
     }
 
     /// <summary>
-    /// Reflow a single block and insert / replace its lines without reflowing
-    /// the entire transcript. Used during streaming to avoid O(n) reflow on
-    /// every delta.
+    ///     Reflow a single block and insert / replace its lines without reflowing
+    ///     the entire transcript. Used during streaming to avoid O(n) reflow on
+    ///     every delta.
     /// </summary>
     public void ReflowBlock(TranscriptBlock block, TranscriptStore store, int terminalWidth)
     {
-        if (block is null) return;
+        if (block is null)
+        {
+            return;
+        }
 
         // Remove existing lines for this block
         int removeFrom = -1;
@@ -102,7 +109,11 @@ public sealed class TranscriptLayoutCache
         {
             if (_wrappedLines[i].BlockId == block.Id)
             {
-                if (removeFrom < 0) removeFrom = i;
+                if (removeFrom < 0)
+                {
+                    removeFrom = i;
+                }
+
                 removeCount++;
             }
             else if (removeFrom >= 0)
@@ -110,13 +121,16 @@ public sealed class TranscriptLayoutCache
                 break;
             }
         }
+
         if (removeFrom >= 0)
+        {
             _wrappedLines.RemoveRange(removeFrom, removeCount);
+        }
 
         _blockLines.Remove(block.Id);
 
         // Wrap just this block
-        var lines = WrapBlock(block, store, terminalWidth);
+        List<WrappedLineInfo> lines = WrapBlock(block, store, terminalWidth);
         _blockLines[block.Id] = lines;
 
         // Re-insert at the correct position
@@ -133,21 +147,27 @@ public sealed class TranscriptLayoutCache
     }
 
     /// <summary>
-    /// Get visible wrapped lines for a window into the transcript.
+    ///     Get visible wrapped lines for a window into the transcript.
     /// </summary>
     public IReadOnlyList<WrappedLineInfo> GetVisibleLines(int firstWrappedRow, int height)
     {
-        if (firstWrappedRow < 0) firstWrappedRow = 0;
+        if (firstWrappedRow < 0)
+        {
+            firstWrappedRow = 0;
+        }
+
         if (firstWrappedRow >= _wrappedLines.Count)
+        {
             return Array.Empty<WrappedLineInfo>();
+        }
 
         int count = Math.Min(height, _wrappedLines.Count - firstWrappedRow);
         return _wrappedLines.GetRange(firstWrappedRow, count);
     }
 
     /// <summary>
-    /// Insert cached lines back into the flat list after re-layout.
-    /// Used by incremental invalidation.
+    ///     Insert cached lines back into the flat list after re-layout.
+    ///     Used by incremental invalidation.
     /// </summary>
     public void InsertBlockLines(BlockId blockId, List<WrappedLineInfo> lines)
     {
@@ -160,7 +180,9 @@ public sealed class TranscriptLayoutCache
             {
                 int end = i;
                 while (end < _wrappedLines.Count && _wrappedLines[end].BlockId == blockId)
+                {
                     end++;
+                }
 
                 _wrappedLines.RemoveRange(i, end - i);
                 _wrappedLines.InsertRange(i, lines);
@@ -172,12 +194,18 @@ public sealed class TranscriptLayoutCache
         _wrappedLines.AddRange(lines);
     }
 
-    private static int CompareBlockIds(BlockId a, BlockId b) => a.Value.CompareTo(b.Value);
+    private static int CompareBlockIds(BlockId a, BlockId b)
+    {
+        return a.Value.CompareTo(b.Value);
+    }
 
     /// <summary>
-    /// Wrap a single block's text into lines fitting the terminal width.
+    ///     Wrap a single block's text into lines fitting the terminal width.
     /// </summary>
-    public static List<WrappedLineInfo> WrapBlock(TranscriptBlock block, TranscriptStore store, int terminalWidth)
+    public static List<WrappedLineInfo> WrapBlock(
+        TranscriptBlock block,
+        TranscriptStore store,
+        int terminalWidth)
     {
         var lines = new List<WrappedLineInfo>();
 
@@ -203,9 +231,11 @@ public sealed class TranscriptLayoutCache
         };
 
         if (byteLength <= 0)
+        {
             return lines;
+        }
 
-        var bytes = store.Text.Slice(byteStart, byteLength);
+        ReadOnlyMemory<byte> bytes = store.Text.Slice(byteStart, byteLength);
 
         // Split into logical lines by scanning for newlines
         int logicalLineIndex = 0;
@@ -214,8 +244,13 @@ public sealed class TranscriptLayoutCache
         {
             if (bytes.Span[i] == (byte)'\n')
             {
-                var logicalBytes = bytes.Slice(lineStart, i - lineStart);
-                WrapLogicalLine(logicalBytes.Span, block.Id, byteStart + lineStart, logicalLineIndex, terminalWidth, lines);
+                ReadOnlyMemory<byte> logicalBytes = bytes.Slice(lineStart, i - lineStart);
+                WrapLogicalLine(logicalBytes.Span,
+                    block.Id,
+                    byteStart + lineStart,
+                    logicalLineIndex,
+                    terminalWidth,
+                    lines);
                 lineStart = i + 1;
                 logicalLineIndex++;
             }
@@ -223,16 +258,26 @@ public sealed class TranscriptLayoutCache
             {
                 if (i + 1 < bytes.Length && bytes.Span[i + 1] == (byte)'\n')
                 {
-                    var logicalBytes = bytes.Slice(lineStart, i - lineStart);
-                    WrapLogicalLine(logicalBytes.Span, block.Id, byteStart + lineStart, logicalLineIndex, terminalWidth, lines);
+                    ReadOnlyMemory<byte> logicalBytes = bytes.Slice(lineStart, i - lineStart);
+                    WrapLogicalLine(logicalBytes.Span,
+                        block.Id,
+                        byteStart + lineStart,
+                        logicalLineIndex,
+                        terminalWidth,
+                        lines);
                     i++; // skip LF
                     lineStart = i + 1;
                     logicalLineIndex++;
                 }
                 else
                 {
-                    var logicalBytes = bytes.Slice(lineStart, i - lineStart);
-                    WrapLogicalLine(logicalBytes.Span, block.Id, byteStart + lineStart, logicalLineIndex, terminalWidth, lines);
+                    ReadOnlyMemory<byte> logicalBytes = bytes.Slice(lineStart, i - lineStart);
+                    WrapLogicalLine(logicalBytes.Span,
+                        block.Id,
+                        byteStart + lineStart,
+                        logicalLineIndex,
+                        terminalWidth,
+                        lines);
                     lineStart = i + 1;
                     logicalLineIndex++;
                 }
@@ -242,20 +287,30 @@ public sealed class TranscriptLayoutCache
         // Handle trailing content without newline
         if (lineStart < bytes.Length)
         {
-            var logicalBytes = bytes.Slice(lineStart, bytes.Length - lineStart);
-            WrapLogicalLine(logicalBytes.Span, block.Id, byteStart + lineStart, logicalLineIndex, terminalWidth, lines);
+            ReadOnlyMemory<byte> logicalBytes = bytes.Slice(lineStart, bytes.Length - lineStart);
+            WrapLogicalLine(logicalBytes.Span,
+                block.Id,
+                byteStart + lineStart,
+                logicalLineIndex,
+                terminalWidth,
+                lines);
         }
         else if (lineStart == bytes.Length && bytes.Length > 0)
         {
             // Input ends with a newline — the logical line after it is empty, add one
-            WrapLogicalLine(ReadOnlySpan<byte>.Empty, block.Id, byteStart + lineStart, logicalLineIndex, terminalWidth, lines);
+            WrapLogicalLine(ReadOnlySpan<byte>.Empty,
+                block.Id,
+                byteStart + lineStart,
+                logicalLineIndex,
+                terminalWidth,
+                lines);
         }
 
         return lines;
     }
 
     /// <summary>
-    /// Wrap a single logical line into physical rows of <paramref name="terminalWidth"/> columns.
+    ///     Wrap a single logical line into physical rows of <paramref name="terminalWidth" /> columns.
     /// </summary>
     private static void WrapLogicalLine(
         ReadOnlySpan<byte> utf8,
@@ -273,7 +328,7 @@ public sealed class TranscriptLayoutCache
         }
 
         // Get all grapheme clusters for this line
-        var clusters = GraphemeSegmenter.SegmentUtf8(utf8);
+        List<GraphemeCluster> clusters = GraphemeSegmenter.SegmentUtf8(utf8);
         if (clusters.Count == 0)
         {
             lines.Add(new WrappedLineInfo(blockId, globalByteStart, 0, 0, 0, false, logicalLineIndex));
@@ -286,7 +341,7 @@ public sealed class TranscriptLayoutCache
 
         for (int i = 0; i < clusters.Count; i++)
         {
-            var cluster = clusters[i];
+            GraphemeCluster cluster = clusters[i];
             int w = CellWidthCalculator.GetWidth(utf8.Slice((int)cluster.ByteOffset, cluster.ByteLength));
 
             // Check if this grapheme fits on the current row
@@ -295,10 +350,13 @@ public sealed class TranscriptLayoutCache
                 // Emit the current row (from rowStartCluster to i-1)
                 long rowStart = globalByteStart + clusters[rowStartCluster].ByteOffset;
                 int rowEnd = i;
-                int rowByteLen = (int)(clusters[rowEnd - 1].ByteOffset + clusters[rowEnd - 1].ByteLength - clusters[rowStartCluster].ByteOffset);
+                int rowByteLen = (int)(
+                    clusters[rowEnd - 1].ByteOffset
+                    + clusters[rowEnd - 1].ByteLength
+                    - clusters[rowStartCluster].ByteOffset
+                );
 
-                lines.Add(new WrappedLineInfo(
-                    blockId,
+                lines.Add(new WrappedLineInfo(blockId,
                     rowStart,
                     rowByteLen,
                     0,
@@ -327,10 +385,13 @@ public sealed class TranscriptLayoutCache
         {
             long rowStart = globalByteStart + clusters[rowStartCluster].ByteOffset;
             int lastCluster = clusters.Count - 1;
-            int rowByteLen = (int)(clusters[lastCluster].ByteOffset + clusters[lastCluster].ByteLength - clusters[rowStartCluster].ByteOffset);
+            int rowByteLen = (int)(
+                clusters[lastCluster].ByteOffset
+                + clusters[lastCluster].ByteLength
+                - clusters[rowStartCluster].ByteOffset
+            );
 
-            lines.Add(new WrappedLineInfo(
-                blockId,
+            lines.Add(new WrappedLineInfo(blockId,
                 rowStart,
                 rowByteLen,
                 0,

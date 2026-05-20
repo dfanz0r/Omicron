@@ -1,4 +1,3 @@
-using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Sessions;
@@ -14,7 +13,7 @@ public class InMemorySessionStoreTests
         var store = new InMemorySessionStore();
         var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat);
 
-        var record = await store.CreateSessionAsync(request);
+        SessionRecord record = await store.CreateSessionAsync(request);
 
         Assert.NotNull(record);
         Assert.NotEqual(default, record.SessionId);
@@ -28,10 +27,12 @@ public class InMemorySessionStoreTests
     public async Task CreateSession_WithSystemPrompt()
     {
         var store = new InMemorySessionStore();
-        var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat,
+        var request = new SessionCreateRequest("gpt-4o",
+            "openai",
+            ApiType.OpenAiChat,
             SystemPrompt: "You are a helpful assistant.");
 
-        var record = await store.CreateSessionAsync(request);
+        SessionRecord record = await store.CreateSessionAsync(request);
 
         Assert.Equal("You are a helpful assistant.", record.SystemPrompt);
     }
@@ -41,9 +42,9 @@ public class InMemorySessionStoreTests
     {
         var store = new InMemorySessionStore();
         var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat);
-        var created = await store.CreateSessionAsync(request);
+        SessionRecord created = await store.CreateSessionAsync(request);
 
-        var retrieved = await store.GetSessionAsync(created.SessionId);
+        SessionRecord? retrieved = await store.GetSessionAsync(created.SessionId);
 
         Assert.NotNull(retrieved);
         Assert.Equal(created.SessionId, retrieved.SessionId);
@@ -54,7 +55,7 @@ public class InMemorySessionStoreTests
     public async Task GetSession_NotFound_ReturnsNull()
     {
         var store = new InMemorySessionStore();
-        var result = await store.GetSessionAsync(SessionId.New());
+        SessionRecord? result = await store.GetSessionAsync(SessionId.New());
         Assert.Null(result);
     }
 
@@ -66,7 +67,7 @@ public class InMemorySessionStoreTests
         await store.CreateSessionAsync(new SessionCreateRequest("claude-3", "anthropic", ApiType.AnthropicMessages));
         await store.CreateSessionAsync(new SessionCreateRequest("gpt-5.5", "openai", ApiType.OpenAiResponses));
 
-        var sessions = await store.ListSessionsAsync(new SessionListQuery());
+        IReadOnlyList<SessionRecord> sessions = await store.ListSessionsAsync(new SessionListQuery());
 
         Assert.Equal(3, sessions.Count);
     }
@@ -77,10 +78,12 @@ public class InMemorySessionStoreTests
         var store = new InMemorySessionStore();
         await store.CreateSessionAsync(new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
 
-        var active = await store.ListSessionsAsync(new SessionListQuery(StatusFilter: SessionStatus.Active));
+        IReadOnlyList<SessionRecord> active = await store.ListSessionsAsync(
+            new SessionListQuery(StatusFilter: SessionStatus.Active));
         Assert.Single(active);
 
-        var archived = await store.ListSessionsAsync(new SessionListQuery(StatusFilter: SessionStatus.Archived));
+        IReadOnlyList<SessionRecord> archived = await store.ListSessionsAsync(
+            new SessionListQuery(StatusFilter: SessionStatus.Archived));
         Assert.Empty(archived);
     }
 
@@ -91,7 +94,8 @@ public class InMemorySessionStoreTests
         await store.CreateSessionAsync(new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
         await store.CreateSessionAsync(new SessionCreateRequest("claude-3", "anthropic", ApiType.AnthropicMessages));
 
-        var openai = await store.ListSessionsAsync(new SessionListQuery(ProviderFilter: "openai"));
+        IReadOnlyList<SessionRecord> openai =
+            await store.ListSessionsAsync(new SessionListQuery(ProviderFilter: "openai"));
         Assert.Single(openai);
         Assert.All(openai, s => Assert.Contains("openai", s.ProviderName));
     }
@@ -101,15 +105,17 @@ public class InMemorySessionStoreTests
     {
         var store = new InMemorySessionStore();
         for (int i = 0; i < 10; i++)
+        {
             await store.CreateSessionAsync(new SessionCreateRequest($"model-{i}", "test", ApiType.OpenAiChat));
+        }
 
-        var first5 = await store.ListSessionsAsync(new SessionListQuery(Limit: 5, Offset: 0));
+        IReadOnlyList<SessionRecord> first5 = await store.ListSessionsAsync(new SessionListQuery(5));
         Assert.Equal(5, first5.Count);
 
-        var last5 = await store.ListSessionsAsync(new SessionListQuery(Limit: 5, Offset: 5));
+        IReadOnlyList<SessionRecord> last5 = await store.ListSessionsAsync(new SessionListQuery(5, 5));
         Assert.Equal(5, last5.Count);
 
-        var past = await store.ListSessionsAsync(new SessionListQuery(Limit: 5, Offset: 20));
+        IReadOnlyList<SessionRecord> past = await store.ListSessionsAsync(new SessionListQuery(5, 20));
         Assert.Empty(past);
     }
 
@@ -118,20 +124,25 @@ public class InMemorySessionStoreTests
     {
         var store = new InMemorySessionStore();
         var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat);
-        var record = await store.CreateSessionAsync(request);
+        SessionRecord record = await store.CreateSessionAsync(request);
 
         var events = new List<OmicronEvent>
         {
-            new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId), AgentId.New(), "gpt-4o", "openai"),
-            new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId), "Hello"u8)
+            new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId),
+                AgentId.New(),
+                "gpt-4o",
+                "openai"),
+            new UserMessageEvent(new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId),
+                "Hello"u8)
         };
 
         await store.AppendEventsAsync(record.SessionId, events);
 
         var readEvents = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(record.SessionId, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(record.SessionId, EventSequenceRange.All))
+        {
             readEvents.Add(e);
+        }
 
         Assert.Equal(2, readEvents.Count);
         Assert.IsType<SessionStartedEvent>(readEvents[0]);
@@ -143,21 +154,29 @@ public class InMemorySessionStoreTests
     {
         var store = new InMemorySessionStore();
         var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat);
-        var record = await store.CreateSessionAsync(request);
+        SessionRecord record = await store.CreateSessionAsync(request);
 
-        await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent>
-        {
-            new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId), AgentId.New(), "gpt-4o", "openai"),
-            new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId), "Hello"u8),
-            new TurnStartedEvent(
-                new EventEnvelope(EventId.New(), 3, DateTimeOffset.UtcNow, record.SessionId), "Hello")
-        });
+        await store.AppendEventsAsync(record.SessionId,
+            new List<OmicronEvent>
+            {
+                new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId),
+                    AgentId.New(),
+                    "gpt-4o",
+                    "openai"),
+                new UserMessageEvent(new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId),
+                    "Hello"u8),
+                new TurnStartedEvent(new EventEnvelope(EventId.New(), 3, DateTimeOffset.UtcNow, record.SessionId),
+                    "Hello")
+            });
 
         // Read events with sequence > 1 and <= 3
         var readEvents = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(record.SessionId, new EventSequenceRange(1, 3)))
+        await foreach (
+            OmicronEvent e in store.ReadEventsAsync(record.SessionId, new EventSequenceRange(1, 3))
+        )
+        {
             readEvents.Add(e);
+        }
 
         Assert.Equal(2, readEvents.Count);
         Assert.Equal(2, readEvents[0].Sequence);
@@ -169,14 +188,18 @@ public class InMemorySessionStoreTests
     {
         var store = new InMemorySessionStore();
         var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat);
-        var record = await store.CreateSessionAsync(request);
+        SessionRecord record = await store.CreateSessionAsync(request);
 
         Assert.Equal(0, await store.GetEventCountAsync(record.SessionId));
 
-        await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent>
-        {
-            new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId), AgentId.New(), "gpt-4o", "openai")
-        });
+        await store.AppendEventsAsync(record.SessionId,
+            new List<OmicronEvent>
+            {
+                new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId),
+                    AgentId.New(),
+                    "gpt-4o",
+                    "openai")
+            });
 
         Assert.Equal(1, await store.GetEventCountAsync(record.SessionId));
     }
@@ -185,11 +208,14 @@ public class InMemorySessionStoreTests
     public async Task ReadEvents_EmptySession_ReturnsEmpty()
     {
         var store = new InMemorySessionStore();
-        var record = await store.CreateSessionAsync(new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
+        SessionRecord record = await store.CreateSessionAsync(
+            new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
 
         var readEvents = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(record.SessionId, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(record.SessionId, EventSequenceRange.All))
+        {
             readEvents.Add(e);
+        }
 
         Assert.Empty(readEvents);
     }
@@ -198,10 +224,15 @@ public class InMemorySessionStoreTests
     public async Task UpdateSession()
     {
         var store = new InMemorySessionStore();
-        var record = await store.CreateSessionAsync(new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
+        SessionRecord record = await store.CreateSessionAsync(
+            new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
 
-        var updated = await store.UpdateSessionAsync(record.SessionId, r =>
-            r with { Status = SessionStatus.Archived, Label = "test-session" });
+        SessionRecord? updated = await store.UpdateSessionAsync(record.SessionId,
+            r => r with
+            {
+                Status = SessionStatus.Archived,
+                Label = "test-session"
+            });
 
         Assert.NotNull(updated);
         Assert.Equal(SessionStatus.Archived, updated.Status);
@@ -214,23 +245,32 @@ public class InMemorySessionStoreTests
     {
         var store = new InMemorySessionStore();
 
-        var r1 = await store.CreateSessionAsync(new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
-        var r2 = await store.CreateSessionAsync(new SessionCreateRequest("claude-3", "anthropic", ApiType.AnthropicMessages));
+        SessionRecord r1 = await store.CreateSessionAsync(
+            new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
+        SessionRecord r2 = await store.CreateSessionAsync(
+            new SessionCreateRequest("claude-3", "anthropic", ApiType.AnthropicMessages));
 
-        await store.AppendEventsAsync(r1.SessionId, new List<OmicronEvent>
-        {
-            new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, r1.SessionId), AgentId.New(), "gpt-4o", "openai")
-        });
+        await store.AppendEventsAsync(r1.SessionId,
+            new List<OmicronEvent>
+            {
+                new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, r1.SessionId),
+                    AgentId.New(),
+                    "gpt-4o",
+                    "openai")
+            });
 
-        await store.AppendEventsAsync(r2.SessionId, new List<OmicronEvent>
-        {
-            new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, r2.SessionId), AgentId.New(), "claude-3", "anthropic"),
-            new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, r2.SessionId), "Hello"u8)
-        });
+        await store.AppendEventsAsync(r2.SessionId,
+            new List<OmicronEvent>
+            {
+                new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, r2.SessionId),
+                    AgentId.New(),
+                    "claude-3",
+                    "anthropic"),
+                new UserMessageEvent(new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, r2.SessionId),
+                    "Hello"u8)
+            });
 
         Assert.Equal(1, await store.GetEventCountAsync(r1.SessionId));
         Assert.Equal(2, await store.GetEventCountAsync(r2.SessionId));
     }
 }
-

@@ -1,47 +1,46 @@
-using System.Text;
-
 namespace Omicron.Core.Rendering;
 
 /// <summary>
-/// Maps non-ASCII grapheme cluster UTF-8 sequences to stable integer IDs.
-/// Used by <see cref="TerminalFrame"/> and <see cref="AnsiEncoder"/>.
-///
-/// Hard cap of 4096 entries. If exceeded, the table is cleared and a full
-/// frame reset is required (the consumer should detect this via the
-/// <see cref="Overflowed"/> flag).
-///
-/// Uses a hash map with chaining to avoid string allocations on lookup.
+///     Maps non-ASCII grapheme cluster UTF-8 sequences to stable integer IDs.
+///     Used by <see cref="TerminalFrame" /> and <see cref="AnsiEncoder" />.
+///     Hard cap of 4096 entries. If exceeded, the table is cleared and a full
+///     frame reset is required (the consumer should detect this via the
+///     <see cref="Overflowed" /> flag).
+///     Uses a hash map with chaining to avoid string allocations on lookup.
 /// </summary>
 public sealed class GlyphInternTable
 {
-    private readonly Dictionary<int, List<(byte[] Key, int Id)>> _hashMap = new();
-    private readonly List<byte[]> _entries = [];
     private const int MaxEntries = 4096;
-    private bool _overflowed;
+    private readonly List<byte[]> _entries = [];
+    private readonly Dictionary<int, List<(byte[] Key, int Id)>> _hashMap = new();
 
     /// <summary>Whether the table overflowed and was reset.</summary>
-    public bool Overflowed => _overflowed;
+    public bool Overflowed { get; private set; }
 
     /// <summary>Number of entries currently in the table.</summary>
     public int Count => _entries.Count;
 
     /// <summary>
-    /// Intern a UTF-8 grapheme cluster. Returns its stable integer ID
-    /// for this table instance. If the table is full, clears all entries
-    /// and sets <see cref="Overflowed"/> to true.
+    ///     Intern a UTF-8 grapheme cluster. Returns its stable integer ID
+    ///     for this table instance. If the table is full, clears all entries
+    ///     and sets <see cref="Overflowed" /> to true.
     /// </summary>
     public int Intern(ReadOnlySpan<byte> utf8)
     {
-        if (_overflowed)
+        if (Overflowed)
+        {
             return 0;
+        }
 
         int hash = ComputeHash(utf8);
-        if (_hashMap.TryGetValue(hash, out var list))
+        if (_hashMap.TryGetValue(hash, out List<(byte[] Key, int Id)>? list))
         {
-            foreach (var (key, existingId) in list)
+            foreach ((byte[] key, int existingId) in list)
             {
                 if (utf8.SequenceEqual(key))
+                {
                     return existingId;
+                }
             }
         }
 
@@ -50,7 +49,7 @@ public sealed class GlyphInternTable
             // Overflow: clear all entries
             _hashMap.Clear();
             _entries.Clear();
-            _overflowed = true;
+            Overflowed = true;
             return 0;
         }
 
@@ -63,6 +62,7 @@ public sealed class GlyphInternTable
             list = new List<(byte[], int)>();
             _hashMap[hash] = list;
         }
+
         list.Add((copy, id));
         return id;
     }
@@ -71,31 +71,35 @@ public sealed class GlyphInternTable
     public ReadOnlySpan<byte> Resolve(int internId)
     {
         if (internId < 0 || internId >= _entries.Count)
+        {
             return ReadOnlySpan<byte>.Empty;
+        }
+
         return _entries[internId];
     }
 
     /// <summary>
-    /// Copy all entries from another table, preserving their IDs.
-    /// Used by <see cref="DifferentialRenderer"/> to keep intern IDs valid
-    /// across swap-chain buffers.
+    ///     Copy all entries from another table, preserving their IDs.
+    ///     Used by <see cref="DifferentialRenderer" /> to keep intern IDs valid
+    ///     across swap-chain buffers.
     /// </summary>
     public void CopyFrom(GlyphInternTable other)
     {
         _hashMap.Clear();
         _entries.Clear();
-        _overflowed = other._overflowed;
+        Overflowed = other.Overflowed;
 
-        foreach (var entry in other._entries)
+        foreach (byte[] entry in other._entries)
         {
             int id = _entries.Count;
             _entries.Add(entry);
             int hash = ComputeHash(entry);
-            if (!_hashMap.TryGetValue(hash, out var list))
+            if (!_hashMap.TryGetValue(hash, out List<(byte[] Key, int Id)>? list))
             {
                 list = new List<(byte[], int)>();
                 _hashMap[hash] = list;
             }
+
             list.Add((entry, id));
         }
     }
@@ -105,14 +109,17 @@ public sealed class GlyphInternTable
     {
         _hashMap.Clear();
         _entries.Clear();
-        _overflowed = false;
+        Overflowed = false;
     }
 
     private static int ComputeHash(ReadOnlySpan<byte> span)
     {
         int hash = 17;
         for (int i = 0; i < span.Length; i++)
+        {
             hash = hash * 31 + span[i];
+        }
+
         return hash;
     }
 }

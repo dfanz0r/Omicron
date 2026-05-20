@@ -1,9 +1,9 @@
 namespace Omicron.CLI.Tui;
 
 /// <summary>
-/// Shared color configuration for TUI widgets.
-/// Centralizes gradient colors so the status bar, divider, and other
-/// widgets stay in sync without hardcoded duplication.
+///     Shared color configuration for TUI widgets.
+///     Centralizes gradient colors so the status bar, divider, and other
+///     widgets stay in sync without hardcoded duplication.
 /// </summary>
 public static class TuiColors
 {
@@ -28,9 +28,11 @@ public static class TuiColors
     /// <summary>Status bar background end (right side).</summary>
     public static (byte R, byte G, byte B) StatusBarGradientEnd { get; set; } = (245, 170, 30);
 
-    /// <summary>Status bar text color. Pure black for maximum contrast.
-    /// Do not use dark brown — it reduces contrast below VS Code's auto-
-    /// adjustment threshold and renders as white in VS Code.</summary>
+    /// <summary>
+    ///     Status bar text color. Pure black for maximum contrast.
+    ///     Do not use dark brown — it reduces contrast below VS Code's auto-
+    ///     adjustment threshold and renders as white in VS Code.
+    /// </summary>
     public static (byte R, byte G, byte B) StatusBarTextStart { get; set; } = (0, 0, 0);
 
     /// <summary>Status bar text gradient end. Equal to Start for flat black.</summary>

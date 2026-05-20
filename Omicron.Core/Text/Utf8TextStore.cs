@@ -1,19 +1,31 @@
 namespace Omicron.Core.Text;
 
 /// <summary>
-/// An append-only store for UTF-8 bytes backed by a linked chain of pooled
-/// <see cref="TextChunk"/> instances (~8 KB each). Thread-safe for append.
+///     An append-only store for UTF-8 bytes backed by a linked chain of pooled
+///     <see cref="TextChunk" /> instances (~8 KB each). Thread-safe for append.
 /// </summary>
 public sealed class Utf8TextStore : IDisposable
 {
     /// <summary>Default chunk size: 8 KB.</summary>
     public const int DefaultChunkSize = 8192;
 
+    private readonly object _appendLock = new();
+
     private readonly int _chunkSize;
     private readonly List<TextChunk> _chunks = [];
     private TextChunk? _current;
     private long _lengthBytes;
-    private readonly object _appendLock = new();
+
+    public Utf8TextStore(int chunkSize = DefaultChunkSize)
+    {
+        if (chunkSize < 64)
+        {
+            throw new ArgumentOutOfRangeException(nameof(chunkSize),
+                "Chunk size must be at least 64 bytes.");
+        }
+
+        _chunkSize = chunkSize;
+    }
 
     /// <summary>Total bytes appended to this store.</summary>
     public long LengthBytes => Volatile.Read(ref _lengthBytes);
@@ -34,16 +46,24 @@ public sealed class Utf8TextStore : IDisposable
         }
     }
 
-    public Utf8TextStore(int chunkSize = DefaultChunkSize)
+    /// <summary>Release all pooled chunk buffers to the ArrayPool.</summary>
+    public void Dispose()
     {
-        if (chunkSize < 64)
-            throw new ArgumentOutOfRangeException(nameof(chunkSize), "Chunk size must be at least 64 bytes.");
-        _chunkSize = chunkSize;
+        lock (_appendLock)
+        {
+            foreach (TextChunk chunk in _chunks)
+            {
+                chunk.Dispose();
+            }
+
+            _chunks.Clear();
+            _current = null;
+        }
     }
 
     /// <summary>
-    /// Append UTF-8 bytes to the store. Thread-safe.
-    /// Returns the position of the first appended byte.
+    ///     Append UTF-8 bytes to the store. Thread-safe.
+    ///     Returns the position of the first appended byte.
     /// </summary>
     public TextPosition Append(ReadOnlySpan<byte> utf8)
     {
@@ -74,8 +94,7 @@ public sealed class Utf8TextStore : IDisposable
 
                 if (first)
                 {
-                    firstPosition = new TextPosition(
-                        _lengthBytes,
+                    firstPosition = new TextPosition(_lengthBytes,
                         _current.Index,
                         _current.Length - written);
                     first = false;
@@ -90,25 +109,33 @@ public sealed class Utf8TextStore : IDisposable
     }
 
     /// <summary>
-    /// Read a contiguous slice of bytes. If the slice fits within a single chunk,
-    /// returns a zero-copy <see cref="ReadOnlyMemory{byte}"/>. Cross-chunk slices
-    /// are copied into a new byte array.
+    ///     Read a contiguous slice of bytes. If the slice fits within a single chunk,
+    ///     returns a zero-copy <see cref="ReadOnlyMemory{byte}" />. Cross-chunk slices
+    ///     are copied into a new byte array.
     /// </summary>
     public ReadOnlyMemory<byte> Slice(long byteOffset, int byteLength)
     {
         if (byteOffset < 0 || byteLength < 0)
+        {
             throw new ArgumentOutOfRangeException("Offset and length must be non-negative.");
+        }
+
         if (byteOffset + byteLength > LengthBytes)
-            throw new ArgumentOutOfRangeException(nameof(byteLength), "Requested slice extends past the end of the store.");
+        {
+            throw new ArgumentOutOfRangeException(nameof(byteLength),
+                "Requested slice extends past the end of the store.");
+        }
 
         if (byteLength == 0)
+        {
             return ReadOnlyMemory<byte>.Empty;
+        }
 
         // Find the starting chunk
         int startChunkIndex = FindChunkIndex(byteOffset, out int chunkOffset);
 
         // If it fits entirely within one chunk, return zero-copy
-        var startChunk = _chunks[startChunkIndex];
+        TextChunk startChunk = _chunks[startChunkIndex];
         if (byteOffset + byteLength <= startChunk.GlobalByteStart + startChunk.Length)
         {
             int localStart = chunkOffset;
@@ -124,7 +151,7 @@ public sealed class Utf8TextStore : IDisposable
 
         while (remaining > 0 && ci < _chunks.Count)
         {
-            var chunk = _chunks[ci];
+            TextChunk chunk = _chunks[ci];
             long chunkEnd = chunk.GlobalByteStart + chunk.Length;
             int localStart = (int)(remainingOffset - chunk.GlobalByteStart);
             int available = (int)(chunkEnd - remainingOffset);
@@ -169,7 +196,7 @@ public sealed class Utf8TextStore : IDisposable
         // Linear search from end — typical access is near the end
         for (int i = _chunks.Count - 1; i >= 0; i--)
         {
-            var c = _chunks[i];
+            TextChunk c = _chunks[i];
             if (byteOffset >= c.GlobalByteStart && byteOffset < c.GlobalByteStart + c.Length)
             {
                 chunkOffset = (int)(byteOffset - c.GlobalByteStart);
@@ -180,19 +207,23 @@ public sealed class Utf8TextStore : IDisposable
         // Fallback: forward search (offset at chunk boundary)
         for (int i = 0; i < _chunks.Count; i++)
         {
-            var c = _chunks[i];
-            if (byteOffset >= c.GlobalByteStart && (i + 1 >= _chunks.Count || byteOffset < _chunks[i + 1].GlobalByteStart))
+            TextChunk c = _chunks[i];
+            if (
+                byteOffset >= c.GlobalByteStart
+                && (i + 1 >= _chunks.Count || byteOffset < _chunks[i + 1].GlobalByteStart)
+            )
             {
                 chunkOffset = (int)(byteOffset - c.GlobalByteStart);
                 return i;
             }
         }
 
-        throw new ArgumentOutOfRangeException(nameof(byteOffset), "Byte offset not found in any chunk.");
+        throw new ArgumentOutOfRangeException(nameof(byteOffset),
+            "Byte offset not found in any chunk.");
     }
 
     /// <summary>
-    /// Copy all stored bytes into a single byte array.
+    ///     Copy all stored bytes into a single byte array.
     /// </summary>
     public byte[] ToArray()
     {
@@ -201,7 +232,7 @@ public sealed class Utf8TextStore : IDisposable
 
         lock (_appendLock)
         {
-            foreach (var chunk in _chunks)
+            foreach (TextChunk chunk in _chunks)
             {
                 int len = chunk.Length;
                 chunk.AsMemory().Slice(0, len).Span.CopyTo(result.AsSpan(offset));
@@ -210,17 +241,5 @@ public sealed class Utf8TextStore : IDisposable
         }
 
         return result;
-    }
-
-    /// <summary>Release all pooled chunk buffers to the ArrayPool.</summary>
-    public void Dispose()
-    {
-        lock (_appendLock)
-        {
-            foreach (var chunk in _chunks)
-                chunk.Dispose();
-            _chunks.Clear();
-            _current = null;
-        }
     }
 }

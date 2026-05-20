@@ -1,43 +1,25 @@
-using System.Threading;
 using Omicron.Core.Sessions;
 
 namespace Omicron.Core.Events;
 
 /// <summary>
-/// An IEventSink wrapper that also writes stamped events to an ISessionStore.
-/// Events are persisted synchronously in sequence order after the inner sink
-/// stamps them. This ensures persistence ordering matches event sequence.
-///
-/// By default persists all sessions. Optionally filter to a single session.
-/// Persistence failures are non-fatal for runtime; an optional OnError callback
-/// can be set for observability (logging, testing, etc.).
+///     An IEventSink wrapper that also writes stamped events to an ISessionStore.
+///     Events are persisted synchronously in sequence order after the inner sink
+///     stamps them. This ensures persistence ordering matches event sequence.
+///     By default persists all sessions. Optionally filter to a single session.
+///     Persistence failures are non-fatal for runtime; an optional OnError callback
+///     can be set for observability (logging, testing, etc.).
 /// </summary>
 public sealed class PersistentEventSink : IEventSink
 {
     private readonly IEventSink _inner;
-    private ISessionStore _store;
     private readonly SessionId? _sessionId;
-
-    /// <summary>
-    /// Optional callback invoked when a persistence operation fails.
-    /// Parameters: the exception, the event that failed, and a descriptive label.
-    /// </summary>
-    public Action<Exception, OmicronEvent, string>? OnError { get; set; }
-
-    /// <summary>
-    /// Total number of events successfully persisted (atomically updated).
-    /// </summary>
-    public long PersistedCount => Volatile.Read(ref _persistedCount);
+    private readonly ISessionStore _store;
+    private long _failureCount;
     private long _persistedCount;
 
     /// <summary>
-    /// Total number of persistence failures (atomically updated).
-    /// </summary>
-    public long FailureCount => Volatile.Read(ref _failureCount);
-    private long _failureCount;
-
-    /// <summary>
-    /// Create a PersistentEventSink.
+    ///     Create a PersistentEventSink.
     /// </summary>
     /// <param name="inner">The primary event sink (e.g., InMemoryEventSink).</param>
     /// <param name="store">Session store to persist events to.</param>
@@ -49,10 +31,26 @@ public sealed class PersistentEventSink : IEventSink
         _sessionId = sessionId;
     }
 
+    /// <summary>
+    ///     Optional callback invoked when a persistence operation fails.
+    ///     Parameters: the exception, the event that failed, and a descriptive label.
+    /// </summary>
+    public Action<Exception, OmicronEvent, string>? OnError { get; set; }
+
+    /// <summary>
+    ///     Total number of events successfully persisted (atomically updated).
+    /// </summary>
+    public long PersistedCount => Volatile.Read(ref _persistedCount);
+
+    /// <summary>
+    ///     Total number of persistence failures (atomically updated).
+    /// </summary>
+    public long FailureCount => Volatile.Read(ref _failureCount);
+
     public OmicronEvent Emit(OmicronEvent evt)
     {
         // Let the inner sink stamp the event first
-        var stamped = _inner.Emit(evt);
+        OmicronEvent stamped = _inner.Emit(evt);
 
         // Persist if session matches (or if no filter)
         if (_sessionId is null || stamped.SessionId == _sessionId.Value)
@@ -79,7 +77,7 @@ public sealed class PersistentEventSink : IEventSink
 
     public async ValueTask<OmicronEvent> EmitAsync(OmicronEvent evt, CancellationToken ct = default)
     {
-        var stamped = await _inner.EmitAsync(evt, ct);
+        OmicronEvent stamped = await _inner.EmitAsync(evt, ct);
 
         if (_sessionId is null || stamped.SessionId == _sessionId.Value)
         {
@@ -98,15 +96,17 @@ public sealed class PersistentEventSink : IEventSink
         return stamped;
     }
 
-    public async ValueTask<IReadOnlyList<OmicronEvent>> EmitBatchAsync(IReadOnlyList<OmicronEvent> events, CancellationToken ct = default)
+    public async ValueTask<IReadOnlyList<OmicronEvent>> EmitBatchAsync(
+        IReadOnlyList<OmicronEvent> events,
+        CancellationToken ct = default)
     {
-        var stamped = await _inner.EmitBatchAsync(events, ct);
+        IReadOnlyList<OmicronEvent> stamped = await _inner.EmitBatchAsync(events, ct);
 
-        var bySession = stamped
+        IEnumerable<IGrouping<SessionId, OmicronEvent>> bySession = stamped
             .Where(e => _sessionId is null || e.SessionId == _sessionId.Value)
             .GroupBy(e => e.SessionId);
 
-        foreach (var group in bySession)
+        foreach (IGrouping<SessionId, OmicronEvent> group in bySession)
         {
             try
             {

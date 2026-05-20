@@ -1,8 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
-using System.Text.Json.Nodes;
-using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 
@@ -13,7 +11,7 @@ namespace Omicron.Core.Sessions;
 // ============================================================
 
 /// <summary>
-/// Metadata record for a persisted session.
+///     Metadata record for a persisted session.
 /// </summary>
 public sealed record SessionRecord(
     SessionId SessionId,
@@ -33,10 +31,17 @@ public sealed record SessionRecord(
         ApiType apiType,
         string? systemPrompt = null,
         string? label = null)
-        => new(
-            sessionId, modelId, providerName, apiType,
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
-            systemPrompt, label, SessionStatus.Active);
+    {
+        return new SessionRecord(sessionId,
+            modelId,
+            providerName,
+            apiType,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            systemPrompt,
+            label,
+            SessionStatus.Active);
+    }
 }
 
 public enum SessionStatus
@@ -47,9 +52,9 @@ public enum SessionStatus
 }
 
 /// <summary>
-/// Request to create a new session.
-/// If SessionId is null, the store generates one.
-/// AgentSession passes its own Id so events are stored under the correct key.
+///     Request to create a new session.
+///     If SessionId is null, the store generates one.
+///     AgentSession passes its own Id so events are stored under the correct key.
 /// </summary>
 public sealed record SessionCreateRequest(
     string ModelId,
@@ -60,7 +65,7 @@ public sealed record SessionCreateRequest(
     string? Label = null);
 
 /// <summary>
-/// Query for listing sessions.
+///     Query for listing sessions.
 /// </summary>
 public sealed record SessionListQuery(
     int? Limit = 100,
@@ -69,8 +74,8 @@ public sealed record SessionListQuery(
     string? ProviderFilter = null);
 
 /// <summary>
-/// Range of event sequences for reading events.
-/// Both ends are optional; null means unbounded.
+///     Range of event sequences for reading events.
+///     Both ends are optional; null means unbounded.
 /// </summary>
 public readonly record struct EventSequenceRange(long? FromExclusive, long? ToInclusive)
 {
@@ -82,27 +87,40 @@ public readonly record struct EventSequenceRange(long? FromExclusive, long? ToIn
 // ============================================================
 
 /// <summary>
-/// Persistence abstraction for sessions and their event streams.
+///     Persistence abstraction for sessions and their event streams.
 /// </summary>
 public interface ISessionStore
 {
     /// <summary>Create a new session record and return it.</summary>
-    ValueTask<SessionRecord> CreateSessionAsync(SessionCreateRequest request, CancellationToken ct = default);
+    ValueTask<SessionRecord> CreateSessionAsync(
+        SessionCreateRequest request,
+        CancellationToken ct = default);
 
     /// <summary>List sessions matching the query.</summary>
-    ValueTask<IReadOnlyList<SessionRecord>> ListSessionsAsync(SessionListQuery query, CancellationToken ct = default);
+    ValueTask<IReadOnlyList<SessionRecord>> ListSessionsAsync(
+        SessionListQuery query,
+        CancellationToken ct = default);
 
     /// <summary>Get a single session by ID, or null if not found.</summary>
     ValueTask<SessionRecord?> GetSessionAsync(SessionId sessionId, CancellationToken ct = default);
 
     /// <summary>Update session metadata (label, status, etc.). Returns updated record or null if not found.</summary>
-    ValueTask<SessionRecord?> UpdateSessionAsync(SessionId sessionId, Func<SessionRecord, SessionRecord> update, CancellationToken ct = default);
+    ValueTask<SessionRecord?> UpdateSessionAsync(
+        SessionId sessionId,
+        Func<SessionRecord, SessionRecord> update,
+        CancellationToken ct = default);
 
     /// <summary>Append events to a session's event stream. Throws if session not found.</summary>
-    ValueTask AppendEventsAsync(SessionId sessionId, IReadOnlyList<OmicronEvent> events, CancellationToken ct = default);
+    ValueTask AppendEventsAsync(
+        SessionId sessionId,
+        IReadOnlyList<OmicronEvent> events,
+        CancellationToken ct = default);
 
     /// <summary>Read events from a session's event stream in sequence order.</summary>
-    IAsyncEnumerable<OmicronEvent> ReadEventsAsync(SessionId sessionId, EventSequenceRange range, CancellationToken ct = default);
+    IAsyncEnumerable<OmicronEvent> ReadEventsAsync(
+        SessionId sessionId,
+        EventSequenceRange range,
+        CancellationToken ct = default);
 
     /// <summary>Get the total event count for a session.</summary>
     ValueTask<long> GetEventCountAsync(SessionId sessionId, CancellationToken ct = default);
@@ -113,26 +131,29 @@ public interface ISessionStore
 // ============================================================
 
 /// <summary>
-/// In-memory implementation of ISessionStore for testing and default use.
-/// Not durable — sessions and events are lost on process exit.
+///     In-memory implementation of ISessionStore for testing and default use.
+///     Not durable — sessions and events are lost on process exit.
 /// </summary>
 public sealed class InMemorySessionStore : ISessionStore
 {
-    private readonly List<SessionRecord> _sessions = new();
     private readonly Dictionary<SessionId, List<OmicronEvent>> _events = new();
     private readonly object _lock = new();
+    private readonly List<SessionRecord> _sessions = new();
 
-    public ValueTask<SessionRecord> CreateSessionAsync(SessionCreateRequest request, CancellationToken ct = default)
+    public ValueTask<SessionRecord> CreateSessionAsync(
+        SessionCreateRequest request,
+        CancellationToken ct = default)
     {
-        var sessionId = request.SessionId ?? SessionId.New();
+        SessionId sessionId = request.SessionId ?? SessionId.New();
 
         lock (_lock)
         {
             if (_sessions.Any(s => s.SessionId == sessionId))
+            {
                 throw new InvalidOperationException($"Session {sessionId} already exists.");
+            }
 
-            var record = SessionRecord.Create(
-                sessionId,
+            var record = SessionRecord.Create(sessionId,
                 request.ModelId,
                 request.ProviderName,
                 request.ApiType,
@@ -146,94 +167,126 @@ public sealed class InMemorySessionStore : ISessionStore
         }
     }
 
-    public ValueTask<IReadOnlyList<SessionRecord>> ListSessionsAsync(SessionListQuery query, CancellationToken ct = default)
+    public ValueTask<IReadOnlyList<SessionRecord>> ListSessionsAsync(
+        SessionListQuery query,
+        CancellationToken ct = default)
     {
         lock (_lock)
         {
-            var filtered = _sessions.AsEnumerable();
+            IEnumerable<SessionRecord> filtered = _sessions.AsEnumerable();
 
             if (query.StatusFilter.HasValue)
+            {
                 filtered = filtered.Where(s => s.Status == query.StatusFilter.Value);
+            }
 
             if (query.ProviderFilter is not null)
+            {
                 filtered = filtered.Where(s =>
-                    s.ProviderName.Contains(query.ProviderFilter, StringComparison.OrdinalIgnoreCase));
+                    s.ProviderName.Contains(query.ProviderFilter,
+                        StringComparison.OrdinalIgnoreCase));
+            }
 
-            var result = filtered
-                .Skip(query.Offset ?? 0)
-                .Take(query.Limit ?? 100)
-                .ToList();
+            var result = filtered.Skip(query.Offset ?? 0).Take(query.Limit ?? 100).ToList();
 
             return ValueTask.FromResult<IReadOnlyList<SessionRecord>>(result);
         }
     }
 
-    public ValueTask<SessionRecord?> GetSessionAsync(SessionId sessionId, CancellationToken ct = default)
+    public ValueTask<SessionRecord?> GetSessionAsync(
+        SessionId sessionId,
+        CancellationToken ct = default)
     {
         lock (_lock)
         {
-            var record = _sessions.FirstOrDefault(s => s.SessionId == sessionId);
+            SessionRecord? record = _sessions.FirstOrDefault(s => s.SessionId == sessionId);
             return ValueTask.FromResult(record);
         }
     }
 
-    public ValueTask<SessionRecord?> UpdateSessionAsync(SessionId sessionId, Func<SessionRecord, SessionRecord> update, CancellationToken ct = default)
+    public ValueTask<SessionRecord?> UpdateSessionAsync(
+        SessionId sessionId,
+        Func<SessionRecord, SessionRecord> update,
+        CancellationToken ct = default)
     {
         lock (_lock)
         {
-            var index = _sessions.FindIndex(s => s.SessionId == sessionId);
+            int index = _sessions.FindIndex(s => s.SessionId == sessionId);
             if (index >= 0)
             {
-                var record = _sessions[index];
-                var updated = update(record);
+                SessionRecord record = _sessions[index];
+                SessionRecord updated = update(record);
                 _sessions[index] = updated;
                 return ValueTask.FromResult<SessionRecord?>(updated);
             }
+
             return ValueTask.FromResult<SessionRecord?>(null);
         }
     }
 
-    public ValueTask AppendEventsAsync(SessionId sessionId, IReadOnlyList<OmicronEvent> events, CancellationToken ct = default)
+    public ValueTask AppendEventsAsync(
+        SessionId sessionId,
+        IReadOnlyList<OmicronEvent> events,
+        CancellationToken ct = default)
     {
-        if (events.Count == 0) return ValueTask.CompletedTask;
+        if (events.Count == 0)
+        {
+            return ValueTask.CompletedTask;
+        }
 
         lock (_lock)
         {
-            if (!_events.TryGetValue(sessionId, out var list))
+            if (!_events.TryGetValue(sessionId, out List<OmicronEvent>? list))
+            {
                 throw new InvalidOperationException(
                     $"Session {sessionId} not found in store. Create the session before appending events.");
+            }
 
             list.AddRange(events);
 
             // Update LastActivityAt on the session record
-            var index = _sessions.FindIndex(s => s.SessionId == sessionId);
+            int index = _sessions.FindIndex(s => s.SessionId == sessionId);
             if (index >= 0)
             {
-                _sessions[index] = _sessions[index] with { LastActivityAt = DateTimeOffset.UtcNow };
+                _sessions[index] = _sessions[index] with
+                {
+                    LastActivityAt = DateTimeOffset.UtcNow
+                };
             }
         }
+
         return ValueTask.CompletedTask;
     }
 
-    public async IAsyncEnumerable<OmicronEvent> ReadEventsAsync(SessionId sessionId, EventSequenceRange range, [EnumeratorCancellation] CancellationToken ct = default)
+    public async IAsyncEnumerable<OmicronEvent> ReadEventsAsync(
+        SessionId sessionId,
+        EventSequenceRange range,
+        [EnumeratorCancellation] CancellationToken ct = default)
     {
         List<OmicronEvent> snapshot;
         lock (_lock)
         {
-            if (!_events.TryGetValue(sessionId, out var list))
+            if (!_events.TryGetValue(sessionId, out List<OmicronEvent>? list))
+            {
                 yield break;
+            }
 
             snapshot = list.ToList();
         }
 
-        foreach (var evt in snapshot)
+        foreach (OmicronEvent evt in snapshot)
         {
             ct.ThrowIfCancellationRequested();
 
             if (range.FromExclusive.HasValue && evt.Sequence <= range.FromExclusive.Value)
+            {
                 continue;
+            }
+
             if (range.ToInclusive.HasValue && evt.Sequence > range.ToInclusive.Value)
+            {
                 yield break;
+            }
 
             yield return evt;
         }
@@ -243,8 +296,11 @@ public sealed class InMemorySessionStore : ISessionStore
     {
         lock (_lock)
         {
-            if (_events.TryGetValue(sessionId, out var list))
+            if (_events.TryGetValue(sessionId, out List<OmicronEvent>? list))
+            {
                 return ValueTask.FromResult((long)list.Count);
+            }
+
             return ValueTask.FromResult(0L);
         }
     }
@@ -255,85 +311,63 @@ public sealed class InMemorySessionStore : ISessionStore
 // ============================================================
 
 /// <summary>
-/// File-backed session store that persists events as newline-delimited JSON.
-/// Each session gets its own .jsonl file in the configured directory.
-/// Session metadata is stored in a sessions.json index file.
-///
-/// This store owns its data directly so LoadIndex() can properly restore state on reopen.
-/// Sync writes ensure event ordering is preserved on disk.
+///     File-backed session store that persists events as newline-delimited JSON.
+///     Each session gets its own .jsonl file in the configured directory.
+///     Session metadata is stored in a sessions.json index file.
+///     This store owns its data directly so LoadIndex() can properly restore state on reopen.
+///     Sync writes ensure event ordering is preserved on disk.
 /// </summary>
 public sealed class JsonlSessionStore : ISessionStore, IDisposable
 {
-    /// <summary>Directory where session data is stored.</summary>
-    public string StoreDirectory => _storeDir;
-
-    private readonly string _storeDir;
     private readonly JsonSerializerOptions _jsonOptions;
-    private readonly List<SessionRecord> _sessions = new();
     private readonly object _lock = new();
     private readonly ConcurrentDictionary<SessionId, SemaphoreSlim> _sessionLocks = new();
+    private readonly List<SessionRecord> _sessions = new();
+
     private bool _disposed;
 
     /// <summary>
-    /// Create a JSONL session store at the given directory.
-    /// Creates the directory if it doesn't exist, restores sessions from index.
+    ///     Create a JSONL session store at the given directory.
+    ///     Creates the directory if it doesn't exist, restores sessions from index.
     /// </summary>
     public JsonlSessionStore(string storeDir)
     {
-        _storeDir = storeDir;
+        StoreDirectory = storeDir;
         _jsonOptions = OmicronEventJson.CreateOptions();
-        Directory.CreateDirectory(_storeDir);
+        Directory.CreateDirectory(StoreDirectory);
         LoadIndex();
     }
 
-    private string IndexPath => Path.Combine(_storeDir, "sessions.json");
-    private string EventPath(SessionId sessionId) => Path.Combine(_storeDir, $"{sessionId}.jsonl");
+    /// <summary>Directory where session data is stored.</summary>
+    public string StoreDirectory { get; }
 
-    private void LoadIndex()
+    private string IndexPath => Path.Combine(StoreDirectory, "sessions.json");
+
+    public void Dispose()
     {
-        var indexPath = IndexPath;
-        if (!File.Exists(indexPath)) return;
-
-        try
+        if (!_disposed)
         {
-            var json = File.ReadAllText(indexPath);
-            var records = JsonSerializer.Deserialize<List<SessionRecord>>(json, _jsonOptions);
-            if (records is not null)
-            {
-                lock (_lock)
-                {
-                    _sessions.Clear();
-                    _sessions.AddRange(records);
-                }
-            }
-        }
-        catch
-        {
-            // Corrupt index file — start fresh
+            PruneEmptySessions();
+            SaveIndex();
+            _disposed = true;
         }
     }
 
-    private void SaveIndex()
+    public ValueTask<SessionRecord> CreateSessionAsync(
+        SessionCreateRequest request,
+        CancellationToken ct = default)
     {
-        lock (_lock)
-        {
-            var json = JsonSerializer.Serialize(_sessions, _jsonOptions);
-            File.WriteAllText(IndexPath, json);
-        }
-    }
-
-    public ValueTask<SessionRecord> CreateSessionAsync(SessionCreateRequest request, CancellationToken ct = default)
-    {
-        var sessionId = request.SessionId ?? SessionId.New();
+        SessionId sessionId = request.SessionId ?? SessionId.New();
         SessionRecord record;
 
         lock (_lock)
         {
             if (_sessions.Any(s => s.SessionId == sessionId))
+            {
                 throw new InvalidOperationException($"Session {sessionId} already exists.");
+            }
 
-            record = SessionRecord.Create(
-                sessionId,
+            record = SessionRecord.Create(sessionId,
                 request.ModelId,
                 request.ProviderName,
                 request.ApiType,
@@ -342,67 +376,79 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
 
             _sessions.Add(record);
         }
+
         SaveIndex();
         return ValueTask.FromResult(record);
     }
 
-    public ValueTask<IReadOnlyList<SessionRecord>> ListSessionsAsync(SessionListQuery query, CancellationToken ct = default)
+    public ValueTask<IReadOnlyList<SessionRecord>> ListSessionsAsync(
+        SessionListQuery query,
+        CancellationToken ct = default)
     {
         lock (_lock)
         {
-            var filtered = _sessions.AsEnumerable();
+            IEnumerable<SessionRecord> filtered = _sessions.AsEnumerable();
 
             if (query.StatusFilter.HasValue)
+            {
                 filtered = filtered.Where(s => s.Status == query.StatusFilter.Value);
+            }
 
             if (query.ProviderFilter is not null)
+            {
                 filtered = filtered.Where(s =>
-                    s.ProviderName.Contains(query.ProviderFilter, StringComparison.OrdinalIgnoreCase));
+                    s.ProviderName.Contains(query.ProviderFilter,
+                        StringComparison.OrdinalIgnoreCase));
+            }
 
-            var result = filtered
-                .Skip(query.Offset ?? 0)
-                .Take(query.Limit ?? 100)
-                .ToList();
+            var result = filtered.Skip(query.Offset ?? 0).Take(query.Limit ?? 100).ToList();
 
             return ValueTask.FromResult<IReadOnlyList<SessionRecord>>(result);
         }
     }
 
-    public ValueTask<SessionRecord?> GetSessionAsync(SessionId sessionId, CancellationToken ct = default)
+    public ValueTask<SessionRecord?> GetSessionAsync(
+        SessionId sessionId,
+        CancellationToken ct = default)
     {
         lock (_lock)
         {
-            var record = _sessions.FirstOrDefault(s => s.SessionId == sessionId);
+            SessionRecord? record = _sessions.FirstOrDefault(s => s.SessionId == sessionId);
             return ValueTask.FromResult(record);
         }
     }
 
-    public ValueTask<SessionRecord?> UpdateSessionAsync(SessionId sessionId, Func<SessionRecord, SessionRecord> update, CancellationToken ct = default)
+    public ValueTask<SessionRecord?> UpdateSessionAsync(
+        SessionId sessionId,
+        Func<SessionRecord, SessionRecord> update,
+        CancellationToken ct = default)
     {
         lock (_lock)
         {
-            var index = _sessions.FindIndex(s => s.SessionId == sessionId);
+            int index = _sessions.FindIndex(s => s.SessionId == sessionId);
             if (index >= 0)
             {
-                var updated = update(_sessions[index]);
+                SessionRecord updated = update(_sessions[index]);
                 _sessions[index] = updated;
                 SaveIndex();
                 return ValueTask.FromResult<SessionRecord?>(updated);
             }
+
             return ValueTask.FromResult<SessionRecord?>(null);
         }
     }
 
-    private SemaphoreSlim GetSessionLock(SessionId sessionId)
+    public async ValueTask AppendEventsAsync(
+        SessionId sessionId,
+        IReadOnlyList<OmicronEvent> events,
+        CancellationToken ct = default)
     {
-        return _sessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
-    }
+        if (events.Count == 0)
+        {
+            return;
+        }
 
-    public async ValueTask AppendEventsAsync(SessionId sessionId, IReadOnlyList<OmicronEvent> events, CancellationToken ct = default)
-    {
-        if (events.Count == 0) return;
-
-        var semaphore = GetSessionLock(sessionId);
+        SemaphoreSlim semaphore = GetSessionLock(sessionId);
         await semaphore.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -410,18 +456,24 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
             lock (_lock)
             {
                 if (!_sessions.Any(s => s.SessionId == sessionId))
+                {
                     throw new InvalidOperationException($"Session {sessionId} not found in store.");
+                }
             }
 
             // Write events to the JSONL file first (before metadata update) for atomicity
-            var eventPath = EventPath(sessionId);
+            string eventPath = EventPath(sessionId);
             try
             {
-                using var stream = new FileStream(eventPath, FileMode.Append, FileAccess.Write, FileShare.Read, 4096);
+                using var stream = new FileStream(eventPath,
+                    FileMode.Append,
+                    FileAccess.Write,
+                    FileShare.Read,
+                    4096);
 
-                foreach (var evt in events)
+                foreach (OmicronEvent evt in events)
                 {
-                    var bytes = OmicronEventJson.SerializeEvent(evt);
+                    byte[] bytes = OmicronEventJson.SerializeEvent(evt);
                     stream.Write(bytes);
                     stream.WriteByte((byte)'\n');
                 }
@@ -430,16 +482,23 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
             }
             catch (Exception ex)
             {
-                throw new InvalidOperationException($"Failed to write events to {eventPath}: {ex.Message}", ex);
+                throw new InvalidOperationException($"Failed to write events to {eventPath}: {ex.Message}",
+                    ex);
             }
 
             // Then update LastActivityAt and save index
             lock (_lock)
             {
-                var index = _sessions.FindIndex(s => s.SessionId == sessionId);
+                int index = _sessions.FindIndex(s => s.SessionId == sessionId);
                 if (index >= 0)
-                    _sessions[index] = _sessions[index] with { LastActivityAt = DateTimeOffset.UtcNow };
+                {
+                    _sessions[index] = _sessions[index] with
+                    {
+                        LastActivityAt = DateTimeOffset.UtcNow
+                    };
+                }
             }
+
             SaveIndex();
         }
         finally
@@ -448,11 +507,16 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
         }
     }
 
-    public async IAsyncEnumerable<OmicronEvent> ReadEventsAsync(SessionId sessionId, EventSequenceRange range, [EnumeratorCancellation] CancellationToken ct = default)
+    public async IAsyncEnumerable<OmicronEvent> ReadEventsAsync(
+        SessionId sessionId,
+        EventSequenceRange range,
+        [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var eventPath = EventPath(sessionId);
+        string eventPath = EventPath(sessionId);
         if (!File.Exists(eventPath))
+        {
             yield break;
+        }
 
         byte[] fileBytes;
         try
@@ -486,29 +550,44 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
             }
 
             // Skip empty lines
-            if (lineMem.IsEmpty) continue;
+            if (lineMem.IsEmpty)
+            {
+                continue;
+            }
 
-            var evt = OmicronEventJson.DeserializeEvent(lineMem);
-            if (evt is null) continue;
+            OmicronEvent? evt = OmicronEventJson.DeserializeEvent(lineMem);
+            if (evt is null)
+            {
+                continue;
+            }
 
             if (range.FromExclusive.HasValue && evt.Sequence <= range.FromExclusive.Value)
+            {
                 continue;
+            }
+
             if (range.ToInclusive.HasValue && evt.Sequence > range.ToInclusive.Value)
+            {
                 yield break;
+            }
 
             yield return evt;
         }
     }
 
-    public async ValueTask<long> GetEventCountAsync(SessionId sessionId, CancellationToken ct = default)
+    public async ValueTask<long> GetEventCountAsync(
+        SessionId sessionId,
+        CancellationToken ct = default)
     {
-        var eventPath = EventPath(sessionId);
+        string eventPath = EventPath(sessionId);
         if (!File.Exists(eventPath))
+        {
             return 0L;
+        }
 
         try
         {
-            var bytes = await File.ReadAllBytesAsync(eventPath, ct);
+            byte[] bytes = await File.ReadAllBytesAsync(eventPath, ct);
             return CountNonEmptyLines(bytes);
         }
         catch
@@ -517,33 +596,79 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
         }
     }
 
+    private string EventPath(SessionId sessionId)
+    {
+        return Path.Combine(StoreDirectory, $"{sessionId}.jsonl");
+    }
+
+    private void LoadIndex()
+    {
+        string indexPath = IndexPath;
+        if (!File.Exists(indexPath))
+        {
+            return;
+        }
+
+        try
+        {
+            string json = File.ReadAllText(indexPath);
+            List<SessionRecord>? records = JsonSerializer.Deserialize<List<SessionRecord>>(json, _jsonOptions);
+            if (records is not null)
+            {
+                lock (_lock)
+                {
+                    _sessions.Clear();
+                    _sessions.AddRange(records);
+                }
+            }
+        }
+        catch
+        {
+            // Corrupt index file — start fresh
+        }
+    }
+
+    private void SaveIndex()
+    {
+        lock (_lock)
+        {
+            string json = JsonSerializer.Serialize(_sessions, _jsonOptions);
+            File.WriteAllText(IndexPath, json);
+        }
+    }
+
+    private SemaphoreSlim GetSessionLock(SessionId sessionId)
+    {
+        return _sessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+    }
+
     private static int CountNonEmptyLines(byte[] bytes)
     {
         int count = 0;
-        var span = bytes.AsSpan();
+        Span<byte> span = bytes.AsSpan();
         int start = 0;
         while (start < span.Length)
         {
             int end = span.Slice(start).IndexOf((byte)'\n');
             if (end < 0)
             {
-                if (start < span.Length) count++;
+                if (start < span.Length)
+                {
+                    count++;
+                }
+
                 break;
             }
-            if (end > 0) count++; // non-empty line
+
+            if (end > 0)
+            {
+                count++; // non-empty line
+            }
+
             start = start + end + 1;
         }
-        return count;
-    }
 
-    public void Dispose()
-    {
-        if (!_disposed)
-        {
-            PruneEmptySessions();
-            SaveIndex();
-            _disposed = true;
-        }
+        return count;
     }
 
     private void PruneEmptySessions()
@@ -556,16 +681,20 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
                 .ToList();
 
             if (emptySessionIds.Count == 0)
+            {
                 return;
+            }
 
-            foreach (var sessionId in emptySessionIds)
+            foreach (SessionId sessionId in emptySessionIds)
             {
                 _sessions.RemoveAll(s => s.SessionId == sessionId);
-                var eventPath = EventPath(sessionId);
+                string eventPath = EventPath(sessionId);
                 try
                 {
                     if (File.Exists(eventPath))
+                    {
                         File.Delete(eventPath);
+                    }
                 }
                 catch { }
             }
@@ -574,13 +703,15 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
 
     private long GetEventCountUnsafe(SessionId sessionId)
     {
-        var eventPath = EventPath(sessionId);
+        string eventPath = EventPath(sessionId);
         if (!File.Exists(eventPath))
+        {
             return 0;
+        }
 
         try
         {
-            var bytes = File.ReadAllBytes(eventPath);
+            byte[] bytes = File.ReadAllBytes(eventPath);
             return CountNonEmptyLines(bytes);
         }
         catch
@@ -588,6 +719,4 @@ public sealed class JsonlSessionStore : ISessionStore, IDisposable
             return 0;
         }
     }
-
-
 }

@@ -1,8 +1,6 @@
 using Omicron.Core.Commands;
 using Omicron.Core.Events;
-using Omicron.Core.Execution;
 using Omicron.Core.Permissions;
-using Omicron.Core.Sessions;
 using Omicron.Core.Tools;
 using Omicron.Core.Workspace;
 using Xunit;
@@ -15,8 +13,9 @@ public class ToolRegistryTests
     public void ToolRegistry_RegisterAndGet()
     {
         var registry = new ToolRegistry();
-        var tool = new ToolDefinition(
-            "calculator", "Do math", null,
+        var tool = new ToolDefinition("calculator",
+            "Do math",
+            null,
             ctx => Task.FromResult(new ToolResult("42")));
 
         registry.Register(tool);
@@ -47,17 +46,23 @@ public class ToolRegistryTests
     public async Task ToolRegistry_ToolInvocation_ReturnsResult()
     {
         var registry = new ToolRegistry();
-        registry.Register(new ToolDefinition(
-            "echo", "Echo input", null,
-            ctx => Task.FromResult(new ToolResult(ctx.Arguments.GetValueOrDefault("msg")?.ToString() ?? ""))));
+        registry.Register(new ToolDefinition("echo",
+            "Echo input",
+            null,
+            ctx =>
+                Task.FromResult(new ToolResult(ctx.Arguments.GetValueOrDefault("msg")?.ToString() ?? ""))));
 
-        var tool = registry.GetTool("echo");
+        ToolDefinition? tool = registry.GetTool("echo");
         Assert.NotNull(tool);
 
-        var result = await tool.InvokeAsync(new ToolInvocationContext(
-            new ToolCallId("call_1"),
-            new Dictionary<string, object?> { ["msg"] = "Hello" },
-            SessionId.New(), AgentId.New(), CancellationToken.None));
+        ToolResult result = await tool.InvokeAsync(new ToolInvocationContext(new ToolCallId("call_1"),
+            new Dictionary<string, object?>
+            {
+                ["msg"] = "Hello"
+            },
+            SessionId.New(),
+            AgentId.New(),
+            CancellationToken.None));
 
         Assert.Equal("Hello", result.Text);
         Assert.False(result.IsError);
@@ -68,10 +73,16 @@ public class ToolRegistryTests
     {
         var sessionId = SessionId.New();
         var agentId = AgentId.New();
-        var args = new Dictionary<string, object?> { ["key"] = "value" };
+        var args = new Dictionary<string, object?>
+        {
+            ["key"] = "value"
+        };
 
-        var ctx = new ToolInvocationContext(
-            new ToolCallId("call_1"), args, sessionId, agentId, CancellationToken.None);
+        var ctx = new ToolInvocationContext(new ToolCallId("call_1"),
+            args,
+            sessionId,
+            agentId,
+            CancellationToken.None);
 
         Assert.Equal("call_1", ctx.ToolCallId.Value);
         Assert.Equal("value", ctx.Arguments["key"]);
@@ -86,8 +97,9 @@ public class CommandRegistryTests
     public void CommandRegistry_RegisterAndGet()
     {
         var registry = new CommandRegistry();
-        var cmd = new CommandDefinition(
-            "session.reset", "Reset Session", "Clear conversation history",
+        var cmd = new CommandDefinition("session.reset",
+            "Reset Session",
+            "Clear conversation history",
             CommandScope.Session,
             ctx => Task.FromResult(new CommandResult("Reset")));
 
@@ -110,7 +122,7 @@ public class PermissionTests
     public async Task AllowAllPermissionService_AllowsEverything()
     {
         var service = new AllowAllPermissionService();
-        var result = await service.RequestAsync(new PermissionRequest("tool.execute", "shell", null));
+        PermissionDecision result = await service.RequestAsync(new PermissionRequest("tool.execute", "shell", null));
         Assert.True(result.Allowed);
     }
 }

@@ -1,8 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Omicron.Core.Collections;
 using Xunit;
 
@@ -49,7 +44,7 @@ public class QueueSPSCTests
         Assert.False(q.WasEmpty());
         Assert.Equal(1, q.WasSize());
 
-        Assert.True(q.TryPop(out var item));
+        Assert.True(q.TryPop(out int item));
         Assert.Equal(42, item);
         Assert.True(q.WasEmpty());
     }
@@ -59,7 +54,9 @@ public class QueueSPSCTests
     {
         var q = new QueueSPSC<int>(4);
         for (int i = 0; i < 4; i++)
+        {
             Assert.True(q.TryPush(i));
+        }
 
         Assert.True(q.WasFull());
         Assert.False(q.TryPush(99));
@@ -69,7 +66,7 @@ public class QueueSPSCTests
     public void TryPop_Empty_ReturnsFalse()
     {
         var q = new QueueSPSC<int>(4);
-        Assert.False(q.TryPop(out var item));
+        Assert.False(q.TryPop(out int item));
         Assert.Equal(default, item);
     }
 
@@ -80,13 +77,15 @@ public class QueueSPSCTests
         for (int cycle = 0; cycle < 10; cycle++)
         {
             for (int i = 0; i < 16; i++)
+            {
                 Assert.True(q.TryPush(cycle * 100 + i));
+            }
 
             Assert.True(q.WasFull());
 
             for (int i = 0; i < 16; i++)
             {
-                Assert.True(q.TryPop(out var item));
+                Assert.True(q.TryPop(out int item));
                 Assert.Equal(cycle * 100 + i, item);
             }
 
@@ -100,17 +99,26 @@ public class QueueSPSCTests
         var q = new QueueSPSC<int>(4);
 
         // Fill
-        for (int i = 0; i < 4; i++) q.TryPush(i);
+        for (int i = 0; i < 4; i++)
+        {
+            q.TryPush(i);
+        }
 
         // Drain
-        for (int i = 0; i < 4; i++) q.TryPop(out _);
+        for (int i = 0; i < 4; i++)
+        {
+            q.TryPop(out _);
+        }
 
         // Head/tail have both advanced by 4. Fill again.
-        for (int i = 4; i < 8; i++) q.TryPush(i);
+        for (int i = 4; i < 8; i++)
+        {
+            q.TryPush(i);
+        }
 
         for (int i = 4; i < 8; i++)
         {
-            Assert.True(q.TryPop(out var item));
+            Assert.True(q.TryPop(out int item));
             Assert.Equal(i, item);
         }
     }
@@ -119,9 +127,9 @@ public class QueueSPSCTests
     public void PushPop_ReferenceTypes_GCClearsSlots()
     {
         var q = new QueueSPSC<object>(4);
-        var obj = new object();
+        object obj = new();
         q.TryPush(obj);
-        Assert.True(q.TryPop(out var popped));
+        Assert.True(q.TryPop(out object popped));
         Assert.Same(obj, popped);
         // The internal array slot should now be null (not directly testable
         // without reflection, but we exercise the code path).
@@ -135,7 +143,10 @@ public class QueueSPSCTests
         q.Push(2);
 
         int popped = 0;
-        var popTask = Task.Run(() => { popped = q.Pop(); });
+        var popTask = Task.Run(() =>
+        {
+            popped = q.Pop();
+        });
 
         // Give the pop task time to start
         Thread.Sleep(50);
@@ -144,7 +155,7 @@ public class QueueSPSCTests
         var unblockTask = Task.Run(() =>
         {
             Thread.Sleep(20);
-            Assert.True(q.TryPop(out var _));
+            Assert.True(q.TryPop(out _));
         });
 
         await popTask.WaitAsync(TimeSpan.FromMilliseconds(500));
@@ -158,7 +169,10 @@ public class QueueSPSCTests
         var q = new QueueSPSC<int>(4);
 
         int popped = 0;
-        var popTask = Task.Run(() => { popped = q.Pop(); });
+        var popTask = Task.Run(() =>
+        {
+            popped = q.Pop();
+        });
 
         Thread.Sleep(50);
         Assert.True(q.TryPush(123));
@@ -207,14 +221,16 @@ public class QueueSPSCTests
         var producer = Task.Run(() =>
         {
             for (int i = 0; i < rounds; i++)
+            {
                 q.Push(i);
+            }
         });
 
         var consumer = Task.Run(() =>
         {
             for (int i = 0; i < rounds; i++)
             {
-                var item = q.Pop();
+                int item = q.Pop();
                 Assert.Equal(i, item);
             }
         });
@@ -230,18 +246,23 @@ public class QueueSPSCTests
         var pushTask = Task.Run(async () =>
         {
             for (int i = 0; i < 10; i++)
+            {
                 await q.PushAsync(i);
+            }
         });
 
         var popTask = Task.Run(async () =>
         {
             var results = new List<int>();
             for (int i = 0; i < 10; i++)
+            {
                 results.Add(await q.PopAsync());
+            }
+
             return results;
         });
 
-        var results = await popTask;
+        List<int> results = await popTask;
         await pushTask;
 
         Assert.Equal(Enumerable.Range(0, 10), results);
@@ -253,7 +274,7 @@ public class QueueSPSCTests
         var q = new QueueSPSC<int>(4);
         using var cts = new CancellationTokenSource();
 
-        var popTask = q.PopAsync(cts.Token).AsTask();
+        Task<int> popTask = q.PopAsync(cts.Token).AsTask();
         cts.CancelAfter(50);
 
         await Assert.ThrowsAsync<OperationCanceledException>(async () => await popTask);
@@ -265,14 +286,20 @@ public class QueueSPSCTests
         var q = new QueueSPSC<int>(8);
         Assert.Equal(0, q.WasSize());
 
-        q.Push(1); Assert.Equal(1, q.WasSize());
-        q.Push(2); Assert.Equal(2, q.WasSize());
-        q.Push(3); Assert.Equal(3, q.WasSize());
+        q.Push(1);
+        Assert.Equal(1, q.WasSize());
+        q.Push(2);
+        Assert.Equal(2, q.WasSize());
+        q.Push(3);
+        Assert.Equal(3, q.WasSize());
 
-        q.TryPop(out _); Assert.Equal(2, q.WasSize());
-        q.TryPop(out _); Assert.Equal(1, q.WasSize());
+        q.TryPop(out _);
+        Assert.Equal(2, q.WasSize());
+        q.TryPop(out _);
+        Assert.Equal(1, q.WasSize());
 
-        q.Push(4); Assert.Equal(2, q.WasSize());
+        q.Push(4);
+        Assert.Equal(2, q.WasSize());
     }
 
     [Fact]
@@ -286,14 +313,16 @@ public class QueueSPSCTests
         var producer = Task.Run(() =>
         {
             for (int i = 0; i < totalBytes; i++)
+            {
                 q.Push((byte)(i & 0xFF));
+            }
         });
 
         var consumer = Task.Run(() =>
         {
             for (int i = 0; i < totalBytes; i++)
             {
-                var b = q.Pop();
+                byte b = q.Pop();
                 Assert.Equal((byte)(i & 0xFF), b);
             }
         });

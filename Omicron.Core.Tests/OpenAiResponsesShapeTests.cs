@@ -12,8 +12,8 @@ public class OpenAiResponsesShapeTests
     private readonly OpenAiResponsesShape _shape = new();
 
     /// <summary>
-    /// Helper that serializes via <see cref="IApiShape.WriteRequestBody"/> and returns
-    /// a <see cref="JsonDocument"/> for assertion.  Replaces legacy BuildRequestBody tests.
+    ///     Helper that serializes via <see cref="IApiShape.WriteRequestBody" /> and returns
+    ///     a <see cref="JsonDocument" /> for assertion.  Replaces legacy BuildRequestBody tests.
     /// </summary>
     private JsonDocument WriteAndParse(
         Model model,
@@ -24,7 +24,10 @@ public class OpenAiResponsesShapeTests
     {
         var buffer = new ArrayBufferWriter<byte>();
         using (var writer = new Utf8JsonWriter(buffer))
+        {
             _shape.WriteRequestBody(writer, model, messages, systemPrompt, tools, options);
+        }
+
         return JsonDocument.Parse(buffer.WrittenMemory);
     }
 
@@ -37,11 +40,14 @@ public class OpenAiResponsesShapeTests
             ProviderName = "openai",
             ApiType = ApiType.OpenAiResponses
         };
-        var messages = new List<Message> { Message.UserMessage("Hello") };
+        var messages = new List<Message>
+        {
+            Message.UserMessage("Hello")
+        };
         var options = new ChatOptions();
 
-        using var doc = WriteAndParse(model, messages, null, null, options);
-        var root = doc.RootElement;
+        using JsonDocument doc = WriteAndParse(model, messages, null, null, options);
+        JsonElement root = doc.RootElement;
 
         Assert.Equal("gpt-5.5", root.GetProperty("model").GetString());
         Assert.True(root.GetProperty("stream").GetBoolean());
@@ -58,11 +64,18 @@ public class OpenAiResponsesShapeTests
             ProviderName = "openai",
             ApiType = ApiType.OpenAiResponses
         };
-        var messages = new List<Message> { Message.UserMessage("Hello") };
+        var messages = new List<Message>
+        {
+            Message.UserMessage("Hello")
+        };
         var options = new ChatOptions();
 
-        using var doc = WriteAndParse(model, messages, "You are a helpful assistant.", null, options);
-        var root = doc.RootElement;
+        using JsonDocument doc = WriteAndParse(model,
+            messages,
+            "You are a helpful assistant.",
+            null,
+            options);
+        JsonElement root = doc.RootElement;
 
         Assert.Equal("You are a helpful assistant.", root.GetProperty("instructions").GetString());
     }
@@ -76,17 +89,24 @@ public class OpenAiResponsesShapeTests
             ProviderName = "openai",
             ApiType = ApiType.OpenAiResponses
         };
-        var messages = new List<Message> { Message.UserMessage("Hello") };
+        var messages = new List<Message>
+        {
+            Message.UserMessage("Hello")
+        };
         var options = new ChatOptions();
         var tools = new List<Tool>
         {
-            new() { Name = "get_weather", Description = "Get the weather" }
+            new()
+            {
+                Name = "get_weather",
+                Description = "Get the weather"
+            }
         };
 
-        using var doc = WriteAndParse(model, messages, null, tools, options);
-        var root = doc.RootElement;
+        using JsonDocument doc = WriteAndParse(model, messages, null, tools, options);
+        JsonElement root = doc.RootElement;
 
-        var toolArray = root.GetProperty("tools").EnumerateArray().ToArray();
+        JsonElement[] toolArray = root.GetProperty("tools").EnumerateArray().ToArray();
         Assert.Single(toolArray);
         Assert.Equal("get_weather", toolArray[0].GetProperty("name").GetString());
     }
@@ -100,11 +120,17 @@ public class OpenAiResponsesShapeTests
             ProviderName = "openai",
             ApiType = ApiType.OpenAiResponses
         };
-        var messages = new List<Message> { Message.UserMessage("Hello") };
-        var options = new ChatOptions { MaxTokens = 4096 };
+        var messages = new List<Message>
+        {
+            Message.UserMessage("Hello")
+        };
+        var options = new ChatOptions
+        {
+            MaxTokens = 4096
+        };
 
-        using var doc = WriteAndParse(model, messages, null, null, options);
-        var root = doc.RootElement;
+        using JsonDocument doc = WriteAndParse(model, messages, null, null, options);
+        JsonElement root = doc.RootElement;
 
         Assert.Equal(4096, root.GetProperty("max_output_tokens").GetInt32());
     }
@@ -118,11 +144,17 @@ public class OpenAiResponsesShapeTests
             ProviderName = "openai",
             ApiType = ApiType.OpenAiResponses
         };
-        var messages = new List<Message> { Message.UserMessage("Hello") };
-        var options = new ChatOptions { ReasoningEffort = "high" };
+        var messages = new List<Message>
+        {
+            Message.UserMessage("Hello")
+        };
+        var options = new ChatOptions
+        {
+            ReasoningEffort = "high"
+        };
 
-        using var doc = WriteAndParse(model, messages, null, null, options);
-        var root = doc.RootElement;
+        using JsonDocument doc = WriteAndParse(model, messages, null, null, options);
+        JsonElement root = doc.RootElement;
 
         Assert.Equal("high", root.GetProperty("reasoning_effort").GetString());
     }
@@ -137,11 +169,14 @@ public class OpenAiResponsesShapeTests
             ApiType = ApiType.OpenAiResponses,
             StoragePolicy = ProviderStoragePolicy.AllowProviderStoredState
         };
-        var messages = new List<Message> { Message.UserMessage("Hello") };
+        var messages = new List<Message>
+        {
+            Message.UserMessage("Hello")
+        };
         var options = new ChatOptions();
 
-        using var doc = WriteAndParse(model, messages, null, null, options);
-        var root = doc.RootElement;
+        using JsonDocument doc = WriteAndParse(model, messages, null, null, options);
+        JsonElement root = doc.RootElement;
 
         Assert.True(root.GetProperty("store").GetBoolean());
     }
@@ -156,11 +191,14 @@ public class OpenAiResponsesShapeTests
             ApiType = ApiType.OpenAiResponses,
             StoragePolicy = ProviderStoragePolicy.AllowProviderStateNoStore
         };
-        var messages = new List<Message> { Message.UserMessage("Hello") };
+        var messages = new List<Message>
+        {
+            Message.UserMessage("Hello")
+        };
         var options = new ChatOptions();
 
-        using var doc = WriteAndParse(model, messages, null, null, options);
-        var root = doc.RootElement;
+        using JsonDocument doc = WriteAndParse(model, messages, null, null, options);
+        JsonElement root = doc.RootElement;
 
         Assert.False(root.GetProperty("store").GetBoolean());
     }
@@ -175,11 +213,14 @@ public class OpenAiResponsesShapeTests
             ApiType = ApiType.OpenAiResponses,
             StoragePolicy = ProviderStoragePolicy.PreferStateless
         };
-        var messages = new List<Message> { Message.UserMessage("Hello") };
+        var messages = new List<Message>
+        {
+            Message.UserMessage("Hello")
+        };
         var options = new ChatOptions();
 
-        using var doc = WriteAndParse(model, messages, null, null, options);
-        var root = doc.RootElement;
+        using JsonDocument doc = WriteAndParse(model, messages, null, null, options);
+        JsonElement root = doc.RootElement;
 
         Assert.False(root.GetProperty("store").GetBoolean());
     }
@@ -194,15 +235,17 @@ public class OpenAiResponsesShapeTests
             ApiType = ApiType.OpenAiResponses,
             StoragePolicy = ProviderStoragePolicy.AllowProviderStateNoStore
         };
-        var messages = new List<Message> { Message.UserMessage("Hello") };
+        var messages = new List<Message>
+        {
+            Message.UserMessage("Hello")
+        };
         var options = new ChatOptions
         {
-            CurrentProviderState = new ProviderTurnState(
-                default, "resp_123", null, null, null)
+            CurrentProviderState = new ProviderTurnState(default, "resp_123", null, null, null)
         };
 
-        using var doc = WriteAndParse(model, messages, null, null, options);
-        var root = doc.RootElement;
+        using JsonDocument doc = WriteAndParse(model, messages, null, null, options);
+        JsonElement root = doc.RootElement;
 
         Assert.Equal("resp_123", root.GetProperty("previous_response_id").GetString());
     }
@@ -213,7 +256,7 @@ public class OpenAiResponsesShapeTests
         byte[] data = """{"type":"response.output_text.delta","delta":"Hello"}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.TextDelta, result.Type);
@@ -226,7 +269,7 @@ public class OpenAiResponsesShapeTests
         byte[] data = """{"type":"response.output_text.delta","delta":""}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.Null(result);
     }
@@ -235,10 +278,11 @@ public class OpenAiResponsesShapeTests
     public void ParseSseChunk_FunctionCallArgumentsDelta_ReturnsToolCallDelta()
     {
         // JSON: {"type":"response.function_call_arguments.delta","delta":"partial","item_id":"item_1"}
-        byte[] data = """{"type":"response.function_call_arguments.delta","delta":"partial","item_id":"item_1"}"""u8.ToArray();
+        byte[] data =
+            """{"type":"response.function_call_arguments.delta","delta":"partial","item_id":"item_1"}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.ToolCallDelta, result.Type);
@@ -249,10 +293,12 @@ public class OpenAiResponsesShapeTests
     public void ParseSseChunk_FunctionCallArgumentsDone_ReturnsToolCallEnd()
     {
         // Use a regular string to properly escape JSON quotes within arguments value
-        byte[] data = "{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"call_id\":\"call_abc\",\"name\":\"get_weather\",\"arguments\":\"{\\\"location\\\":\\\"NYC\\\"}\"}"u8.ToArray();
+        byte[] data =
+            "{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"call_id\":\"call_abc\",\"name\":\"get_weather\",\"arguments\":\"{\\\"location\\\":\\\"NYC\\\"}\"}"u8
+                .ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.ToolCallEnd, result.Type);
@@ -264,10 +310,12 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_OutputItemAdded_FunctionCall_ReturnsToolCallStart()
     {
-        byte[] data = """{"type":"response.output_item.added","item":{"id":"item_1","type":"function_call","call_id":"call_abc","name":"get_weather"}}"""u8.ToArray();
+        byte[] data =
+            """{"type":"response.output_item.added","item":{"id":"item_1","type":"function_call","call_id":"call_abc","name":"get_weather"}}"""u8
+                .ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.ToolCallStart, result.Type);
@@ -278,10 +326,12 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_Completed_ReturnsDoneEvent()
     {
-        byte[] data = """{"type":"response.completed","response":{"id":"resp_123","status":"completed","usage":{"input_tokens":10,"output_tokens":20}}}"""u8.ToArray();
+        byte[] data =
+            """{"type":"response.completed","response":{"id":"resp_123","status":"completed","usage":{"input_tokens":10,"output_tokens":20}}}"""u8
+                .ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.Done, result.Type);
@@ -295,10 +345,12 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_Completed_Failed_ReturnsErrorEvent()
     {
-        byte[] data = """{"type":"response.completed","response":{"id":"resp_123","status":"failed","error":{"message":"Something went wrong"}}}"""u8.ToArray();
+        byte[] data =
+            """{"type":"response.completed","response":{"id":"resp_123","status":"failed","error":{"message":"Something went wrong"}}}"""u8
+                .ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.Error, result.Type);
@@ -308,10 +360,12 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_Completed_Incomplete_ReturnsLengthStopReason()
     {
-        byte[] data = """{"type":"response.completed","response":{"id":"resp_123","status":"incomplete","usage":{"input_tokens":10,"output_tokens":100}}}"""u8.ToArray();
+        byte[] data =
+            """{"type":"response.completed","response":{"id":"resp_123","status":"incomplete","usage":{"input_tokens":10,"output_tokens":100}}}"""u8
+                .ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.Done, result.Type);
@@ -321,10 +375,11 @@ public class OpenAiResponsesShapeTests
     [Fact]
     public void ParseSseChunk_RefusalDelta_ReturnsTextWithReasoning()
     {
-        byte[] data = """{"type":"response.refusal.delta","delta":"I cannot answer that."}"""u8.ToArray();
+        byte[] data =
+            """{"type":"response.refusal.delta","delta":"I cannot answer that."}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.TextDelta, result.Type);
@@ -338,7 +393,7 @@ public class OpenAiResponsesShapeTests
         byte[] data = """{"type":"error","message":"API rate limit exceeded"}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.Error, result.Type);
@@ -351,7 +406,7 @@ public class OpenAiResponsesShapeTests
         byte[] data = """{"type":"unknown.event.type","data":"something"}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.Null(result);
     }
@@ -362,7 +417,7 @@ public class OpenAiResponsesShapeTests
         byte[] data = "this is not json"u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.Error, result.Type);
@@ -374,7 +429,7 @@ public class OpenAiResponsesShapeTests
         byte[] data = """{"error":{"message":"Authentication failed"}}"""u8.ToArray();
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
-        var result = _shape.ParseSseChunk(data, accumulators);
+        StreamEvent? result = _shape.ParseSseChunk(data, accumulators);
 
         Assert.NotNull(result);
         Assert.Equal(StreamEventType.Error, result.Type);
@@ -394,16 +449,20 @@ public class OpenAiResponsesShapeTests
         var messages = new List<Message>
         {
             Message.UserMessage("What's the weather in NYC?"),
-            Message.AssistantToolCallMessage(
-                new ToolCallContent("call_1", "get_weather", new Dictionary<string, object?> { ["location"] = "NYC" })),
+            Message.AssistantToolCallMessage(new ToolCallContent("call_1",
+                "get_weather",
+                new Dictionary<string, object?>
+                {
+                    ["location"] = "NYC"
+                })),
             Message.ToolResultMessage("call_1", "get_weather", "Sunny, 25°C")
         };
 
         var options = new ChatOptions();
-        using var doc = WriteAndParse(model, messages, null, null, options);
-        var root = doc.RootElement;
+        using JsonDocument doc = WriteAndParse(model, messages, null, null, options);
+        JsonElement root = doc.RootElement;
 
-        var input = root.GetProperty("input").EnumerateArray().ToArray();
+        JsonElement[] input = root.GetProperty("input").EnumerateArray().ToArray();
         Assert.Equal(3, input.Length);
 
         Assert.Equal("user", input[0].GetProperty("role").GetString());
@@ -440,16 +499,19 @@ public class OpenAiResponsesShapeTests
             }
         };
 
-        using var doc = WriteAndParse(model, messages, null, null, new ChatOptions());
-        var root = doc.RootElement;
-        var input = root.GetProperty("input").EnumerateArray().ToArray();
+        using JsonDocument doc = WriteAndParse(model, messages, null, null, new ChatOptions());
+        JsonElement root = doc.RootElement;
+        JsonElement[] input = root.GetProperty("input").EnumerateArray().ToArray();
 
         Assert.Equal("message", input[1].GetProperty("type").GetString());
         Assert.Equal("assistant", input[1].GetProperty("role").GetString());
-        Assert.Equal("output_text", input[1].GetProperty("content")[0].GetProperty("type").GetString());
+        Assert.Equal("output_text",
+            input[1].GetProperty("content")[0].GetProperty("type").GetString());
         // Verify no reasoning content type appears
-        foreach (var item in input[1].GetProperty("content").EnumerateArray())
+        foreach (JsonElement item in input[1].GetProperty("content").EnumerateArray())
+        {
             Assert.NotEqual("reasoning", item.GetProperty("type").GetString());
+        }
     }
 
     [Fact]
@@ -458,8 +520,10 @@ public class OpenAiResponsesShapeTests
         var accumulators = new Dictionary<int, ToolCallAccumulator>();
 
         // First function call: output_item.added
-        byte[] chunk1 = """{"type":"response.output_item.added","item":{"id":"item_1","type":"function_call","call_id":"call_abc","name":"get_weather"}}"""u8.ToArray();
-        var r1 = _shape.ParseSseChunk(chunk1, accumulators);
+        byte[] chunk1 =
+            """{"type":"response.output_item.added","item":{"id":"item_1","type":"function_call","call_id":"call_abc","name":"get_weather"}}"""u8
+                .ToArray();
+        StreamEvent? r1 = _shape.ParseSseChunk(chunk1, accumulators);
         Assert.NotNull(r1);
         Assert.Equal(StreamEventType.ToolCallStart, r1.Type);
         Assert.Equal("get_weather", r1.ToolName);
@@ -467,22 +531,28 @@ public class OpenAiResponsesShapeTests
         Assert.Equal(0, accumulators.Keys.First());
 
         // First function call: arguments.delta
-        byte[] chunk2 = "{\"type\":\"response.function_call_arguments.delta\",\"delta\":\"partial\",\"item_id\":\"item_1\"}"u8.ToArray();
-        var r2 = _shape.ParseSseChunk(chunk2, accumulators);
+        byte[] chunk2 =
+            "{\"type\":\"response.function_call_arguments.delta\",\"delta\":\"partial\",\"item_id\":\"item_1\"}"u8
+                .ToArray();
+        StreamEvent? r2 = _shape.ParseSseChunk(chunk2, accumulators);
         Assert.NotNull(r2);
         Assert.Equal(StreamEventType.ToolCallDelta, r2.Type);
 
         // First function call: arguments.done
-        byte[] chunk3 = "{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"arguments\":\"{\\\"loc\\\":\\\"NYC\\\"}\"}"u8.ToArray();
-        var r3 = _shape.ParseSseChunk(chunk3, accumulators);
+        byte[] chunk3 =
+            "{\"type\":\"response.function_call_arguments.done\",\"item_id\":\"item_1\",\"arguments\":\"{\\\"loc\\\":\\\"NYC\\\"}\"}"u8
+                .ToArray();
+        StreamEvent? r3 = _shape.ParseSseChunk(chunk3, accumulators);
         Assert.NotNull(r3);
         Assert.Equal(StreamEventType.ToolCallEnd, r3.Type);
         Assert.Equal("get_weather", r3.ToolCall?.Name);
         Assert.Empty(accumulators);
 
         // Second function call starts — must not collide with cleared index 0
-        byte[] chunk4 = """{"type":"response.output_item.added","item":{"id":"item_2","type":"function_call","call_id":"call_def","name":"get_time"}}"""u8.ToArray();
-        var r4 = _shape.ParseSseChunk(chunk4, accumulators);
+        byte[] chunk4 =
+            """{"type":"response.output_item.added","item":{"id":"item_2","type":"function_call","call_id":"call_def","name":"get_time"}}"""u8
+                .ToArray();
+        StreamEvent? r4 = _shape.ParseSseChunk(chunk4, accumulators);
         Assert.NotNull(r4);
         Assert.Equal(StreamEventType.ToolCallStart, r4.Type);
         Assert.Equal("get_time", r4.ToolName);

@@ -5,7 +5,7 @@ namespace Omicron.Core.Diff;
 // ============================================================
 
 /// <summary>
-/// Options controlling diff behavior.
+///     Options controlling diff behavior.
 /// </summary>
 internal sealed record TextDiffOptions
 {
@@ -20,9 +20,11 @@ internal sealed record TextDiffOptions
     /// <summary>Ignore case when comparing lines.</summary>
     public bool IgnoreCase { get; init; }
 
-    /// <summary>Maximum number of lines for exact diff. 0 = no limit.
-    /// Exceeding this returns an explicit omitted/truncated status.
-    /// The facade selects strategy based on input size internally.</summary>
+    /// <summary>
+    ///     Maximum number of lines for exact diff. 0 = no limit.
+    ///     Exceeding this returns an explicit omitted/truncated status.
+    ///     The facade selects strategy based on input size internally.
+    /// </summary>
     public int MaxLineCount { get; init; }
 }
 
@@ -31,14 +33,10 @@ internal sealed record TextDiffOptions
 // ============================================================
 
 /// <summary>
-/// A single edit operation: insertion, deletion, or replacement.
-/// All indexes are 0-based line numbers.
+///     A single edit operation: insertion, deletion, or replacement.
+///     All indexes are 0-based line numbers.
 /// </summary>
-internal readonly record struct TextDiffEdit(
-    int OldStart,
-    int OldCount,
-    int NewStart,
-    int NewCount)
+internal readonly record struct TextDiffEdit(int OldStart, int OldCount, int NewStart, int NewCount)
 {
     public bool IsInsert => OldCount == 0 && NewCount > 0;
     public bool IsDelete => OldCount > 0 && NewCount == 0;
@@ -46,8 +44,8 @@ internal readonly record struct TextDiffEdit(
 }
 
 /// <summary>
-/// Result of diffing two line sequences.
-/// IsTruncated indicates the result is partial (input exceeded limits).
+///     Result of diffing two line sequences.
+///     IsTruncated indicates the result is partial (input exceeded limits).
 /// </summary>
 internal sealed record TextDiffResult(
     IReadOnlyList<TextDiffEdit> Edits,
@@ -64,7 +62,7 @@ internal sealed record TextDiffResult(
 // ============================================================
 
 /// <summary>
-/// A diff hunk with surrounding context lines.
+///     A diff hunk with surrounding context lines.
 /// </summary>
 internal sealed record TextDiffHunk(
     int OldStart,
@@ -74,7 +72,7 @@ internal sealed record TextDiffHunk(
     IReadOnlyList<TextDiffLine> Lines);
 
 /// <summary>
-/// A single line in a diff hunk.
+///     A single line in a diff hunk.
 /// </summary>
 internal enum TextDiffLineKind
 {
@@ -84,7 +82,7 @@ internal enum TextDiffLineKind
 }
 
 /// <summary>
-/// A single line in a diff hunk with its kind and original line numbers.
+///     A single line in a diff hunk with its kind and original line numbers.
 /// </summary>
 internal sealed record TextDiffLine(
     TextDiffLineKind Kind,

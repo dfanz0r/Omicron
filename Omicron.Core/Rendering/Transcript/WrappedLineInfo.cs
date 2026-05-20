@@ -1,7 +1,7 @@
 namespace Omicron.Core.Rendering.Transcript;
 
 /// <summary>
-/// Information about a single wrapped row in the transcript layout cache.
+///     Information about a single wrapped row in the transcript layout cache.
 /// </summary>
 public readonly record struct WrappedLineInfo(
     BlockId BlockId,

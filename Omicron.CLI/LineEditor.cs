@@ -3,13 +3,11 @@ using System.Text;
 namespace Omicron.CLI;
 
 /// <summary>
-/// Raw-keyboard line reader.
-///
-/// - Enter          → submit
-/// - Shift+Enter    → insert literal newline
-/// - Backslash+Enter → insert literal newline (fallback)
-///
-/// Delegates core logic to <see cref="LineEditorEngine"/> for testability.
+///     Raw-keyboard line reader.
+///     - Enter          → submit
+///     - Shift+Enter    → insert literal newline
+///     - Backslash+Enter → insert literal newline (fallback)
+///     Delegates core logic to <see cref="LineEditorEngine" /> for testability.
 /// </summary>
 public class LineEditor
 {
@@ -35,13 +33,13 @@ public class LineEditor
 
         while (true)
         {
-            var rawKey = Console.ReadKey(intercept: true);
+            ConsoleKeyInfo rawKey = Console.ReadKey(true);
 
-            var previousBuffer = state.Buffer.ToString();
-            var previousCursor = state.Cursor;
+            string previousBuffer = state.Buffer.ToString();
+            int previousCursor = state.Cursor;
 
-            var key = MapKey(rawKey);
-            var action = _engine.ProcessKey(key, state);
+            EditorKeyInfo key = MapKey(rawKey);
+            LineEditorAction action = _engine.ProcessKey(key, state);
 
             // Sync local state from engine state
             _buf.Clear();
@@ -63,7 +61,12 @@ public class LineEditor
         }
     }
 
-    private void Render(string prompt, EditorKeyInfo key, string previousBuffer, int previousCursor, LineEditorState state)
+    private void Render(
+        string prompt,
+        EditorKeyInfo key,
+        string previousBuffer,
+        int previousCursor,
+        LineEditorState state)
     {
         if (key.Key == ConsoleKey.Escape)
         {
@@ -73,21 +76,29 @@ public class LineEditor
 
         if (key.Key == ConsoleKey.Enter)
         {
-            if ((key.Modifiers & ConsoleModifiers.Shift) != 0 || (_col > 0 && _buf[_col - 1] == '\\'))
+            if (
+                (key.Modifiers & ConsoleModifiers.Shift) != 0
+                || (_col > 0 && _buf[_col - 1] == '\\')
+            )
             {
-                if (!((key.Modifiers & ConsoleModifiers.Shift) != 0) && _col > 0 && _buf[_col - 1] == '\\')
+                if (
+                    !((key.Modifiers & ConsoleModifiers.Shift) != 0)
+                    && _col > 0
+                    && _buf[_col - 1] == '\\'
+                )
                 {
                     Console.Write("\b \b");
                 }
+
                 Console.WriteLine();
-                return;
             }
+
             return;
         }
 
         if (key.Key == ConsoleKey.Backspace && previousCursor > 0)
         {
-            var deleted = previousBuffer[previousCursor - 1];
+            char deleted = previousBuffer[previousCursor - 1];
             if (deleted == '\n')
             {
                 Console.Write("\x1b[K\x1b[1A\x1b[K");
@@ -98,6 +109,7 @@ public class LineEditor
                 Console.Write("\b \b");
                 RedrawTail();
             }
+
             return;
         }
 
@@ -109,13 +121,22 @@ public class LineEditor
 
         if (key.Key == ConsoleKey.RightArrow && previousCursor < previousBuffer.Length)
         {
-            if (previousBuffer[previousCursor] == '\n') Console.WriteLine();
-            else Console.Write(previousBuffer[previousCursor]);
+            if (previousBuffer[previousCursor] == '\n')
+            {
+                Console.WriteLine();
+            }
+            else
+            {
+                Console.Write(previousBuffer[previousCursor]);
+            }
+
             return;
         }
 
         if (key.Key == ConsoleKey.Home || key.Key == ConsoleKey.End)
+        {
             return;
+        }
 
         if (key.Key == ConsoleKey.Delete && previousCursor < previousBuffer.Length)
         {
@@ -133,11 +154,15 @@ public class LineEditor
             if (state.PendingCompletions is { Count: > 0 })
             {
                 Console.WriteLine();
-                foreach (var c in state.PendingCompletions)
+                foreach (string c in state.PendingCompletions)
+                {
                     Console.WriteLine($"  {c}");
+                }
+
                 Console.Write(prompt + _buf);
                 state.PendingCompletions = null;
             }
+
             return;
         }
 
@@ -145,42 +170,56 @@ public class LineEditor
         {
             Console.Write(key.KeyChar);
             RedrawTail();
-            return;
         }
     }
 
     private static EditorKeyInfo MapKey(ConsoleKeyInfo raw)
-        => new(raw.Key, raw.KeyChar, raw.Modifiers);
+    {
+        return new EditorKeyInfo(raw.Key, raw.KeyChar, raw.Modifiers);
+    }
 
     private static string LongestCommonPrefix(IReadOnlyList<string> values)
     {
-        if (values.Count == 0) return string.Empty;
-        var prefix = values[0];
-        for (var i = 1; i < values.Count; i++)
+        if (values.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        string prefix = values[0];
+        for (int i = 1; i < values.Count; i++)
         {
             while (!values[i].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
-                if (prefix.Length == 0) return string.Empty;
+                if (prefix.Length == 0)
+                {
+                    return string.Empty;
+                }
+
                 prefix = prefix[..^1];
             }
         }
+
         return prefix;
     }
 
     private void RedrawTail(bool clearExtraCharacter = false)
     {
-        var tailLength = Math.Max(0, _buf.Length - _col);
+        int tailLength = Math.Max(0, _buf.Length - _col);
         if (tailLength > 0)
         {
-            var tail = _buf.ToString(_col, tailLength);
+            string tail = _buf.ToString(_col, tailLength);
             Console.Write(tail.Replace("\n", " "));
         }
 
         if (clearExtraCharacter)
+        {
             Console.Write(' ');
+        }
 
-        var backtrack = tailLength + (clearExtraCharacter ? 1 : 0);
+        int backtrack = tailLength + (clearExtraCharacter ? 1 : 0);
         if (backtrack > 0)
+        {
             Console.Write(new string('\b', backtrack));
+        }
     }
 }

@@ -1,11 +1,10 @@
-using Omicron.Core.Config;
+using System.Text.Json;
 using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
 using Omicron.Core.Providers;
 using Omicron.Core.Sessions;
 using Omicron.Core.Workspace;
-using System.Text.Json;
 using Xunit;
 
 namespace Omicron.Core.Tests;
@@ -28,14 +27,19 @@ public class PersistenceIntegrationTests
             {
                 Responses =
                 {
-                    () => Task.FromResult(new LlmResult { Text = "Hello", StopReason = StopReason.Stop })
+                    () =>
+                        Task.FromResult(new LlmResult
+                        {
+                            Text = "Hello",
+                            StopReason = StopReason.Stop
+                        })
                 }
             }
         };
 
-        var session = host.CreateSession(SessionConfig.Create(model, "You are a test."));
+        AgentSession session = host.CreateSession(SessionConfig.Create(model, "You are a test."));
 
-        var record = await store.GetSessionAsync(session.Id);
+        SessionRecord? record = await store.GetSessionAsync(session.Id);
         Assert.NotNull(record);
         Assert.Equal(session.Id, record.SessionId);
         Assert.Equal("test-model", record.ModelId);
@@ -61,34 +65,42 @@ public class PersistenceIntegrationTests
             {
                 Responses =
                 {
-                    () => Task.FromResult(new LlmResult
-                    {
-                        Text = "Response text",
-                        StopReason = StopReason.Stop,
-                        Usage = new UsageInfo(10, 20),
-                        ResponseId = "test_resp_1"
-                    })
+                    () =>
+                        Task.FromResult(new LlmResult
+                        {
+                            Text = "Response text",
+                            StopReason = StopReason.Stop,
+                            Usage = new UsageInfo(10, 20),
+                            ResponseId = "test_resp_1"
+                        })
                 }
             }
         };
 
-        var session = host.CreateSession(model);
+        AgentSession session = host.CreateSession(model);
 
-        await foreach (var _ in session.PromptAsync("Hello")) { }
+        await foreach (OmicronEvent _ in session.PromptAsync("Hello")) { }
 
         // Read persisted events from the store
         var persisted = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        {
             persisted.Add(e);
+        }
 
         // Should have at least: SessionStarted, UserMessage, TurnStarted, AssistantTextDelta, AssistantResponseComplete
         Assert.Contains(persisted, e => e is SessionStartedEvent);
         Assert.Contains(persisted, e => e is UserMessageEvent u && u.Text.ToString() == "Hello");
-        Assert.Contains(persisted, e => e is AssistantResponseCompleteEvent arc && arc.FullText.ToString() == "Response text");
+        Assert.Contains(persisted,
+            e =>
+                e is AssistantResponseCompleteEvent arc
+                && arc.FullText.ToString() == "Response text");
 
         // Verify sequence order is preserved
         for (int i = 1; i < persisted.Count; i++)
+        {
             Assert.True(persisted[i - 1].Sequence < persisted[i].Sequence);
+        }
     }
 
     [Fact]
@@ -108,30 +120,36 @@ public class PersistenceIntegrationTests
             {
                 Responses =
                 {
-                    () => Task.FromResult(new LlmResult
-                    {
-                        Text = "Hello",
-                        StopReason = StopReason.Stop,
-                        ResponseId = "resp_abc123"
-                    })
+                    () =>
+                        Task.FromResult(new LlmResult
+                        {
+                            Text = "Hello",
+                            StopReason = StopReason.Stop,
+                            ResponseId = "resp_abc123"
+                        })
                 }
             }
         };
 
-        var session = host.CreateSession(model);
+        AgentSession session = host.CreateSession(model);
 
         // ProviderStateManager is wired to Events which is the persistent sink
-        var key = ProviderStateKey.Create(session.Id, session.AgentId, "fake", "test-model", ApiType.OpenAiResponses);
+        var key = ProviderStateKey.Create(session.Id,
+            session.AgentId,
+            "fake",
+            "test-model",
+            ApiType.OpenAiResponses);
 
         // Manually set provider state (simulating what AgentSession does)
-        host.ProviderStateManager.Set(
-            new ProviderTurnState(key, "resp_abc123", null, null, null),
-            reason: "response_completed");
+        host.ProviderStateManager.Set(new ProviderTurnState(key, "resp_abc123", null, null, null),
+            "response_completed");
 
         // Read persisted events
         var persisted = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        {
             persisted.Add(e);
+        }
 
         Assert.Contains(persisted, e => e is ProviderStateUpdatedEvent);
     }
@@ -151,16 +169,24 @@ public class PersistenceIntegrationTests
             Provider = new FakeProvider()
         };
 
-        var session = host.CreateSession(model);
-        var key = ProviderStateKey.Create(session.Id, session.AgentId, "fake", "test-model", ApiType.OpenAiChat);
+        AgentSession session = host.CreateSession(model);
+        var key = ProviderStateKey.Create(session.Id,
+            session.AgentId,
+            "fake",
+            "test-model",
+            ApiType.OpenAiChat);
 
         // Emit an execution event via the host's event sink (which is PersistentEventSink)
         host.Events.Emit(new ExecutionStartedEvent(
-                new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, session.Id), "echo test", "/tmp", null));
+            new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, session.Id),
+            "echo test",
+            "/tmp"));
 
         var persisted = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        {
             persisted.Add(e);
+        }
 
         Assert.Contains(persisted, e => e is ExecutionStartedEvent);
     }
@@ -181,36 +207,43 @@ public class PersistenceIntegrationTests
             {
                 Responses =
                 {
-                    () => Task.FromResult(new LlmResult
-                    {
-                        Text = "Hello!",
-                        StopReason = StopReason.Stop,
-                        Usage = new UsageInfo(5, 15)
-                    })
+                    () =>
+                        Task.FromResult(new LlmResult
+                        {
+                            Text = "Hello!",
+                            StopReason = StopReason.Stop,
+                            Usage = new UsageInfo(5, 15)
+                        })
                 }
             }
         };
 
-        var session = host.CreateSession(model);
+        AgentSession session = host.CreateSession(model);
 
         var yieldedEvents = new List<OmicronEvent>();
-        await foreach (var evt in session.PromptAsync("Hi"))
+        await foreach (OmicronEvent evt in session.PromptAsync("Hi"))
+        {
             yieldedEvents.Add(evt);
+        }
 
         // Read persisted
         var persisted = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        {
             persisted.Add(e);
+        }
 
         // Every yielded event should also be in the store (persisted)
-        foreach (var yielded in yieldedEvents)
+        foreach (OmicronEvent yielded in yieldedEvents)
         {
             Assert.Contains(persisted, p => p.Id == yielded.Id);
         }
 
         // Persisted events should be exactly in sequence order
         for (int i = 1; i < persisted.Count; i++)
+        {
             Assert.True(persisted[i - 1].Sequence < persisted[i].Sequence);
+        }
 
         // Verify we have the full conversation lifecycle
         var types = persisted.Select(e => e.GetType().Name).Distinct().ToList();
@@ -238,7 +271,10 @@ public class PersistenceIntegrationTests
             capturedLabel = label;
         };
 
-        var evt = new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, SessionId.New()), AgentId.New(), "test", "test");
+        var evt = new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, SessionId.New()),
+            AgentId.New(),
+            "test",
+            "test");
 
         // No session record created yet — AppendEventsAsync should throw
         sink.Emit(evt);
@@ -266,58 +302,58 @@ public class PersistenceIntegrationTests
             {
                 Responses =
                 {
-                    () => Task.FromResult(new LlmResult { Text = "Hi", StopReason = StopReason.Stop })
+                    () =>
+                        Task.FromResult(new LlmResult
+                        {
+                            Text = "Hi",
+                            StopReason = StopReason.Stop
+                        })
                 }
             }
         };
 
-        var session = host.CreateSession(model);
-        await foreach (var _ in session.PromptAsync("Hello")) { }
+        AgentSession session = host.CreateSession(model);
+        await foreach (OmicronEvent _ in session.PromptAsync("Hello")) { }
 
         Assert.True(persistentSink.PersistedCount > 0);
         Assert.Equal(0, persistentSink.FailureCount);
     }
 
     /// <summary>
-    /// Regression test for F1: ensures ToolInvocationCompletedEvent with structured
-    /// IContentBlock blocks survives JSONL round-trip without serialization errors.
+    ///     Regression test for F1: ensures ToolInvocationCompletedEvent with structured
+    ///     IContentBlock blocks survives JSONL round-trip without serialization errors.
     /// </summary>
     [Fact]
     public async Task ToolInvocationCompletedEvent_WithContentBlocks_RoundTrip()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"omicron-persist-tic-{Guid.NewGuid():N}");
+        string tempDir = Path.Combine(Path.GetTempPath(), $"omicron-persist-tic-{Guid.NewGuid():N}");
 
         {
             using var store = new JsonlSessionStore(tempDir);
-            var record = await store.CreateSessionAsync(
+            SessionRecord record = await store.CreateSessionAsync(
                 new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
 
             var toolCallId = new ToolCallId("call_abc123");
 
             var blocks = new List<IContentBlock>
             {
-                new FilePreviewContentBlock(
-                    Path: "src/Foo.cs",
-                    Preview: "public class Foo { }",
-                    Size: 100,
-                    LineCount: 1,
-                    IsBinary: false),
-                new CodeContentBlock(
-                    code: "int x = 1;",
-                    Language: "csharp",
-                    Path: "src/Bar.cs"),
-                new ErrorContentBlock(
-                    Message: "something went wrong",
-                    Details: "at line 42"),
+                new FilePreviewContentBlock("src/Foo.cs",
+                    "public class Foo { }",
+                    100,
+                    1,
+                    false),
+                new CodeContentBlock("int x = 1;", "csharp", "src/Bar.cs"),
+                new ErrorContentBlock("something went wrong", "at line 42"),
                 new PlainTextContentBlock("plain message"),
                 new MarkdownContentBlock("# Title\n\n**bold**"),
-                new DiffContentBlock(
-                    unifiedDiff: "@@ -1,1 +1,1 @@\n-old\n+new",
-                    Path: "src/file.cs"),
-                new ToolCallContentBlock(
-                    toolCallId: "call_nested",
-                    toolName: "read_path",
-                    arguments: new Dictionary<string, object?> { ["path"] = "test.txt" })
+                new DiffContentBlock("@@ -1,1 +1,1 @@\n-old\n+new",
+                    "src/file.cs"),
+                new ToolCallContentBlock("call_nested",
+                    "read_path",
+                    new Dictionary<string, object?>
+                    {
+                        ["path"] = "test.txt"
+                    })
             };
 
             var evt = new ToolInvocationCompletedEvent(
@@ -325,11 +361,14 @@ public class PersistenceIntegrationTests
                 toolCallId,
                 "read_path",
                 "Result text"u8,
-                IsError: false,
-                Blocks: blocks);
+                false,
+                blocks);
 
             // Persist
-            await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent> { evt });
+            await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent>
+            {
+                evt
+            });
 
             // Dispose store before reading back (forces flush, closes files)
         }
@@ -337,22 +376,24 @@ public class PersistenceIntegrationTests
         // Read back from a fresh store instance (explicit scope for disposal before cleanup)
         {
             using var reopened = new JsonlSessionStore(tempDir);
-            var sessions = await reopened.ListSessionsAsync(new SessionListQuery());
-            var sessionId = Assert.Single(sessions).SessionId;
+            IReadOnlyList<SessionRecord> sessions = await reopened.ListSessionsAsync(new SessionListQuery());
+            SessionId sessionId = Assert.Single(sessions).SessionId;
 
             var events = new List<OmicronEvent>();
-            await foreach (var e in reopened.ReadEventsAsync(sessionId, EventSequenceRange.All))
+            await foreach (OmicronEvent e in reopened.ReadEventsAsync(sessionId, EventSequenceRange.All))
+            {
                 events.Add(e);
+            }
 
-            var deserialized = Assert.Single(events);
-            var tic = Assert.IsType<ToolInvocationCompletedEvent>(deserialized);
+            OmicronEvent deserialized = Assert.Single(events);
+            ToolInvocationCompletedEvent tic = Assert.IsType<ToolInvocationCompletedEvent>(deserialized);
             Assert.Equal("call_abc123", tic.ToolCallId.Value);
             Assert.Equal("read_path", tic.ToolName);
             Assert.NotNull(tic.Blocks);
             Assert.Equal(7, tic.Blocks.Count);
 
             // Verify first block: FilePreviewContentBlock
-            var fp = Assert.IsType<FilePreviewContentBlock>(tic.Blocks[0]);
+            FilePreviewContentBlock fp = Assert.IsType<FilePreviewContentBlock>(tic.Blocks[0]);
             Assert.Equal("src/Foo.cs", fp.Path);
             Assert.Equal("public class Foo { }", fp.Text);
             Assert.Equal(100, fp.Size);
@@ -360,54 +401,62 @@ public class PersistenceIntegrationTests
             Assert.False(fp.IsBinary);
 
             // Verify second block: CodeContentBlock
-            var code = Assert.IsType<CodeContentBlock>(tic.Blocks[1]);
+            CodeContentBlock code = Assert.IsType<CodeContentBlock>(tic.Blocks[1]);
             Assert.Equal("int x = 1;", code.Text);
             Assert.Equal("csharp", code.Language);
             Assert.Equal("src/Bar.cs", code.Path);
 
             // Verify third block: ErrorContentBlock
-            var err = Assert.IsType<ErrorContentBlock>(tic.Blocks[2]);
+            ErrorContentBlock err = Assert.IsType<ErrorContentBlock>(tic.Blocks[2]);
             Assert.Equal("something went wrong", err.Text);
             Assert.Equal("at line 42", err.Details);
 
             // Verify fourth block: PlainTextContentBlock
-            var pt = Assert.IsType<PlainTextContentBlock>(tic.Blocks[3]);
+            PlainTextContentBlock pt = Assert.IsType<PlainTextContentBlock>(tic.Blocks[3]);
             Assert.Equal("plain message", pt.Text);
 
             // Verify fifth block: MarkdownContentBlock
-            var md = Assert.IsType<MarkdownContentBlock>(tic.Blocks[4]);
+            MarkdownContentBlock md = Assert.IsType<MarkdownContentBlock>(tic.Blocks[4]);
             Assert.Contains("Title", md.Text);
 
             // Verify sixth block: DiffContentBlock
-            var diff = Assert.IsType<DiffContentBlock>(tic.Blocks[5]);
+            DiffContentBlock diff = Assert.IsType<DiffContentBlock>(tic.Blocks[5]);
             Assert.Contains("-old", diff.Text);
             Assert.Equal("src/file.cs", diff.Path);
 
             // Verify seventh block: ToolCallContentBlock
-            var tc = Assert.IsType<ToolCallContentBlock>(tic.Blocks[6]);
+            ToolCallContentBlock tc = Assert.IsType<ToolCallContentBlock>(tic.Blocks[6]);
             Assert.Equal("call_nested", tc.ToolCallId);
             Assert.Equal("read_path", tc.ToolName);
             Assert.NotNull(tc.Arguments);
             Assert.True(tc.Arguments.ContainsKey("path"));
             // JsonElement round-trips as JsonElement, not native string
-            var pathValue = tc.Arguments["path"];
+            object? pathValue = tc.Arguments["path"];
             Assert.NotNull(pathValue);
             // Accept either string or JsonElement (System.Text.Json deserialization)
             if (pathValue is JsonElement je)
+            {
                 Assert.Equal("test.txt", je.GetString());
+            }
             else
+            {
                 Assert.Equal("test.txt", pathValue as string);
+            }
         }
 
         // Cleanup after store is disposed
-        try { Directory.Delete(tempDir, recursive: true); } catch { }
+        try
+        {
+            Directory.Delete(tempDir, true);
+        }
+        catch { }
     }
 
     [Fact]
     public async Task OmicronHost_TransactionManager_CreatesWorkingTransaction()
     {
         var host = new OmicronHost(Environment.CurrentDirectory);
-        var tx = host.WorkspaceTransactions.BeginTransaction();
+        IWorkspaceTransaction tx = host.WorkspaceTransactions.BeginTransaction();
 
         Assert.NotNull(tx);
         Assert.IsAssignableFrom<IWorkspaceTransaction>(tx);
@@ -417,11 +466,11 @@ public class PersistenceIntegrationTests
         await tx.Files.WriteFileAsync(path, "tx content"u8.ToArray());
 
         // Verify visible in overlay
-        var content = await tx.Files.ReadFileAsync(path);
+        ReadOnlyMemory<byte> content = await tx.Files.ReadFileAsync(path);
         Assert.Equal("tx content"u8.ToArray(), content.ToArray());
 
         // Verify not in host yet
-        var hostStat = await host.FileSystem.StatAsync(path);
+        FileStat? hostStat = await host.FileSystem.StatAsync(path);
         Assert.Null(hostStat);
 
         // Commit
@@ -435,4 +484,3 @@ public class PersistenceIntegrationTests
         await host.FileSystem.DeleteAsync(path);
     }
 }
-

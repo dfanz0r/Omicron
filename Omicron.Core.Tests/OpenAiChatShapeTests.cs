@@ -11,14 +11,19 @@ public sealed class OpenAiChatShapeTests
         var shape = new OpenAiChatShape();
         var accumulators = new Dictionary<int, ToolCallAccumulator>
         {
-            [0] = new() { Id = "call_1", Name = "read_path" }
+            [0] = new()
+            {
+                Id = "call_1",
+                Name = "read_path"
+            }
         };
         accumulators[0].Args.Append("{\"path\":\"test_lines.txt\"}");
 
-        var finishChunk = "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"u8.ToArray();
+        byte[] finishChunk =
+            "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"u8.ToArray();
 
-        var first = shape.ParseSseChunk(finishChunk, accumulators);
-        var second = shape.ParseSseChunk(finishChunk, accumulators);
+        StreamEvent? first = shape.ParseSseChunk(finishChunk, accumulators);
+        StreamEvent? second = shape.ParseSseChunk(finishChunk, accumulators);
 
         Assert.NotNull(first);
         Assert.Equal(StreamEventType.ToolCallEnd, first.Type);
@@ -33,16 +38,25 @@ public sealed class OpenAiChatShapeTests
         var shape = new OpenAiChatShape();
         var accumulators = new Dictionary<int, ToolCallAccumulator>
         {
-            [0] = new() { Id = "call_1", Name = "read_path" },
-            [1] = new() { Id = "call_2", Name = "write_file" }
+            [0] = new()
+            {
+                Id = "call_1",
+                Name = "read_path"
+            },
+            [1] = new()
+            {
+                Id = "call_2",
+                Name = "write_file"
+            }
         };
         accumulators[0].Args.Append("{\"path\":\"a.txt\"}");
         accumulators[1].Args.Append("{\"content\":\"hello\"}");
 
-        var finishChunk = "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"u8.ToArray();
+        byte[] finishChunk =
+            "{\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"u8.ToArray();
 
         // First call emits only call_1
-        var first = shape.ParseSseChunk(finishChunk, accumulators);
+        StreamEvent? first = shape.ParseSseChunk(finishChunk, accumulators);
         Assert.NotNull(first);
         Assert.Equal(StreamEventType.ToolCallEnd, first.Type);
         Assert.Equal("call_1", first.ToolCall?.Id);
@@ -54,7 +68,7 @@ public sealed class OpenAiChatShapeTests
         Assert.Equal("call_2", accumulators[1].Id);
 
         // Second call emits call_2 (simulating the drain loop)
-        var second = shape.ParseSseChunk(finishChunk, accumulators);
+        StreamEvent? second = shape.ParseSseChunk(finishChunk, accumulators);
         Assert.NotNull(second);
         Assert.Equal(StreamEventType.ToolCallEnd, second.Type);
         Assert.Equal("call_2", second.ToolCall?.Id);
@@ -62,7 +76,7 @@ public sealed class OpenAiChatShapeTests
 
         // Now empty — third call emits Done
         Assert.Empty(accumulators);
-        var third = shape.ParseSseChunk(finishChunk, accumulators);
+        StreamEvent? third = shape.ParseSseChunk(finishChunk, accumulators);
         Assert.NotNull(third);
         Assert.Equal(StreamEventType.Done, third.Type);
     }

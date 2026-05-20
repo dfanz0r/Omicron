@@ -7,7 +7,7 @@ namespace Omicron.Core.Config;
 // ==============================================================
 
 /// <summary>
-/// Root TOML config file structure. Tomlyn deserializes into this.
+///     Root TOML config file structure. Tomlyn deserializes into this.
 /// </summary>
 public class ConfigFile
 {
@@ -27,7 +27,7 @@ public class GeneralSettings
 }
 
 /// <summary>
-/// Simplified runtime config (flat, with helpers).
+///     Simplified runtime config (flat, with helpers).
 /// </summary>
 public class AgentConfig
 {
@@ -42,15 +42,13 @@ public class AgentConfig
 }
 
 /// <summary>
-/// Manages reading/writing the TOML config file.
-/// Stored at: %APPDATA%/Omicron/config.toml (Windows) or ~/.config/omicron/config.toml (Unix)
+///     Manages reading/writing the TOML config file.
+///     Stored at: %APPDATA%/Omicron/config.toml (Windows) or ~/.config/omicron/config.toml (Unix)
 /// </summary>
 public class ConfigManager
 {
     private readonly string _configDir;
     private readonly string _configPath;
-
-    public AgentConfig Config { get; private set; } = new();
 
     public ConfigManager()
     {
@@ -64,10 +62,15 @@ public class ConfigManager
         _configDir = Path.GetDirectoryName(configPath)!;
     }
 
-    public string GetConfigPath() => _configPath;
+    public AgentConfig Config { get; private set; } = new();
+
+    public string GetConfigPath()
+    {
+        return _configPath;
+    }
 
     /// <summary>
-    /// Load config from disk using Tomlyn's typed deserializer.
+    ///     Load config from disk using Tomlyn's typed deserializer.
     /// </summary>
     public void Load()
     {
@@ -79,8 +82,8 @@ public class ConfigManager
 
         try
         {
-            var toml = File.ReadAllText(_configPath);
-            var file = TomlSerializer.Deserialize<ConfigFile>(toml);
+            string toml = File.ReadAllText(_configPath);
+            ConfigFile? file = TomlSerializer.Deserialize<ConfigFile>(toml);
             if (file is null)
             {
                 Config = new AgentConfig();
@@ -89,7 +92,7 @@ public class ConfigManager
 
             Config = new AgentConfig
             {
-                ApiKeys = file.ApiKeys ?? new(StringComparer.OrdinalIgnoreCase),
+                ApiKeys = file.ApiKeys ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
                 LastModel = file.General?.LastModel,
                 DefaultMaxTokens = file.General?.DefaultMaxTokens ?? 16384,
                 DefaultTemperature = file.General?.DefaultTemperature ?? 0.7,
@@ -106,7 +109,7 @@ public class ConfigManager
     }
 
     /// <summary>
-    /// Save config to disk using Tomlyn's typed serializer.
+    ///     Save config to disk using Tomlyn's typed serializer.
     /// </summary>
     public void Save()
     {
@@ -127,27 +130,32 @@ public class ConfigManager
             }
         };
 
-        var toml = TomlSerializer.Serialize(file);
+        string toml = TomlSerializer.Serialize(file);
         File.WriteAllText(_configPath, toml);
     }
 
     /// <summary>
-    /// Get an API key: first check config, then env var.
+    ///     Get an API key: first check config, then env var.
     /// </summary>
     public string? GetApiKey(string providerName, string envVarName)
     {
-        if (Config.ApiKeys.TryGetValue(providerName, out var key) && !string.IsNullOrEmpty(key))
+        if (Config.ApiKeys.TryGetValue(providerName, out string? key) && !string.IsNullOrEmpty(key))
+        {
             return key;
+        }
 
-        var env = Environment.GetEnvironmentVariable(envVarName);
-        if (!string.IsNullOrEmpty(env)) return env;
+        string? env = Environment.GetEnvironmentVariable(envVarName);
+        if (!string.IsNullOrEmpty(env))
+        {
+            return env;
+        }
 
         env = Environment.GetEnvironmentVariable(envVarName, EnvironmentVariableTarget.User);
         return !string.IsNullOrEmpty(env) ? env : null;
     }
 
     /// <summary>
-    /// Set an API key for a provider and persist to disk.
+    ///     Set an API key for a provider and persist to disk.
     /// </summary>
     public void SetApiKey(string providerName, string key)
     {
@@ -157,13 +165,16 @@ public class ConfigManager
 
     private static string GetConfigDirectory()
     {
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         if (!string.IsNullOrEmpty(appData))
+        {
             return Path.Combine(appData, "Omicron");
+        }
 
-        var home = Environment.GetEnvironmentVariable("HOME")
-                   ?? Environment.GetEnvironmentVariable("USERPROFILE")
-                   ?? ".";
+        string home =
+            Environment.GetEnvironmentVariable("HOME")
+            ?? Environment.GetEnvironmentVariable("USERPROFILE")
+            ?? ".";
         return Path.Combine(home, ".config", "omicron");
     }
 }

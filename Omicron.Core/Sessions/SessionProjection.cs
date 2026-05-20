@@ -1,13 +1,12 @@
 using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
-using Omicron.Core.Providers;
 
 namespace Omicron.Core.Sessions;
 
 /// <summary>
-/// Reconstructed session state from a replay of OmicronEvents.
-/// Used for session resume, debug inspection, and UI reconstruction.
+///     Reconstructed session state from a replay of OmicronEvents.
+///     Used for session resume, debug inspection, and UI reconstruction.
 /// </summary>
 public sealed record SessionProjection
 {
@@ -18,23 +17,24 @@ public sealed record SessionProjection
     public IReadOnlyList<Message> Messages { get; init; } = Array.Empty<Message>();
 
     /// <summary>Reconstructed provider turn states.</summary>
-    public IReadOnlyDictionary<ProviderStateKey, ProviderTurnState> ProviderStates { get; init; }
-        = new Dictionary<ProviderStateKey, ProviderTurnState>();
+    public IReadOnlyDictionary<ProviderStateKey, ProviderTurnState> ProviderStates { get; init; } =
+        new Dictionary<ProviderStateKey, ProviderTurnState>();
 
     /// <summary>Whether the session was reset at any point.</summary>
     public bool IsReset { get; init; }
 
     /// <summary>Errors encountered during the session.</summary>
-    public IReadOnlyList<SessionErrorEvent> Errors { get; init; } = Array.Empty<SessionErrorEvent>();
+    public IReadOnlyList<SessionErrorEvent> Errors { get; init; } =
+        Array.Empty<SessionErrorEvent>();
 
     /// <summary>Total token usage (input + output) across all responses.</summary>
     public (int InputTokens, int OutputTokens) TotalUsage { get; init; }
 }
 
 /// <summary>
-/// Projects an ordered sequence of OmicronEvents into a SessionProjection,
-/// reconstructing messages, provider state, and error state.
-/// Events should be in sequence order (e.g., from ISessionStore.ReadEventsAsync).
+///     Projects an ordered sequence of OmicronEvents into a SessionProjection,
+///     reconstructing messages, provider state, and error state.
+///     Events should be in sequence order (e.g., from ISessionStore.ReadEventsAsync).
 /// </summary>
 public interface ISessionProjector
 {
@@ -43,16 +43,15 @@ public interface ISessionProjector
 }
 
 /// <summary>
-/// Default implementation of ISessionProjector.
-///
-/// Handles real AgentSession tool-call patterns correctly:
-/// - Accumulates text/reasoning from AssistantTextDeltaEvent.
-/// - Queues tool calls from ToolInvocationStartedEvent.
-/// - Buffers tool results from ToolInvocationCompletedEvent.
-/// - Flushes the queued assistant message (with all tool calls from the batch)
-///   and all buffered tool results when the tool-call round ends (detected by
-///   a non-tool event or a new tool start after completion).
-/// - Uses contributing event timestamps for message reconstruction.
+///     Default implementation of ISessionProjector.
+///     Handles real AgentSession tool-call patterns correctly:
+///     - Accumulates text/reasoning from AssistantTextDeltaEvent.
+///     - Queues tool calls from ToolInvocationStartedEvent.
+///     - Buffers tool results from ToolInvocationCompletedEvent.
+///     - Flushes the queued assistant message (with all tool calls from the batch)
+///     and all buffered tool results when the tool-call round ends (detected by
+///     a non-tool event or a new tool start after completion).
+///     - Uses contributing event timestamps for message reconstruction.
 /// </summary>
 public sealed class SessionProjector : ISessionProjector
 {
@@ -62,9 +61,9 @@ public sealed class SessionProjector : ISessionProjector
         var messages = new List<Message>();
         var providerStates = new Dictionary<ProviderStateKey, ProviderTurnState>();
         var errors = new List<SessionErrorEvent>();
-        var isReset = false;
-        var inputTokens = 0;
-        var outputTokens = 0;
+        bool isReset = false;
+        int inputTokens = 0;
+        int outputTokens = 0;
         DateTimeOffset? lastTimestamp = null;
 
         // Accumulator state for assistant text deltas
@@ -85,9 +84,14 @@ public sealed class SessionProjector : ISessionProjector
                 messages.Add(new Message
                 {
                     Role = MessageRole.Assistant,
-                    TextData = accumText.Length > 0 ? Utf8String.FromBuffer(accumText.ToOwnedBuffer()) : null,
+                    TextData =
+                        accumText.Length > 0
+                            ? Utf8String.FromBuffer(accumText.ToOwnedBuffer())
+                            : null,
                     ReasoningData = hadAnyReasoning
-                        ? (accumReasoning.Length > 0 ? Utf8String.FromBuffer(accumReasoning.ToOwnedBuffer()) : Utf8String.Empty)
+                        ? accumReasoning.Length > 0
+                            ? Utf8String.FromBuffer(accumReasoning.ToOwnedBuffer())
+                            : Utf8String.Empty
                         : null,
                     Timestamp = lastTimestamp?.DateTime ?? DateTime.UtcNow
                 });
@@ -96,15 +100,23 @@ public sealed class SessionProjector : ISessionProjector
 
         void FlushToolCallRun()
         {
-            if (pendingToolCalls.Count == 0) return;
+            if (pendingToolCalls.Count == 0)
+            {
+                return;
+            }
 
             // Emit the assistant message with all tool calls from this round
             messages.Add(new Message
             {
                 Role = MessageRole.Assistant,
-                TextData = accumText.Length > 0 ? Utf8String.FromBuffer(accumText.ToOwnedBuffer()) : null,
+                TextData =
+                    accumText.Length > 0
+                        ? Utf8String.FromBuffer(accumText.ToOwnedBuffer())
+                        : null,
                 ReasoningData = hadAnyReasoning
-                    ? (accumReasoning.Length > 0 ? Utf8String.FromBuffer(accumReasoning.ToOwnedBuffer()) : Utf8String.Empty)
+                    ? accumReasoning.Length > 0
+                        ? Utf8String.FromBuffer(accumReasoning.ToOwnedBuffer())
+                        : Utf8String.Empty
                     : null,
                 ToolCalls = [.. pendingToolCalls],
                 ToolCall = pendingToolCalls.Count == 1 ? pendingToolCalls[0] : null,
@@ -113,8 +125,11 @@ public sealed class SessionProjector : ISessionProjector
             pendingToolCalls.Clear();
 
             // Emit all buffered tool results
-            foreach (var tr in bufferedToolResults)
+            foreach (Message tr in bufferedToolResults)
+            {
                 messages.Add(tr);
+            }
+
             bufferedToolResults.Clear();
 
             toolStartCount = 0;
@@ -174,13 +189,17 @@ public sealed class SessionProjector : ISessionProjector
                 case AssistantTextDeltaEvent atd:
                     // A delta after a tool-call round means the next iteration started
                     if (toolStartCount > 0 && toolStartCount == toolEndCount)
+                    {
                         FlushToolCallRun();
+                    }
+
                     accumText.AppendUtf8(atd.Delta.Utf8Span);
                     if (atd.ReasoningDelta is not null)
                     {
                         hadAnyReasoning = true;
                         accumReasoning.AppendUtf8(atd.ReasoningDelta.Utf8Span);
                     }
+
                     break;
 
                 case AssistantResponseCompleteEvent arc:
@@ -202,6 +221,7 @@ public sealed class SessionProjector : ISessionProjector
                         hadAnyReasoning = true;
                         accumReasoning.AppendUtf8(arc.ReasoningText.Utf8Span);
                     }
+
                     break;
 
                 case ToolInvocationStartedEvent tis:
@@ -210,8 +230,7 @@ public sealed class SessionProjector : ISessionProjector
                     // would break multi-tool batches. Instead, flush happens on the
                     // next non-tool event (AssistantTextDelta, ARC, UserMessage).
                     toolStartCount++;
-                    pendingToolCalls.Add(new ToolCallContent(
-                        tis.ToolCallId.Value,
+                    pendingToolCalls.Add(new ToolCallContent(tis.ToolCallId.Value,
                         tis.ToolName,
                         tis.Arguments is { Count: > 0 }
                             ? new Dictionary<string, object?>(tis.Arguments)
@@ -239,8 +258,7 @@ public sealed class SessionProjector : ISessionProjector
 
                 case ProviderStateUpdatedEvent psu:
                     {
-                        var state = new ProviderTurnState(
-                            psu.State.Key,
+                        var state = new ProviderTurnState(psu.State.Key,
                             psu.State.PreviousResponseId,
                             psu.State.ConversationId,
                             psu.State.SessionAffinityKey,
@@ -258,7 +276,7 @@ public sealed class SessionProjector : ISessionProjector
             }
         }
 
-        foreach (var evt in events)
+        foreach (OmicronEvent evt in events)
         {
             // Intentionally ignored event types (metadata, not conversational):
             //   ModalityUsedEvent, TransactionStartedEvent, TransactionStagedEvent,
@@ -283,5 +301,3 @@ public sealed class SessionProjector : ISessionProjector
         };
     }
 }
-
-

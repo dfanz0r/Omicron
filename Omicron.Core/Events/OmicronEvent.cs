@@ -1,16 +1,13 @@
-using System.Text.Json;
-using Omicron.Core.Providers;
+using Omicron.Core.Content;
 using Omicron.Core.Sessions;
 using Omicron.Core.Workspace;
-
-using Omicron.Core.Content;
 
 namespace Omicron.Core.Events;
 
 /// <summary>
-/// Base record for all system events.
-/// Each concrete event carries an EventEnvelope with shared metadata
-/// (Id, Sequence, Timestamp, SessionId) and a type-specific payload.
+///     Base record for all system events.
+///     Each concrete event carries an EventEnvelope with shared metadata
+///     (Id, Sequence, Timestamp, SessionId) and a type-specific payload.
 /// </summary>
 public abstract record OmicronEvent(EventEnvelope Envelope)
 {
@@ -30,29 +27,23 @@ public sealed record SessionStartedEvent(
     string ModelId,
     string ProviderName) : OmicronEvent(Envelope);
 
-public sealed record SessionEndedEvent(
-    EventEnvelope Envelope,
-    string? Reason) : OmicronEvent(Envelope);
+public sealed record SessionEndedEvent(EventEnvelope Envelope, string? Reason)
+    : OmicronEvent(Envelope);
 
-public sealed record SessionResetEvent(
-    EventEnvelope Envelope) : OmicronEvent(Envelope);
+public sealed record SessionResetEvent(EventEnvelope Envelope) : OmicronEvent(Envelope);
 
-public sealed record TurnStartedEvent(
-    EventEnvelope Envelope,
-    string UserText) : OmicronEvent(Envelope);
+public sealed record TurnStartedEvent(EventEnvelope Envelope, string UserText)
+    : OmicronEvent(Envelope);
 
-public sealed record SessionErrorEvent(
-    EventEnvelope Envelope,
-    string Message,
-    string? Code) : OmicronEvent(Envelope);
+public sealed record SessionErrorEvent(EventEnvelope Envelope, string Message, string? Code)
+    : OmicronEvent(Envelope);
 
 // ============================================================
 // User message events
 // ============================================================
 
-public sealed record UserMessageEvent(
-    EventEnvelope Envelope,
-    Utf8String Text) : OmicronEvent(Envelope);
+public sealed record UserMessageEvent(EventEnvelope Envelope, Utf8String Text)
+    : OmicronEvent(Envelope);
 
 // ============================================================
 // Assistant stream events
@@ -91,10 +82,8 @@ public sealed record ToolInvocationCompletedEvent(
 // Permission events
 // ============================================================
 
-public sealed record PermissionRequestedEvent(
-    EventEnvelope Envelope,
-    string Action,
-    bool Allowed) : OmicronEvent(Envelope);
+public sealed record PermissionRequestedEvent(EventEnvelope Envelope, string Action, bool Allowed)
+    : OmicronEvent(Envelope);
 
 // ============================================================
 // Execution events

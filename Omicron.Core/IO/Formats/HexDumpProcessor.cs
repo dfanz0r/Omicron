@@ -1,24 +1,28 @@
-using System.Globalization;
 using System.Text;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
 
 /// <summary>
-/// Produces a standard hex dump of binary data: offset, 16 hex bytes per row,
-/// ASCII representation. Handles offset/limit with 0x hex string support,
-/// partial rows, and continuation hints.
+///     Produces a standard hex dump of binary data: offset, 16 hex bytes per row,
+///     ASCII representation. Handles offset/limit with 0x hex string support,
+///     partial rows, and continuation hints.
 /// </summary>
 public sealed class HexDumpProcessor : IContentProcessor
 {
-    public string Id => "hex_dump";
-    public IReadOnlySet<DetectedFileType> SupportedTypes { get; }
-        = new HashSet<DetectedFileType> { DetectedFileType.UnknownBinary };
-    public OutputModality OutputModality => OutputModality.HexDump;
-
     /// <summary>Maximum rows shown per call.</summary>
     private const int MaxRows = 32;
+
     private const int BytesPerRow = 16;
+    public string Id => "hex_dump";
+
+    public IReadOnlySet<DetectedFileType> SupportedTypes { get; } =
+        new HashSet<DetectedFileType>
+        {
+            DetectedFileType.UnknownBinary
+        };
+
+    public OutputModality OutputModality => OutputModality.HexDump;
 
     public ValueTask<ContentProcessorResult> ProcessAsync(
         ContentProcessorContext context,
@@ -26,8 +30,8 @@ public sealed class HexDumpProcessor : IContentProcessor
     {
         ct.ThrowIfCancellationRequested();
 
-        var bytes = context.Bytes;
-        var fileSize = bytes.Length;
+        ReadOnlyMemory<byte> bytes = context.Bytes;
+        int fileSize = bytes.Length;
 
         // Parse offset
         long offset;
@@ -36,8 +40,8 @@ public sealed class HexDumpProcessor : IContentProcessor
             offset = context.Offset.Value;
             if (offset < 0)
             {
-                return ValueTask.FromResult(new ContentProcessorResult(
-                    "Error: offset must be non-negative.", OutputModality.HexDump));
+                return ValueTask.FromResult(new ContentProcessorResult("Error: offset must be non-negative.",
+                    OutputModality.HexDump));
             }
         }
         else
@@ -52,23 +56,26 @@ public sealed class HexDumpProcessor : IContentProcessor
             limit = context.Limit.Value;
             if (limit < 0)
             {
-                return ValueTask.FromResult(new ContentProcessorResult(
-                    "Error: limit must be non-negative.", OutputModality.HexDump));
+                return ValueTask.FromResult(new ContentProcessorResult("Error: limit must be non-negative.",
+                    OutputModality.HexDump));
             }
+
             if (limit == 0)
             {
                 // Empty dump (header only)
-                var emptyBuilder = Utf8Text.CreateBuilder();
+                Utf8Builder emptyBuilder = Utf8Text.CreateBuilder();
                 try
                 {
                     AppendHeaderUtf8(ref emptyBuilder, fileSize, 0, 0);
                     emptyBuilder.AppendLine();
-                    return ValueTask.FromResult(new ContentProcessorResult(
-                        emptyBuilder.ToString().TrimEnd(),
+                    return ValueTask.FromResult(new ContentProcessorResult(emptyBuilder.ToString().TrimEnd(),
                         OutputModality.HexDump,
-                        Utf8Data: emptyBuilder.AsSpan().ToArray()));
+                        emptyBuilder.AsSpan().ToArray()));
                 }
-                finally { emptyBuilder.Dispose(); }
+                finally
+                {
+                    emptyBuilder.Dispose();
+                }
             }
         }
         else
@@ -82,8 +89,8 @@ public sealed class HexDumpProcessor : IContentProcessor
         // Handle empty file
         if (fileSize == 0)
         {
-            return ValueTask.FromResult(new ContentProcessorResult(
-                $"[HEX] {context.RelativePath}  (0 bytes)", OutputModality.HexDump));
+            return ValueTask.FromResult(new ContentProcessorResult($"[HEX] {context.RelativePath}  (0 bytes)",
+                OutputModality.HexDump));
         }
 
         // Round offset down to nearest 16-byte row boundary
@@ -106,7 +113,7 @@ public sealed class HexDumpProcessor : IContentProcessor
         rowCount = Math.Min(rowCount, MaxRows);
         long actualEnd = Math.Min(startOffset + rowCount * BytesPerRow, fileSize);
 
-        var builder = Utf8Text.CreateBuilder();
+        Utf8Builder builder = Utf8Text.CreateBuilder();
         try
         {
             // Header
@@ -120,7 +127,8 @@ public sealed class HexDumpProcessor : IContentProcessor
             for (int r = 0; r < rowCount; r++)
             {
                 long rowStart = startOffset + r * BytesPerRow;
-                var rowSpan = bytes.Span.Slice((int)rowStart, (int)Math.Min(BytesPerRow, actualEnd - rowStart));
+                ReadOnlySpan<byte> rowSpan = bytes.Span.Slice((int)rowStart,
+                    (int)Math.Min(BytesPerRow, actualEnd - rowStart));
 
                 // Offset column
                 Utf8CompositeFormat.AppendFormatUtf8(ref builder, "{0:X8}  "u8, rowStart);
@@ -137,7 +145,10 @@ public sealed class HexDumpProcessor : IContentProcessor
                         builder.Append("   "); // blank for missing bytes
                     }
 
-                    if (b == 7) builder.Append(' '); // extra space between groups
+                    if (b == 7)
+                    {
+                        builder.Append(' '); // extra space between groups
+                    }
                 }
 
                 builder.Append(" |");
@@ -147,7 +158,7 @@ public sealed class HexDumpProcessor : IContentProcessor
                 {
                     if (b < rowSpan.Length)
                     {
-                        var val = rowSpan[b];
+                        byte val = rowSpan[b];
                         builder.Append(val >= 0x20 && val <= 0x7E ? (char)val : '.');
                     }
                     // Missing bytes are left blank (not padded)
@@ -164,24 +175,40 @@ public sealed class HexDumpProcessor : IContentProcessor
             if (truncated)
             {
                 builder.AppendLine();
-                Utf8CompositeFormat.AppendFormatUtf8(ref builder, "... (showing bytes 0x{0:X}–0x{1:X} of 0x{2:X} total). Use offset=0x{3:X} to continue."u8, startOffset, actualEnd, fileSize, nextOffset);
+                Utf8CompositeFormat.AppendFormatUtf8(ref builder,
+                    "... (showing bytes 0x{0:X}–0x{1:X} of 0x{2:X} total). Use offset=0x{3:X} to continue."u8,
+                    startOffset,
+                    actualEnd,
+                    fileSize,
+                    nextOffset);
                 builder.AppendLine();
             }
 
-            var bytesOut = builder.AsSpan().ToArray();
-            return ValueTask.FromResult(new ContentProcessorResult(
-                Encoding.UTF8.GetString(bytesOut).TrimEnd(),
+            byte[] bytesOut = builder.AsSpan().ToArray();
+            return ValueTask.FromResult(new ContentProcessorResult(Encoding.UTF8.GetString(bytesOut).TrimEnd(),
                 OutputModality.HexDump,
-                Utf8Data: bytesOut,
+                bytesOut,
                 IsTruncated: truncated,
                 NextOffset: truncated ? nextOffset : null));
         }
-        finally { builder.Dispose(); }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
-    private static void AppendHeaderUtf8(ref Utf8Builder builder, long fileSize, long startOffset, long endOffset)
+    private static void AppendHeaderUtf8(
+        ref Utf8Builder builder,
+        long fileSize,
+        long startOffset,
+        long endOffset)
     {
-        Utf8CompositeFormat.AppendFormatUtf8(ref builder, "[HEX] bytes 0x{0:X}–0x{1:X} of 0x{2:X} ({3} bytes)"u8, startOffset, endOffset, fileSize, (int)fileSize);
+        Utf8CompositeFormat.AppendFormatUtf8(ref builder,
+            "[HEX] bytes 0x{0:X}–0x{1:X} of 0x{2:X} ({3} bytes)"u8,
+            startOffset,
+            endOffset,
+            fileSize,
+            (int)fileSize);
         builder.AppendLine();
     }
 }

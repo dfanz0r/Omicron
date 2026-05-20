@@ -8,7 +8,7 @@ using Omicron.Core.Text;
 namespace Omicron.Core.Execution;
 
 /// <summary>
-/// Request to execute a command scoped to a session.
+///     Request to execute a command scoped to a session.
 /// </summary>
 public sealed record ExecutionRequest(
     SessionId SessionId,
@@ -19,7 +19,7 @@ public sealed record ExecutionRequest(
     ToolCallId? ToolCallId = null);
 
 /// <summary>
-/// Result of a command execution.
+///     Result of a command execution.
 /// </summary>
 public sealed record ExecutionResult(
     string Output,
@@ -31,19 +31,19 @@ public sealed record ExecutionResult(
     ReadOnlyMemory<byte>? Utf8Output = null);
 
 /// <summary>
-/// Abstraction for executing shell commands.
+///     Abstraction for executing shell commands.
 /// </summary>
 public interface IExecutionBroker
 {
     /// <summary>
-    /// Execute a command and return the result.
+    ///     Execute a command and return the result.
     /// </summary>
     Task<ExecutionResult> ExecuteAsync(ExecutionRequest request, CancellationToken ct = default);
 }
 
 /// <summary>
-/// Default execution broker that runs commands on the local machine.
-/// Executes commands via direct process spawn with timeout, truncation, and output merging.
+///     Default execution broker that runs commands on the local machine.
+///     Executes commands via direct process spawn with timeout, truncation, and output merging.
 /// </summary>
 public sealed class LocalExecutionBroker : IExecutionBroker
 {
@@ -56,6 +56,73 @@ public sealed class LocalExecutionBroker : IExecutionBroker
     /// <summary>Maximum output lines.</summary>
     public const int MaxOutputLines = 2000;
 
+    // -----------------------------------------------------------
+    // Shell definitions
+    // -----------------------------------------------------------
+
+    private static readonly ShellDef[] KnownShells =
+    [
+        new()
+        {
+            Id = "bash",
+            Exe = "bash",
+            Args = "-c",
+            IsUnix = true
+        },
+        new()
+        {
+            Id = "sh",
+            Exe = "sh",
+            Args = "-c",
+            IsUnix = true
+        },
+        new()
+        {
+            Id = "zsh",
+            Exe = "zsh",
+            Args = "-c",
+            IsUnix = true
+        },
+        new()
+        {
+            Id = "fish",
+            Exe = "fish",
+            Args = "-c",
+            IsUnix = true
+        },
+        new()
+        {
+            Id = "dash",
+            Exe = "dash",
+            Args = "-c",
+            IsUnix = true
+        },
+        new()
+        {
+            Id = "pwsh",
+            Exe = "pwsh",
+            Args = "-NoProfile -Command",
+            IsUnix = false,
+            WinArgs = "-NoProfile -Command"
+        },
+        new()
+        {
+            Id = "powershell",
+            Exe = "powershell",
+            Args = "-NoProfile -Command",
+            IsUnix = false,
+            WinArgs = "-NoProfile -Command"
+        },
+        new()
+        {
+            Id = "cmd",
+            Exe = "cmd",
+            Args = "/c",
+            IsUnix = false,
+            WinArgs = "/c"
+        }
+    ];
+
     private readonly IEventSink? _eventSink;
 
     public LocalExecutionBroker(IEventSink? eventSink = null)
@@ -63,65 +130,78 @@ public sealed class LocalExecutionBroker : IExecutionBroker
         _eventSink = eventSink;
     }
 
-    // -----------------------------------------------------------
-    // Shell definitions
-    // -----------------------------------------------------------
-
-    private static readonly ShellDef[] KnownShells =
-    [
-        new() { Id = "bash",       Exe = "bash",       Args = "-c", IsUnix = true  },
-        new() { Id = "sh",         Exe = "sh",         Args = "-c", IsUnix = true  },
-        new() { Id = "zsh",        Exe = "zsh",        Args = "-c", IsUnix = true  },
-        new() { Id = "fish",       Exe = "fish",       Args = "-c", IsUnix = true  },
-        new() { Id = "dash",       Exe = "dash",       Args = "-c", IsUnix = true  },
-        new() { Id = "pwsh",       Exe = "pwsh",       Args = "-NoProfile -Command", IsUnix = false, WinArgs = "-NoProfile -Command" },
-        new() { Id = "powershell", Exe = "powershell", Args = "-NoProfile -Command", IsUnix = false, WinArgs = "-NoProfile -Command" },
-        new() { Id = "cmd",        Exe = "cmd",        Args = "/c", IsUnix = false, WinArgs = "/c" },
-    ];
-
-    public async Task<ExecutionResult> ExecuteAsync(ExecutionRequest request, CancellationToken ct = default)
+    public async Task<ExecutionResult> ExecuteAsync(
+        ExecutionRequest request,
+        CancellationToken ct = default)
     {
-        var shellId = request.ShellId ?? DetectDefaultShell();
-        var sessionId = request.SessionId;
-        var toolCallId = request.ToolCallId;
-        var startTime = DateTimeOffset.UtcNow;
+        string shellId = request.ShellId ?? DetectDefaultShell();
+        SessionId sessionId = request.SessionId;
+        ToolCallId? toolCallId = request.ToolCallId;
+        DateTimeOffset startTime = DateTimeOffset.UtcNow;
 
         // Helper to emit completion event and return result
-        ExecutionResult Complete(int exitCode, long durationMs, bool timedOut, bool cancelled,
-            string? output, string? error, ReadOnlyMemory<byte>? utf8Output = null)
+        ExecutionResult Complete(
+            int exitCode,
+            long durationMs,
+            bool timedOut,
+            bool cancelled,
+            string? output,
+            string? error,
+            ReadOnlyMemory<byte>? utf8Output = null)
         {
             _eventSink?.Emit(new ExecutionCompletedEvent(
                 new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId),
-                request.Command, exitCode, durationMs, timedOut, toolCallId, cancelled, error));
-            var outputStr = output ?? "";
-            return new ExecutionResult(outputStr, exitCode, durationMs, timedOut, cancelled, error,
-                Utf8Output: utf8Output ?? (outputStr.Length > 0 ? Encoding.UTF8.GetBytes(outputStr) : null));
+                request.Command,
+                exitCode,
+                durationMs,
+                timedOut,
+                toolCallId,
+                cancelled,
+                error));
+            string outputStr = output ?? "";
+            return new ExecutionResult(outputStr,
+                exitCode,
+                durationMs,
+                timedOut,
+                cancelled,
+                error,
+                utf8Output
+                ?? (outputStr.Length > 0 ? Encoding.UTF8.GetBytes(outputStr) : null));
         }
 
         // Emit execution started event
-        _eventSink?.Emit(new ExecutionStartedEvent(
-            new EventEnvelope(EventId.New(), 0, startTime, sessionId),
-            request.Command, request.WorkingDirectory ?? Environment.CurrentDirectory, toolCallId));
-        var shellDef = KnownShells.FirstOrDefault(s => s.Id == shellId);
+        _eventSink?.Emit(new ExecutionStartedEvent(new EventEnvelope(EventId.New(), 0, startTime, sessionId),
+            request.Command,
+            request.WorkingDirectory ?? Environment.CurrentDirectory,
+            toolCallId));
+        ShellDef? shellDef = KnownShells.FirstOrDefault(s => s.Id == shellId);
 
         if (shellDef is null)
         {
-            return Complete(-1, 0, false, false,
-                $"Error: unknown shell '{shellId}'.", $"Unknown shell: {shellId}");
+            return Complete(-1,
+                0,
+                false,
+                false,
+                $"Error: unknown shell '{shellId}'.",
+                $"Unknown shell: {shellId}");
         }
 
-        var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
-        var shellExe = FindExe(shellDef.Exe);
+        bool isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        string? shellExe = FindExe(shellDef.Exe);
         if (shellExe is null)
         {
-            return Complete(-1, 0, false, false,
+            return Complete(-1,
+                0,
+                false,
+                false,
                 $"Error: shell '{shellId}' not found on this system.",
                 $"Shell not found: {shellId}");
         }
 
-        var shellArgs = isWindows && shellDef.WinArgs is not null ? shellDef.WinArgs : shellDef.Args;
-        var cwd = request.WorkingDirectory ?? Environment.CurrentDirectory;
-        var timeoutSec = Math.Clamp(request.TimeoutSeconds, 1, 600);
+        string? shellArgs =
+            isWindows && shellDef.WinArgs is not null ? shellDef.WinArgs : shellDef.Args;
+        string cwd = request.WorkingDirectory ?? Environment.CurrentDirectory;
+        int timeoutSec = Math.Clamp(request.TimeoutSeconds, 1, 600);
 
         var psi = new ProcessStartInfo
         {
@@ -133,13 +213,17 @@ public sealed class LocalExecutionBroker : IExecutionBroker
             UseShellExecute = false,
             CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
         };
 
         psi.Environment["DEBIAN_FRONTEND"] = "noninteractive";
         psi.Environment["CI"] = "true";
 
-        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        var process = new Process
+        {
+            StartInfo = psi,
+            EnableRaisingEvents = true
+        };
 
         // Byte-oriented output capture: read from base streams instead of
         // using BeginOutputReadLine (which always produces strings).
@@ -157,15 +241,22 @@ public sealed class LocalExecutionBroker : IExecutionBroker
             process.Start();
 
             // Drain a process stream into an ArrayBufferWriter<byte>
-            async Task DrainStreamAsync(Stream stream, ArrayBufferWriter<byte> writer, CancellationToken token)
+            async Task DrainStreamAsync(
+                Stream stream,
+                ArrayBufferWriter<byte> writer,
+                CancellationToken token)
             {
                 byte[] buf = ArrayPool<byte>.Shared.Rent(8192);
                 try
                 {
                     while (true)
                     {
-                        var read = await stream.ReadAsync(buf.AsMemory(0, buf.Length), token);
-                        if (read == 0) break;
+                        int read = await stream.ReadAsync(buf.AsMemory(0, buf.Length), token);
+                        if (read == 0)
+                        {
+                            break;
+                        }
+
                         writer.Write(buf.AsSpan(0, read));
                     }
                 }
@@ -178,9 +269,13 @@ public sealed class LocalExecutionBroker : IExecutionBroker
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
 
-            var drainToken = cts.Token;
-            var stdoutTask = DrainStreamAsync(process.StandardOutput.BaseStream, stdoutBytes, drainToken);
-            var stderrTask = DrainStreamAsync(process.StandardError.BaseStream, stderrBytes, drainToken);
+            CancellationToken drainToken = cts.Token;
+            Task stdoutTask = DrainStreamAsync(process.StandardOutput.BaseStream,
+                stdoutBytes,
+                drainToken);
+            Task stderrTask = DrainStreamAsync(process.StandardError.BaseStream,
+                stderrBytes,
+                drainToken);
 
             try
             {
@@ -196,7 +291,9 @@ public sealed class LocalExecutionBroker : IExecutionBroker
             }
 
             if (timedOut || cancelled)
+            {
                 KillProcessTree(process);
+            }
             else
             {
                 // Drain any remaining data after WaitForExit (process may close streams before fully exiting)
@@ -209,24 +306,34 @@ public sealed class LocalExecutionBroker : IExecutionBroker
         {
             cancelled = true;
             errorMessage = ex.Message;
-            try { process.Kill(true); } catch { }
+            try
+            {
+                process.Kill(true);
+            }
+            catch { }
         }
 
         stopwatch.Stop();
 
         // Build output using Utf8Builder with byte-oriented line handling.
-        var builder = Utf8Text.CreateBuilder();
+        Utf8Builder builder = Utf8Text.CreateBuilder();
         try
         {
-            var stdoutSpan = stdoutBytes.WrittenSpan;
-            var stderrSpan = stderrBytes.WrittenSpan;
+            ReadOnlySpan<byte> stdoutSpan = stdoutBytes.WrittenSpan;
+            ReadOnlySpan<byte> stderrSpan = stderrBytes.WrittenSpan;
 
             // Helper: count \n occurrences in a byte span
             static int CountLines(ReadOnlySpan<byte> span)
             {
                 int count = 0;
                 for (int i = 0; i < span.Length; i++)
-                    if (span[i] == (byte)'\n') count++;
+                {
+                    if (span[i] == (byte)'\n')
+                    {
+                        count++;
+                    }
+                }
+
                 return count;
             }
 
@@ -244,14 +351,22 @@ public sealed class LocalExecutionBroker : IExecutionBroker
 
             // Scan and copy stdout lines up to the limits
             int lineStart = 0;
-            for (int i = 0; i <= stdoutSpan.Length && linesWritten < MaxOutputLines && writtenBytes < MaxOutputBytes; i++)
+            for (
+                int i = 0;
+                i <= stdoutSpan.Length
+                && linesWritten < MaxOutputLines
+                && writtenBytes < MaxOutputBytes;
+                i++
+            )
             {
                 if (i == stdoutSpan.Length || stdoutSpan[i] == (byte)'\n')
                 {
                     int lineLen = i - lineStart;
                     // Strip trailing \r
                     if (lineLen > 0 && stdoutSpan[lineStart + lineLen - 1] == (byte)'\r')
+                    {
                         lineLen--;
+                    }
 
                     int lineCost = lineLen + 1; // +1 for \n we'll append
                     if (writtenBytes + lineCost > MaxOutputBytes)
@@ -261,7 +376,10 @@ public sealed class LocalExecutionBroker : IExecutionBroker
                     }
 
                     if (lineLen > 0)
+                    {
                         builder.AppendLiteral(stdoutSpan.Slice(lineStart, lineLen));
+                    }
+
                     builder.AppendLine();
                     writtenBytes += lineCost;
                     linesWritten++;
@@ -271,15 +389,17 @@ public sealed class LocalExecutionBroker : IExecutionBroker
 
             // If we didn't reach the end of stdoutSpan, we truncated
             if (lineStart < stdoutSpan.Length)
+            {
                 truncated = true;
+            }
 
             if (truncated)
             {
                 builder.AppendLine();
-                Utf8CompositeFormat.AppendFormatUtf8(
-                    ref builder,
+                Utf8CompositeFormat.AppendFormatUtf8(ref builder,
                     "[Output truncated. Full: {0:N0} lines, {1:N0} bytes.]"u8,
-                    totalLines, stdoutBytes.WrittenCount);
+                    totalLines,
+                    stdoutBytes.WrittenCount);
                 builder.AppendLine();
             }
 
@@ -297,19 +417,25 @@ public sealed class LocalExecutionBroker : IExecutionBroker
                     {
                         int lineLen = i - stderrLineStart;
                         if (lineLen > 0 && stderrSpan[stderrLineStart + lineLen - 1] == (byte)'\r')
+                        {
                             lineLen--;
+                        }
+
                         stderrLineCount++;
                         if (lineLen > 0)
+                        {
                             builder.AppendLiteral(stderrSpan.Slice(stderrLineStart, lineLen));
+                        }
+
                         builder.AppendLine();
                         stderrLineStart = i + 1;
                     }
                 }
+
                 int totalStderrLines = CountLines(stderrSpan);
                 if (totalStderrLines > 50)
                 {
-                    Utf8CompositeFormat.AppendFormatUtf8(
-                        ref builder,
+                    Utf8CompositeFormat.AppendFormatUtf8(ref builder,
                         "... and {0} more stderr lines"u8,
                         totalStderrLines - 50);
                     builder.AppendLine();
@@ -319,25 +445,47 @@ public sealed class LocalExecutionBroker : IExecutionBroker
             // Status line
             builder.AppendLine();
             if (timedOut)
-                Utf8CompositeFormat.AppendFormatUtf8(ref builder, "--- (timed out after {0}s) ---"u8, timeoutSec);
+            {
+                Utf8CompositeFormat.AppendFormatUtf8(ref builder,
+                    "--- (timed out after {0}s) ---"u8,
+                    timeoutSec);
+            }
             else if (cancelled)
+            {
                 builder.AppendLiteral("--- (cancelled) ---"u8);
+            }
             else
-                Utf8CompositeFormat.AppendFormatUtf8(ref builder, "--- (exit {0}, {1:F1}s) ---"u8, exitCode, stopwatch.Elapsed.TotalSeconds);
+            {
+                Utf8CompositeFormat.AppendFormatUtf8(ref builder,
+                    "--- (exit {0}, {1:F1}s) ---"u8,
+                    exitCode,
+                    stopwatch.Elapsed.TotalSeconds);
+            }
+
             builder.AppendLine();
 
-            var resultBytes = builder.AsSpan().ToArray();
-            return Complete(exitCode, (long)stopwatch.ElapsedMilliseconds, timedOut, cancelled,
-                Encoding.UTF8.GetString(resultBytes).TrimEnd(), errorMessage,
-                utf8Output: resultBytes);
+            byte[] resultBytes = builder.AsSpan().ToArray();
+            return Complete(exitCode,
+                stopwatch.ElapsedMilliseconds,
+                timedOut,
+                cancelled,
+                Encoding.UTF8.GetString(resultBytes).TrimEnd(),
+                errorMessage,
+                resultBytes);
         }
-        finally { builder.Dispose(); }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
     private static string DetectDefaultShell()
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
             return "powershell";
+        }
+
         return "bash";
     }
 
@@ -348,23 +496,43 @@ public sealed class LocalExecutionBroker : IExecutionBroker
         int backslashCount = 0;
         for (int i = 0; i < command.Length; i++)
         {
-            if (command[i] == '\\') backslashCount++;
+            if (command[i] == '\\')
+            {
+                backslashCount++;
+            }
         }
+
         int quoteCount = 0;
         for (int i = 0; i < command.Length; i++)
         {
-            if (command[i] == '"') quoteCount++;
+            if (command[i] == '"')
+            {
+                quoteCount++;
+            }
         }
+
         if (backslashCount == 0 && quoteCount == 0)
+        {
             return command;
+        }
 
         var sb = new StringBuilder(command.Length + backslashCount + quoteCount);
-        foreach (var c in command)
+        foreach (char c in command)
         {
-            if (c == '\\') sb.Append("\\\\");
-            else if (c == '"') sb.Append("\\\"");
-            else sb.Append(c);
+            if (c == '\\')
+            {
+                sb.Append("\\\\");
+            }
+            else if (c == '"')
+            {
+                sb.Append("\\\"");
+            }
+            else
+            {
+                sb.Append(c);
+            }
         }
+
         return sb.ToString();
     }
 
@@ -374,11 +542,22 @@ public sealed class LocalExecutionBroker : IExecutionBroker
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), name + ".exe"));
+            paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
+                name + ".exe"));
             paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), name));
-            paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe"));
-            paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "bin", name + ".exe"));
-            paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git", "usr", "bin", name + ".exe"));
+            paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "PowerShell",
+                "7",
+                "pwsh.exe"));
+            paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Git",
+                "bin",
+                name + ".exe"));
+            paths.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Git",
+                "usr",
+                "bin",
+                name + ".exe"));
             paths.Add(@"C:\Program Files\Git\bin\" + name + ".exe");
             paths.Add(@"C:\Program Files\Git\usr\bin\" + name + ".exe");
         }
@@ -390,10 +569,12 @@ public sealed class LocalExecutionBroker : IExecutionBroker
             paths.Add($"/opt/homebrew/bin/{name}");
         }
 
-        foreach (var p in paths)
+        foreach (string p in paths)
         {
             if (File.Exists(p))
+            {
                 return p;
+            }
         }
 
         try
@@ -405,17 +586,22 @@ public sealed class LocalExecutionBroker : IExecutionBroker
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
-                CreateNoWindow = true,
+                CreateNoWindow = true
             };
 
             using var proc = Process.Start(psi);
-            if (proc is null) return null;
+            if (proc is null)
+            {
+                return null;
+            }
 
-            var result = proc.StandardOutput.ReadLine()?.Trim();
+            string? result = proc.StandardOutput.ReadLine()?.Trim();
             proc.WaitForExit(1000);
 
             if (!string.IsNullOrEmpty(result) && File.Exists(result))
+            {
                 return result;
+            }
         }
         catch { }
 
@@ -435,7 +621,7 @@ public sealed class LocalExecutionBroker : IExecutionBroker
                     UseShellExecute = false,
                     CreateNoWindow = true,
                     RedirectStandardOutput = true,
-                    RedirectStandardError = true,
+                    RedirectStandardError = true
                 };
                 using var killer = Process.Start(psi);
                 killer?.WaitForExit(3000);
@@ -447,7 +633,11 @@ public sealed class LocalExecutionBroker : IExecutionBroker
         }
         catch
         {
-            try { process.Kill(); } catch { }
+            try
+            {
+                process.Kill();
+            }
+            catch { }
         }
     }
 
@@ -460,5 +650,3 @@ public sealed class LocalExecutionBroker : IExecutionBroker
         public string? WinArgs { get; init; }
     }
 }
-
-

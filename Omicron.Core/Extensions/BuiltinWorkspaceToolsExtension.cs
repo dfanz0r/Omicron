@@ -1,7 +1,7 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Omicron.Core.Content;
-using Omicron.Core.Diff;
 using Omicron.Core.Events;
 using Omicron.Core.IO;
 using Omicron.Core.Text;
@@ -11,23 +11,19 @@ using Omicron.Core.Workspace;
 namespace Omicron.Core.Extensions;
 
 /// <summary>
-/// Built-in extension that registers workspace tools including:
-/// - read_path: read files and list directories
-/// - read_file_hashlines: read a file with per-line hash anchors
-/// - edit_file_hashline: edit a file with hash-anchor validation through transactions
+///     Built-in extension that registers workspace tools including:
+///     - read_path: read files and list directories
+///     - read_file_hashlines: read a file with per-line hash anchors
+///     - edit_file_hashline: edit a file with hash-anchor validation through transactions
 /// </summary>
 public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
 {
-    private readonly IWorkspace _workspace;
-    private readonly IWorkspaceFileSystem _vfs;
-    private readonly IWorkspaceTransactionManager _txManager;
-    private readonly ContentProcessorRegistry _processors;
     private readonly Base64Processor _base64Processor;
     private readonly IEventSink? _eventSink;
-
-    public string Id => "omicron.workspace-tools";
-    public string DisplayName => "Workspace Tools";
-    public Version Version => new(1, 0, 0);
+    private readonly ContentProcessorRegistry _processors;
+    private readonly IWorkspaceTransactionManager _txManager;
+    private readonly IWorkspaceFileSystem _vfs;
+    private readonly IWorkspace _workspace;
 
     public BuiltinWorkspaceToolsExtension(
         IWorkspace workspace,
@@ -44,65 +40,84 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
         _eventSink = eventSink;
     }
 
+    public string Id => "omicron.workspace-tools";
+    public string DisplayName => "Workspace Tools";
+    public Version Version => new(1, 0, 0);
+
     public void Register(IExtensionContext context)
     {
-        context.RegisterTool(new ToolDefinition(
-            Name: "read_path",
-            Description:
-                "Read a file or list a directory. " +
-                "For files: returns content (text, hex dump, or base64) based on " +
-                "file type and model capabilities. " +
-                "Supports format override: 'auto' (default), 'text', 'hex', or 'base64'. " +
-                "For directories: lists entries with per-file line count and size. " +
-                "Output is truncated at 50 KB / 2000 lines per call.",
-            Parameters: ToolSchema.Object(
-                new Dictionary<string, JsonElement>
+        context.RegisterTool(new ToolDefinition("read_path",
+            "Read a file or list a directory. "
+            + "For files: returns content (text, hex dump, or base64) based on "
+            + "file type and model capabilities. "
+            + "Supports format override: 'auto' (default), 'text', 'hex', or 'base64'. "
+            + "For directories: lists entries with per-file line count and size. "
+            + "Output is truncated at 50 KB / 2000 lines per call.",
+            ToolSchema.Object(new Dictionary<string, JsonElement>
                 {
                     ["path"] = ToolSchema.StringProperty(
                         "Path to read. If a file: reads content. If a directory: lists contents."),
                     ["format"] = ToolSchema.EnumProperty(
-                        "Output format: 'auto' (default, auto-detect), 'text' (force UTF-8), " +
-                        "'hex' (hex dump), or 'base64' (raw base64 encoding).",
-                        new[] { "auto", "text", "hex", "base64" }),
+                        "Output format: 'auto' (default, auto-detect), 'text' (force UTF-8), "
+                        + "'hex' (hex dump), or 'base64' (raw base64 encoding).",
+                        new[]
+                        {
+                            "auto", "text", "hex", "base64"
+                        }),
                     ["offset"] = ToolSchema.IntegerProperty(
-                        "Byte offset (hex/base64 mode) or 1-based line number (text mode). " +
-                        "For hex, accepts decimal or 0x-prefixed hex values."),
-                    ["limit"] = ToolSchema.IntegerProperty(
-                        "Byte limit (hex/base64) or max lines (text). " +
-                        "For hex, accepts decimal or 0x-prefixed hex.")
+                        "Byte offset (hex/base64 mode) or 1-based line number (text mode). "
+                        + "For hex, accepts decimal or 0x-prefixed hex values."),
+                    ["limit"] = ToolSchema.IntegerProperty("Byte limit (hex/base64) or max lines (text). "
+                                                           + "For hex, accepts decimal or 0x-prefixed hex.")
                 },
-                required: new[] { "path" }
-            ),
-            InvokeAsync: async ctx =>
+                new[]
+                {
+                    "path"
+                }),
+            async ctx =>
             {
-                var args = ctx.Arguments;
-                var path = args.TryGetValue("path", out var p) ? p?.ToString() ?? "" : "";
-                var format = args.TryGetValue("format", out var f) ? f?.ToString() ?? "auto" : "auto";
-                var offset = TryGetInt(args, "offset");
-                var limit = TryGetInt(args, "limit");
+                IReadOnlyDictionary<string, object?> args = ctx.Arguments;
+                string path = args.TryGetValue("path", out object? p) ? p?.ToString() ?? "" : "";
+                string format = args.TryGetValue("format", out object? f)
+                    ? f?.ToString() ?? "auto"
+                    : "auto";
+                int? offset = TryGetInt(args, "offset");
+                int? limit = TryGetInt(args, "limit");
 
                 try
                 {
                     // --- Resolve path ---
-                    var wsPath = _vfs.Resolve(path);
+                    WorkspacePath? wsPath = _vfs.Resolve(path);
                     if (wsPath is null)
-                        return new ToolResult($"Error: path escapes workspace root: '{path}'", IsError: true);
+                    {
+                        return new ToolResult($"Error: path escapes workspace root: '{path}'",
+                            IsError: true);
+                    }
 
-                    var stat = await _vfs.StatAsync(wsPath.Value, ctx.CancellationToken);
+                    FileStat? stat = await _vfs.StatAsync(wsPath.Value, ctx.CancellationToken);
                     if (stat is null)
+                    {
                         return new ToolResult($"Error: path not found: {path}", IsError: true);
+                    }
 
                     // --- Directory listing via workspace renderer ---
                     if (stat.IsDirectory)
                     {
-                        var readResult = await _workspace.ReadPathAsync(path, null, ctx.CancellationToken);
-                        return new ToolResult(readResult.Content, IsError: false, Blocks: readResult.Blocks?.Value);
+                        WorkspaceReadResult readResult = await _workspace.ReadPathAsync(path,
+                            null,
+                            ctx.CancellationToken);
+                        return new ToolResult(readResult.Content,
+                            IsError: false,
+                            Blocks: readResult.Blocks?.Value);
                     }
 
                     // --- Read file bytes ---
-                    var bytes = await _vfs.ReadFileAsync(wsPath.Value, ctx.CancellationToken);
+                    ReadOnlyMemory<byte> bytes = await _vfs.ReadFileAsync(wsPath.Value, ctx.CancellationToken);
                     if (bytes.IsEmpty && stat.Size > 0)
-                        return new ToolResult($"Error: could not read file: {path}", IsError: true);
+                    {
+                        return new ToolResult($"Error: could not read file: {path}",
+                            IsError: true);
+                    }
 
                     // --- Handle format override ---
                     IContentProcessor processor;
@@ -110,11 +125,15 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
 
                     // File too large for memory — downgrade to hex
                     if (stat.Size > 50 * 1024 * 1024 && effectiveFormat == "auto")
+                    {
                         effectiveFormat = "hex";
+                    }
 
                     // Cap base64 encoding to 5 MB
                     if (effectiveFormat == "base64" && stat.Size > 5 * 1024 * 1024)
+                    {
                         effectiveFormat = "hex";
+                    }
 
                     if (effectiveFormat == "hex")
                     {
@@ -122,14 +141,27 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     }
                     else if (effectiveFormat == "base64")
                     {
-                        var b64Ctx = BuildContext(ctx, path, wsPath.Value, bytes, stat.Size, "base64", offset, limit);
-                        var b64Result = await _base64Processor.ProcessAsync(b64Ctx, ctx.CancellationToken);
+                        ContentProcessorContext b64Ctx = BuildContext(ctx,
+                            path,
+                            wsPath.Value,
+                            bytes,
+                            stat.Size,
+                            "base64",
+                            offset,
+                            limit);
+                        ContentProcessorResult b64Result = await _base64Processor.ProcessAsync(b64Ctx,
+                            ctx.CancellationToken);
 
                         // Emit ModalityUsedEvent for base64 outputs that require model capabilities
-                        if (b64Result.ActualModality is OutputModality.ImageBase64 or OutputModality.PdfBase64
-                            or OutputModality.AudioBase64 or OutputModality.VideoBase64)
+                        if (
+                            b64Result.ActualModality
+                            is OutputModality.ImageBase64
+                            or OutputModality.PdfBase64
+                            or OutputModality.AudioBase64
+                            or OutputModality.VideoBase64
+                        )
                         {
-                            var b64Modality = b64Result.ActualModality switch
+                            string b64Modality = b64Result.ActualModality switch
                             {
                                 OutputModality.ImageBase64 => "image",
                                 OutputModality.PdfBase64 => "pdf",
@@ -142,14 +174,14 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                             {
                                 await _eventSink.EmitAsync(new ModalityUsedEvent(
                                     EventEnvelope.ForSession(ctx.SessionId),
-                                    b64Modality, path, b64Result.ActualModality));
+                                    b64Modality,
+                                    path,
+                                    b64Result.ActualModality));
                             }
                         }
 
-                        return new ToolResult(
-                            Text: b64Result.Utf8Data.HasValue ? null : b64Result.Text,
-                            Utf8Data: b64Result.Utf8Data,
-                            IsError: false);
+                        return new ToolResult(b64Result.Utf8Data.HasValue ? null : b64Result.Text,
+                            b64Result.Utf8Data);
                     }
                     else if (effectiveFormat == "text")
                     {
@@ -158,26 +190,40 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     else
                     {
                         // "auto": classify and resolve
-                        var fileType = FileTypeClassifier.Classify(path, bytes.Span);
+                        DetectedFileType fileType = FileTypeClassifier.Classify(path, bytes.Span);
 
                         if (fileType == DetectedFileType.Text)
                         {
                             // Run IsText() safety check for files classified as Text
                             if (!TextEncodingDetector.IsText(bytes.Span))
+                            {
                                 fileType = DetectedFileType.UnknownBinary;
+                            }
                         }
 
                         processor = _processors.Resolve(fileType) ?? new HexDumpProcessor();
                     }
 
-                    var context = BuildContext(ctx, path, wsPath.Value, bytes, stat.Size, effectiveFormat, offset, limit);
-                    var result = await processor.ProcessAsync(context, ctx.CancellationToken);
+                    ContentProcessorContext context = BuildContext(ctx,
+                        path,
+                        wsPath.Value,
+                        bytes,
+                        stat.Size,
+                        effectiveFormat,
+                        offset,
+                        limit);
+                    ContentProcessorResult result = await processor.ProcessAsync(context, ctx.CancellationToken);
 
                     // --- Emit ModalityUsedEvent if needed ---
-                    if (result.ActualModality is OutputModality.ImageBase64 or OutputModality.PdfBase64
-                        or OutputModality.AudioBase64 or OutputModality.VideoBase64)
+                    if (
+                        result.ActualModality
+                        is OutputModality.ImageBase64
+                        or OutputModality.PdfBase64
+                        or OutputModality.AudioBase64
+                        or OutputModality.VideoBase64
+                    )
                     {
-                        var modality = result.ActualModality switch
+                        string modality = result.ActualModality switch
                         {
                             OutputModality.ImageBase64 => "image",
                             OutputModality.PdfBase64 => "pdf",
@@ -188,16 +234,15 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
 
                         if (_eventSink is not null)
                         {
-                            await _eventSink.EmitAsync(new ModalityUsedEvent(
-                                EventEnvelope.ForSession(ctx.SessionId),
-                                modality, path, result.ActualModality));
+                            await _eventSink.EmitAsync(new ModalityUsedEvent(EventEnvelope.ForSession(ctx.SessionId),
+                                modality,
+                                path,
+                                result.ActualModality));
                         }
                     }
 
-                    return new ToolResult(
-                        Text: result.Utf8Data.HasValue ? null : result.Text,
-                        Utf8Data: result.Utf8Data,
-                        IsError: false);
+                    return new ToolResult(result.Utf8Data.HasValue ? null : result.Text,
+                        result.Utf8Data);
                 }
                 catch (OperationCanceledException)
                 {
@@ -205,71 +250,88 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                 }
                 catch (Exception ex)
                 {
-                    return new ToolResult($"Error reading '{path}': {ex.Message}", IsError: true);
+                    return new ToolResult($"Error reading '{path}': {ex.Message}",
+                        IsError: true);
                 }
-            }
-        ));
+            }));
 
         // ============================================================
         // read_file_hashlines — read a file with per-line hash anchors
         // ============================================================
 
-        context.RegisterTool(new ToolDefinition(
-            Name: "read_file_hashlines",
-            Description:
-                "Read a text file with per-line hash anchors. " +
-                "Each line shows a 2-letter anchor (a-z, no digits) derived from line content. " +
-                "Use the anchor as start_hash when calling edit_file_hashline. " +
-                "Format: {line}{anchor}|{content}. " +
-                "Example: 42sr|    return a + b;\n" +
-                "Rejects binary files. " +
-                "Output is truncated at 2000 lines / 50 KB.",
-            Parameters: ToolSchema.Object(
-                new Dictionary<string, JsonElement>
+        context.RegisterTool(new ToolDefinition("read_file_hashlines",
+            "Read a text file with per-line hash anchors. "
+            + "Each line shows a 2-letter anchor (a-z, no digits) derived from line content. "
+            + "Use the anchor as start_hash when calling edit_file_hashline. "
+            + "Format: {line}{anchor}|{content}. "
+            + "Example: 42sr|    return a + b;\n"
+            + "Rejects binary files. "
+            + "Output is truncated at 2000 lines / 50 KB.",
+            ToolSchema.Object(new Dictionary<string, JsonElement>
                 {
-                    ["path"] = ToolSchema.StringProperty(
-                        "Path to the text file to read (relative to workspace root).")
+                    ["path"] = ToolSchema.StringProperty("Path to the text file to read (relative to workspace root).")
                 },
-                required: new[] { "path" }
-            ),
-            InvokeAsync: async ctx =>
+                new[]
+                {
+                    "path"
+                }),
+            async ctx =>
             {
-                var args = ctx.Arguments;
-                var path = args.TryGetValue("path", out var p) ? p?.ToString() ?? "" : "";
+                IReadOnlyDictionary<string, object?> args = ctx.Arguments;
+                string path = args.TryGetValue("path", out object? p) ? p?.ToString() ?? "" : "";
 
                 try
                 {
-                    var wsPath = _vfs.Resolve(path);
+                    WorkspacePath? wsPath = _vfs.Resolve(path);
                     if (wsPath is null)
-                        return new ToolResult($"Error: path escapes workspace root: '{path}'", IsError: true);
+                    {
+                        return new ToolResult($"Error: path escapes workspace root: '{path}'",
+                            IsError: true);
+                    }
 
-                    var stat = await _vfs.StatAsync(wsPath.Value, ctx.CancellationToken);
+                    FileStat? stat = await _vfs.StatAsync(wsPath.Value, ctx.CancellationToken);
                     if (stat is null)
+                    {
                         return new ToolResult($"Error: path not found: {path}", IsError: true);
+                    }
 
-                    var bytes = await _vfs.ReadFileAsync(wsPath.Value, ctx.CancellationToken);
+                    ReadOnlyMemory<byte> bytes = await _vfs.ReadFileAsync(wsPath.Value, ctx.CancellationToken);
                     if (bytes.IsEmpty && stat.Size > 0)
-                        return new ToolResult($"Error: could not read file: {path}", IsError: true);
+                    {
+                        return new ToolResult($"Error: could not read file: {path}",
+                            IsError: true);
+                    }
 
                     if (!TextEncodingDetector.IsText(bytes.Span))
+                    {
                         return new ToolResult($"Error: binary file: {path}", IsError: true);
+                    }
 
                     // Scan line boundaries without full-file string allocation
-                    var span = bytes.Span;
-                    var lineStarts = new List<int> { 0 };
+                    ReadOnlySpan<byte> span = bytes.Span;
+                    var lineStarts = new List<int>
+                    {
+                        0
+                    };
                     for (int i = 0; i < span.Length; i++)
                     {
                         // A trailing LF terminates the final content line; don't
                         // render an extra empty hashline anchor after it.
                         if (span[i] == (byte)'\n' && i + 1 < span.Length)
+                        {
                             lineStarts.Add(i + 1);
+                        }
                     }
-                    var totalLines = lineStarts.Count;
 
-                    var output = Utf8Text.CreateBuilder();
+                    int totalLines = lineStarts.Count;
+
+                    Utf8Builder output = Utf8Text.CreateBuilder();
                     try
                     {
-                        Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1} lines, hashline anchors)"u8, path, totalLines);
+                        Utf8CompositeFormat.AppendFormatUtf8Slow(ref output,
+                            "[FILE] {0}  ({1} lines, hashline anchors)"u8,
+                            path,
+                            totalLines);
                         output.AppendLine();
                         output.AppendLine();
 
@@ -282,22 +344,41 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         for (int i = 0; i < totalLines; i++)
                         {
                             int lineByteStart = lineStarts[i];
-                            int lineByteEnd = (i + 1 < lineStarts.Count) ? lineStarts[i + 1] : span.Length;
+                            int lineByteEnd =
+                                i + 1 < lineStarts.Count ? lineStarts[i + 1] : span.Length;
 
                             int lineLength = lineByteEnd - lineByteStart;
-                            if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\n')
+                            if (
+                                lineLength > 0
+                                && span[lineByteStart + lineLength - 1] == (byte)'\n'
+                            )
+                            {
                                 lineLength--;
-                            if (lineLength > 0 && span[lineByteStart + lineLength - 1] == (byte)'\r')
-                                lineLength--;
+                            }
 
-                            var lineUtf8 = span.Slice(lineByteStart, lineLength);
-                            var anchor = LineHash.ComputeAnchorUtf8(lineUtf8);
+                            if (
+                                lineLength > 0
+                                && span[lineByteStart + lineLength - 1] == (byte)'\r'
+                            )
+                            {
+                                lineLength--;
+                            }
+
+                            ReadOnlySpan<byte> lineUtf8 = span.Slice(lineByteStart, lineLength);
+                            string anchor = LineHash.ComputeAnchorUtf8(lineUtf8);
                             // Estimate byte cost: line number digits + anchor(2) + '|' + line + newline
-                            var lineNumDigits = i < 9 ? 1 : i < 99 ? 2 : i < 999 ? 3 : i < 9999 ? 4 : 5;
-                            var lineBytes = lineNumDigits + 2 + 1 + lineLength + 1;
+                            int lineNumDigits =
+                                i < 9 ? 1
+                                : i < 99 ? 2
+                                : i < 999 ? 3
+                                : i < 9999 ? 4
+                                : 5;
+                            int lineBytes = lineNumDigits + 2 + 1 + lineLength + 1;
 
-                            if (writtenLines >= maxOutputLines ||
-                                writtenBytes + lineBytes > maxOutputBytes)
+                            if (
+                                writtenLines >= maxOutputLines
+                                || writtenBytes + lineBytes > maxOutputBytes
+                            )
                             {
                                 truncated = true;
                                 break;
@@ -310,12 +391,14 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
 
                         if (truncated)
                         {
-                            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "... output truncated ({0} total lines, showing {1})"u8, totalLines, writtenLines);
+                            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output,
+                                "... output truncated ({0} total lines, showing {1})"u8,
+                                totalLines,
+                                writtenLines);
                             output.AppendLine();
                         }
 
-                        return new ToolResult(
-                            Utf8Data: output.AsSpan().ToArray());
+                        return new ToolResult(Utf8Data: output.AsSpan().ToArray());
                     }
                     finally
                     {
@@ -324,33 +407,28 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    return new ToolResult($"Error reading '{path}': {ex.Message}", IsError: true);
+                    return new ToolResult($"Error reading '{path}': {ex.Message}",
+                        IsError: true);
                 }
-            }
-        ));
+            }));
 
         // ============================================================
         // edit_file_hashline — edit a file with hash-anchor validation
         // ============================================================
 
-        context.RegisterTool(new ToolDefinition(
-            Name: "edit_file_hashline",
-            Description:
-                "Edit a text file with hash-anchor validation through a workspace transaction. " +
-                "Each edit targets a line by its start_line and start_hash (2-letter anchor " +
-                "from read_file_hashlines output). old_text is validated as a second guard. " +
-                "Edits must be non-overlapping. On success, returns a unified diff. " +
-                "On validation failure, includes nearby current context and hashes. " +
-                "Auto-commits after validation.",
-            Parameters: ToolSchema.Object(
-                new Dictionary<string, JsonElement>
+        context.RegisterTool(new ToolDefinition("edit_file_hashline",
+            "Edit a text file with hash-anchor validation through a workspace transaction. "
+            + "Each edit targets a line by its start_line and start_hash (2-letter anchor "
+            + "from read_file_hashlines output). old_text is validated as a second guard. "
+            + "Edits must be non-overlapping. On success, returns a unified diff. "
+            + "On validation failure, includes nearby current context and hashes. "
+            + "Auto-commits after validation.",
+            ToolSchema.Object(new Dictionary<string, JsonElement>
                 {
-                    ["path"] = ToolSchema.StringProperty(
-                        "Path to the file to edit (relative to workspace root)."),
+                    ["path"] = ToolSchema.StringProperty("Path to the file to edit (relative to workspace root)."),
                     ["edits"] = ToolSchema.ArrayProperty(
                         "Array of edit operations. Each edit: { start_line (int), start_hash (string), old_text (string), new_text (string) }",
-                        ToolSchema.Object(
-                            new Dictionary<string, JsonElement>
+                        ToolSchema.Object(new Dictionary<string, JsonElement>
                             {
                                 ["start_line"] = ToolSchema.IntegerProperty(
                                     "1-based line number where the edit begins (hint; rebased ±5 if hash matches nearby)."),
@@ -358,63 +436,95 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                                     "2-letter anchor (a-z) from read_file_hashlines output for the target line."),
                                 ["old_text"] = ToolSchema.StringProperty(
                                     "The exact existing text starting at this line (may span multiple lines)."),
-                                ["new_text"] = ToolSchema.StringProperty(
-                                    "The replacement text.")
+                                ["new_text"] = ToolSchema.StringProperty("The replacement text.")
                             },
-                            required: new[] { "start_line", "start_hash", "old_text", "new_text" }
-                        )
-                    )
+                            new[]
+                            {
+                                "start_line", "start_hash", "old_text", "new_text"
+                            }))
                 },
-                required: new[] { "path", "edits" }
-            ),
-            InvokeAsync: async ctx =>
+                new[]
+                {
+                    "path", "edits"
+                }),
+            async ctx =>
             {
-                var args = ctx.Arguments;
-                var path = args.TryGetValue("path", out var p) ? p?.ToString() ?? "" : "";
-                var editsRaw = args!.GetValueOrDefault("edits");
+                IReadOnlyDictionary<string, object?> args = ctx.Arguments;
+                string path = args.TryGetValue("path", out object? p) ? p?.ToString() ?? "" : "";
+                object? editsRaw = args!.GetValueOrDefault("edits");
 
                 try
                 {
                     // ---------- resolve path ----------
 
-                    var wsPath = _vfs.Resolve(path);
+                    WorkspacePath? wsPath = _vfs.Resolve(path);
                     if (wsPath is null)
-                        return new ToolResult($"Error: path escapes workspace root: '{path}'", IsError: true);
+                    {
+                        return new ToolResult($"Error: path escapes workspace root: '{path}'",
+                            IsError: true);
+                    }
 
-                    var stat = await _vfs.StatAsync(wsPath.Value, ctx.CancellationToken);
+                    FileStat? stat = await _vfs.StatAsync(wsPath.Value, ctx.CancellationToken);
                     if (stat is null)
+                    {
                         return new ToolResult($"Error: path not found: {path}", IsError: true);
+                    }
 
                     // ---------- read current file ----------
 
-                    var bytes = await _vfs.ReadFileAsync(wsPath.Value, ctx.CancellationToken);
+                    ReadOnlyMemory<byte> bytes = await _vfs.ReadFileAsync(wsPath.Value, ctx.CancellationToken);
                     if (bytes.IsEmpty && stat.Size > 0)
-                        return new ToolResult($"Error: could not read file: {path}", IsError: true);
+                    {
+                        return new ToolResult($"Error: could not read file: {path}",
+                            IsError: true);
+                    }
 
                     // Content-based binary detection (BOM / null-byte / UTF-8 decode / printable ratio).
                     if (!TextEncodingDetector.IsText(bytes.Span))
-                        return new ToolResult($"Error: binary file cannot be edited: {path}", IsError: true);
+                    {
+                        return new ToolResult($"Error: binary file cannot be edited: {path}",
+                            IsError: true);
+                    }
 
                     // Scan line boundaries without full-file string allocation
-                    var editSpan = bytes.Span;
-                    var editLineStarts = new List<int> { 0 };
+                    ReadOnlySpan<byte> editSpan = bytes.Span;
+                    var editLineStarts = new List<int>
+                    {
+                        0
+                    };
                     for (int i = 0; i < editSpan.Length; i++)
                     {
                         if (editSpan[i] == (byte)'\n')
+                        {
                             editLineStarts.Add(i + 1);
+                        }
                     }
 
-                    var currentLines = new string[editLineStarts.Count];
+                    string[] currentLines = new string[editLineStarts.Count];
                     for (int i = 0; i < editLineStarts.Count; i++)
                     {
                         int lineByteStart = editLineStarts[i];
-                        int lineByteEnd = (i + 1 < editLineStarts.Count) ? editLineStarts[i + 1] : editSpan.Length;
+                        int lineByteEnd =
+                            i + 1 < editLineStarts.Count
+                                ? editLineStarts[i + 1]
+                                : editSpan.Length;
 
                         int lineLength = lineByteEnd - lineByteStart;
-                        if (lineLength > 0 && editSpan[lineByteStart + lineLength - 1] == (byte)'\n')
+                        if (
+                            lineLength > 0
+                            && editSpan[lineByteStart + lineLength - 1] == (byte)'\n'
+                        )
+                        {
                             lineLength--;
-                        if (lineLength > 0 && editSpan[lineByteStart + lineLength - 1] == (byte)'\r')
+                        }
+
+                        if (
+                            lineLength > 0
+                            && editSpan[lineByteStart + lineLength - 1] == (byte)'\r'
+                        )
+                        {
                             lineLength--;
+                        }
 
                         currentLines[i] = Encoding.UTF8.GetString(editSpan.Slice(lineByteStart, lineLength));
                     }
@@ -423,36 +533,52 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
 
                     var parsedEdits = new List<ParsedEdit>();
 
-                    if (editsRaw is JsonElement editsJe && editsJe.ValueKind == JsonValueKind.Array)
+                    if (
+                        editsRaw is JsonElement editsJe
+                        && editsJe.ValueKind == JsonValueKind.Array
+                    )
                     {
-                        foreach (var item in editsJe.EnumerateArray())
+                        foreach (JsonElement item in editsJe.EnumerateArray())
                         {
                             if (item.ValueKind == JsonValueKind.Object)
                             {
-                                var sl = item.TryGetProperty("start_line", out var slProp) ? slProp.GetInt32() : 0;
-                                var sh = item.TryGetProperty("start_hash", out var shProp) ? shProp.GetString() ?? "" : "";
-                                var ot = item.TryGetProperty("old_text", out var otProp) ? otProp.GetString() ?? "" : "";
-                                var nt = item.TryGetProperty("new_text", out var ntProp) ? ntProp.GetString() ?? "" : "";
+                                int sl = item.TryGetProperty("start_line", out JsonElement slProp)
+                                    ? slProp.GetInt32()
+                                    : 0;
+                                string sh = item.TryGetProperty("start_hash", out JsonElement shProp)
+                                    ? shProp.GetString() ?? ""
+                                    : "";
+                                string ot = item.TryGetProperty("old_text", out JsonElement otProp)
+                                    ? otProp.GetString() ?? ""
+                                    : "";
+                                string nt = item.TryGetProperty("new_text", out JsonElement ntProp)
+                                    ? ntProp.GetString() ?? ""
+                                    : "";
                                 parsedEdits.Add(new ParsedEdit(sl, sh, ot, nt));
                             }
                         }
                     }
 
                     if (parsedEdits.Count == 0)
-                        return new ToolResult("Error: no valid edits provided. Supply an 'edits' array with objects containing start_line, start_hash, old_text, new_text.", IsError: true);
+                    {
+                        return new ToolResult(
+                            "Error: no valid edits provided. Supply an 'edits' array with objects containing start_line, start_hash, old_text, new_text.",
+                            IsError: true);
+                    }
 
                     // Sort by start_line ascending
                     parsedEdits.Sort((a, b) => a.StartLine.CompareTo(b.StartLine));
 
                     // ---------- resolve hashes with rebase ----------
 
-                    var resolvedEdits = new List<(ParsedEdit Edit, int ActualLine, int LineCount)>();
+                    var resolvedEdits =
+                        new List<(ParsedEdit Edit, int ActualLine, int LineCount)>();
                     var errors = new List<string>();
 
-                    foreach (var edit in parsedEdits)
+                    foreach (ParsedEdit edit in parsedEdits)
                     {
-                        var oldLines = edit.OldText.Replace("\r\n", "\n").Split('\n');
-                        var lineCount = oldLines.Length;
+                        string[] oldLines = edit.OldText.Replace("\r\n", "\n").Split('\n');
+                        int lineCount = oldLines.Length;
 
                         // Try exact line first, then rebase ±5
                         int foundLine = -1;
@@ -461,7 +587,7 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
 
                         for (int line = searchStart; line <= searchEnd; line++)
                         {
-                            var lineHash = LineHash.ComputeAnchor(currentLines[line - 1]);
+                            string lineHash = LineHash.ComputeAnchor(currentLines[line - 1]);
                             if (lineHash == edit.StartHash)
                             {
                                 foundLine = line;
@@ -472,53 +598,84 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                         if (foundLine == -1)
                         {
                             // Build nearby context for error
-                            var context = Utf8Text.CreateBuilder();
+                            Utf8Builder context = Utf8Text.CreateBuilder();
                             try
                             {
-                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "Hash mismatch at line {0} (expected hash '{1}'):"u8, edit.StartLine, edit.StartHash);
+                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context,
+                                    "Hash mismatch at line {0} (expected hash '{1}'):"u8,
+                                    edit.StartLine,
+                                    edit.StartHash);
                                 context.AppendLine();
                                 int ctxStart = Math.Max(1, edit.StartLine - 3);
                                 int ctxEnd = Math.Min(currentLines.Length, edit.StartLine + 3);
                                 for (int l = ctxStart; l <= ctxEnd; l++)
                                 {
-                                    var h = LineHash.ComputeAnchor(currentLines[l - 1]);
-                                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "  {0}{1}|"u8, l, h);
+                                    string h = LineHash.ComputeAnchor(currentLines[l - 1]);
+                                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref context,
+                                        "  {0}{1}|"u8,
+                                        l,
+                                        h);
                                     context.Append(currentLines[l - 1]);
                                     context.AppendLine();
                                 }
+
                                 errors.Add(context.ToString().TrimEnd());
                             }
-                            finally { context.Dispose(); }
+                            finally
+                            {
+                                context.Dispose();
+                            }
+
                             continue;
                         }
 
                         // Validate old_text matches at found line
-                        var actualSpan = string.Join("\n",
+                        string actualSpan = string.Join("\n",
                             currentLines.Skip(foundLine - 1).Take(lineCount));
                         if (actualSpan != edit.OldText)
                         {
-                            var context = Utf8Text.CreateBuilder();
+                            Utf8Builder context = Utf8Text.CreateBuilder();
                             try
                             {
-                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "old_text mismatch at resolved line {0} (hash '{1}'):"u8, foundLine, edit.StartHash);
+                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context,
+                                    "old_text mismatch at resolved line {0} (hash '{1}'):"u8,
+                                    foundLine,
+                                    edit.StartHash);
                                 context.AppendLine();
-                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "  Expected: {0}"u8, edit.OldText);
+                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context,
+                                    "  Expected: {0}"u8,
+                                    edit.OldText);
                                 context.AppendLine();
-                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "  Actual:   {0}"u8, actualSpan);
+                                Utf8CompositeFormat.AppendFormatUtf8Slow(ref context,
+                                    "  Actual:   {0}"u8,
+                                    actualSpan);
                                 context.AppendLine();
                                 int ctxStart = Math.Max(1, foundLine - 2);
-                                int ctxEnd = Math.Min(currentLines.Length, foundLine + lineCount + 1);
+                                int ctxEnd = Math.Min(currentLines.Length,
+                                    foundLine + lineCount + 1);
                                 for (int l = ctxStart; l <= ctxEnd; l++)
                                 {
-                                    var h = LineHash.ComputeAnchor(currentLines[l - 1]);
-                                    var marker = (l >= foundLine && l < foundLine + lineCount) ? "~~" : "  ";
-                                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref context, "{0}{1}{2}|"u8, marker, l, h);
+                                    string h = LineHash.ComputeAnchor(currentLines[l - 1]);
+                                    string marker =
+                                        l >= foundLine && l < foundLine + lineCount
+                                            ? "~~"
+                                            : "  ";
+                                    Utf8CompositeFormat.AppendFormatUtf8Slow(ref context,
+                                        "{0}{1}{2}|"u8,
+                                        marker,
+                                        l,
+                                        h);
                                     context.Append(currentLines[l - 1]);
                                     context.AppendLine();
                                 }
+
                                 errors.Add(context.ToString().TrimEnd());
                             }
-                            finally { context.Dispose(); }
+                            finally
+                            {
+                                context.Dispose();
+                            }
+
                             continue;
                         }
 
@@ -526,22 +683,24 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     }
 
                     if (errors.Count > 0)
-                        return new ToolResult("Validation errors:\n\n" + string.Join("\n\n", errors), IsError: true);
+                    {
+                        return new ToolResult("Validation errors:\n\n" + string.Join("\n\n", errors),
+                            IsError: true);
+                    }
 
                     // ---------- check for overlapping edits ----------
 
                     for (int i = 1; i < resolvedEdits.Count; i++)
                     {
-                        var prev = resolvedEdits[i - 1];
-                        var curr = resolvedEdits[i];
-                        var prevEnd = prev.ActualLine + prev.LineCount - 1;
+                        (ParsedEdit Edit, int ActualLine, int LineCount) prev = resolvedEdits[i - 1];
+                        (ParsedEdit Edit, int ActualLine, int LineCount) curr = resolvedEdits[i];
+                        int prevEnd = prev.ActualLine + prev.LineCount - 1;
                         if (curr.ActualLine <= prevEnd)
                         {
-                            return new ToolResult(
-                                $"Error: overlapping edits. " +
-                                $"Edit at line {prev.Edit.StartLine} (resolved {prev.ActualLine}, " +
-                                $"{prev.LineCount} line(s)) overlaps with edit at line {curr.Edit.StartLine} " +
-                                $"(resolved {curr.ActualLine}).",
+                            return new ToolResult($"Error: overlapping edits. "
+                                                  + $"Edit at line {prev.Edit.StartLine} (resolved {prev.ActualLine}, "
+                                                  + $"{prev.LineCount} line(s)) overlaps with edit at line {curr.Edit.StartLine} "
+                                                  + $"(resolved {curr.ActualLine}).",
                                 IsError: true);
                         }
                     }
@@ -551,55 +710,66 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                     var resultLines = new List<string>(currentLines);
                     for (int i = resolvedEdits.Count - 1; i >= 0; i--)
                     {
-                        var (edit, actualLine, lineCount) = resolvedEdits[i];
-                        var newLines = edit.NewText.Replace("\r\n", "\n").Split('\n');
+                        (ParsedEdit edit, int actualLine, int lineCount) = resolvedEdits[i];
+                        string[] newLines = edit.NewText.Replace("\r\n", "\n").Split('\n');
 
                         // Remove old lines, insert new lines
                         resultLines.RemoveRange(actualLine - 1, lineCount);
                         resultLines.InsertRange(actualLine - 1, newLines);
                     }
 
-                    var newText = string.Join("\n", resultLines);
+                    string newText = string.Join("\n", resultLines);
 
                     // ---------- create transaction, stage, diff, commit ----------
 
-                    await using var tx = _txManager.BeginTransaction();
+                    await using IWorkspaceTransaction tx = _txManager.BeginTransaction();
 
-                    var newBytes = Encoding.UTF8.GetBytes(newText);
-                    await tx.Files.WriteFileAsync(wsPath.Value, newBytes.AsMemory(), ctx.CancellationToken);
+                    byte[] newBytes = Encoding.UTF8.GetBytes(newText);
+                    await tx.Files.WriteFileAsync(wsPath.Value,
+                        newBytes.AsMemory(),
+                        ctx.CancellationToken);
 
-                    var diff = await tx.GetDiffAsync(ctx.CancellationToken);
+                    WorkspaceDiff diff = await tx.GetDiffAsync(ctx.CancellationToken);
 
                     await tx.CommitAsync(ctx.CancellationToken);
 
                     // ---------- format result ----------
 
-                    var resultOutput = Utf8Text.CreateBuilder();
+                    Utf8Builder resultOutput = Utf8Text.CreateBuilder();
                     try
                     {
-                        Utf8CompositeFormat.AppendFormatUtf8Slow(ref resultOutput, "Edit committed: {0}"u8, path);
+                        Utf8CompositeFormat.AppendFormatUtf8Slow(ref resultOutput,
+                            "Edit committed: {0}"u8,
+                            path);
                         resultOutput.AppendLine();
 
                         if (diff.HasChanges)
                         {
                             resultOutput.AppendLine();
-                            var fileDiff = diff.FileDiffs[0];
+                            WorkspaceFileDiff fileDiff = diff.FileDiffs[0];
                             if (fileDiff.IsBinary)
+                            {
                                 resultOutput.AppendLiteral("(binary file diff omitted)"u8);
+                            }
                             else if (!string.IsNullOrEmpty(fileDiff.TextDiff))
+                            {
                                 resultOutput.Append(fileDiff.TextDiff);
+                            }
                             else
+                            {
                                 resultOutput.AppendLiteral("(no textual changes)"u8);
+                            }
+
                             resultOutput.AppendLine();
                         }
 
                         // Remind the model to call read_file_hashlines for fresh anchors
                         resultOutput.AppendLine();
-                        resultOutput.AppendLiteral("Call read_file_hashlines to get fresh line anchors if you need to make further edits."u8);
+                        resultOutput.AppendLiteral(
+                            "Call read_file_hashlines to get fresh line anchors if you need to make further edits."u8);
                         resultOutput.AppendLine();
 
-                        return new ToolResult(
-                            Utf8Data: resultOutput.AsSpan().ToArray());
+                        return new ToolResult(Utf8Data: resultOutput.AsSpan().ToArray());
                     }
                     finally
                     {
@@ -612,52 +782,54 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                 }
                 catch (Exception ex)
                 {
-                    return new ToolResult($"Error editing '{path}': {ex.Message}", IsError: true);
+                    return new ToolResult($"Error editing '{path}': {ex.Message}",
+                        IsError: true);
                 }
-            }
-        ));
+            }));
 
         // ============================================================
         // write_file — create or overwrite a file
         // ============================================================
 
-        context.RegisterTool(new ToolDefinition(
-            Name: "write_file",
-            Description:
-                "Create a new file or overwrite an existing file with the given content. " +
-                "Parent directories are created automatically. " +
-                "Use this to create new files; use edit_file_hashline to modify existing files safely. " +
-                "Paths are relative to the workspace root.",
-            Parameters: ToolSchema.Object(
-                new Dictionary<string, JsonElement>
+        context.RegisterTool(new ToolDefinition("write_file",
+            "Create a new file or overwrite an existing file with the given content. "
+            + "Parent directories are created automatically. "
+            + "Use this to create new files; use edit_file_hashline to modify existing files safely. "
+            + "Paths are relative to the workspace root.",
+            ToolSchema.Object(new Dictionary<string, JsonElement>
                 {
                     ["path"] = ToolSchema.StringProperty(
                         "Path to the file to create or overwrite (relative to workspace root)."),
-                    ["content"] = ToolSchema.StringProperty(
-                        "The text content to write to the file.")
+                    ["content"] = ToolSchema.StringProperty("The text content to write to the file.")
                 },
-                required: new[] { "path", "content" }
-            ),
-            InvokeAsync: async ctx =>
+                new[]
+                {
+                    "path", "content"
+                }),
+            async ctx =>
             {
-                var args = ctx.Arguments;
-                var path = args.TryGetValue("path", out var p) ? p?.ToString() ?? "" : "";
-                var content = args.TryGetValue("content", out var c) ? c?.ToString() ?? "" : "";
+                IReadOnlyDictionary<string, object?> args = ctx.Arguments;
+                string path = args.TryGetValue("path", out object? p) ? p?.ToString() ?? "" : "";
+                string content = args.TryGetValue("content", out object? c) ? c?.ToString() ?? "" : "";
 
                 try
                 {
-                    var wsPath = _vfs.Resolve(path);
+                    WorkspacePath? wsPath = _vfs.Resolve(path);
                     if (wsPath is null)
-                        return new ToolResult($"Error: path escapes workspace root: '{path}'", IsError: true);
+                    {
+                        return new ToolResult($"Error: path escapes workspace root: '{path}'",
+                            IsError: true);
+                    }
 
-                    var bytes = Encoding.UTF8.GetBytes(content);
+                    byte[] bytes = Encoding.UTF8.GetBytes(content);
 
                     // VFS creates parent directories automatically
-                    await _vfs.WriteFileAsync(wsPath.Value, bytes.AsMemory(), ctx.CancellationToken);
+                    await _vfs.WriteFileAsync(wsPath.Value,
+                        bytes.AsMemory(),
+                        ctx.CancellationToken);
 
-                    var lineCount = content.AsSpan().Count('\n') + 1;
-                    return new ToolResult(
-                        $"Wrote {path} ({FormatSize.Format(bytes.Length)}, {lineCount} lines).",
+                    int lineCount = content.AsSpan().Count('\n') + 1;
+                    return new ToolResult($"Wrote {path} ({FormatSize.Format(bytes.Length)}, {lineCount} lines).",
                         IsError: false);
                 }
                 catch (OperationCanceledException)
@@ -666,40 +838,76 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
                 }
                 catch (Exception ex)
                 {
-                    return new ToolResult($"Error writing '{path}': {ex.Message}", IsError: true);
+                    return new ToolResult($"Error writing '{path}': {ex.Message}",
+                        IsError: true);
                 }
-            }
-        ));
+            }));
     }
 
     private static int? TryGetInt(IReadOnlyDictionary<string, object?> args, string key)
     {
-        if (!args.TryGetValue(key, out var val) || val is null) return null;
-        if (val is int i) return i;
-        if (val is JsonElement je && je.ValueKind == JsonValueKind.Number && je.TryGetInt32(out var ji))
-            return ji;
-        if (val is long l) return (int)l;
-        if (val is double d) return (int)d;
+        if (!args.TryGetValue(key, out object? val) || val is null)
+        {
+            return null;
+        }
 
-        var str = val.ToString();
-        if (string.IsNullOrEmpty(str)) return null;
+        if (val is int i)
+        {
+            return i;
+        }
+
+        if (
+            val is JsonElement je
+            && je.ValueKind == JsonValueKind.Number
+            && je.TryGetInt32(out int ji)
+        )
+        {
+            return ji;
+        }
+
+        if (val is long l)
+        {
+            return (int)l;
+        }
+
+        if (val is double d)
+        {
+            return (int)d;
+        }
+
+        string? str = val.ToString();
+        if (string.IsNullOrEmpty(str))
+        {
+            return null;
+        }
 
         // Support 0x-prefixed hex values
         if (str.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
         {
-            if (int.TryParse(str[2..], System.Globalization.NumberStyles.HexNumber, null, out var hexVal))
+            if (
+                int.TryParse(str[2..],
+                    NumberStyles.HexNumber,
+                    null,
+                    out int hexVal)
+            )
+            {
                 return hexVal;
+            }
+
             return null;
         }
 
-        if (int.TryParse(str, out var parsed)) return parsed;
+        if (int.TryParse(str, out int parsed))
+        {
+            return parsed;
+        }
+
         return null;
     }
 
     /// <summary>
-    /// Build a ContentProcessorContext from tool invocation context and file info.
+    ///     Build a ContentProcessorContext from tool invocation context and file info.
     /// </summary>
-
     private ContentProcessorContext BuildContext(
         ToolInvocationContext ctx,
         string relativePath,
@@ -710,23 +918,22 @@ public sealed class BuiltinWorkspaceToolsExtension : IOmicronExtension
         int? offset,
         int? limit)
     {
-        var absPath = Path.Combine(_vfs.RootPath, wsPath.Value);
-        return new ContentProcessorContext(
-            AbsolutePath: absPath,
-            RelativePath: relativePath,
-            Bytes: bytes,
-            FileSize: fileSize,
-            SessionId: ctx.SessionId,
-            ModelMetadata: ctx.ModelMetadata,
-            Format: format,
-            Offset: offset,
-            Limit: limit,
-            EventSink: _eventSink,
-            CancellationToken: ctx.CancellationToken);
+        string absPath = Path.Combine(_vfs.RootPath, wsPath.Value);
+        return new ContentProcessorContext(absPath,
+            relativePath,
+            bytes,
+            fileSize,
+            ctx.SessionId,
+            ctx.ModelMetadata,
+            format,
+            offset,
+            limit,
+            _eventSink,
+            ctx.CancellationToken);
     }
 
     /// <summary>
-    /// Parsed edit operation from tool arguments.
+    ///     Parsed edit operation from tool arguments.
     /// </summary>
     private sealed record ParsedEdit(
         int StartLine,

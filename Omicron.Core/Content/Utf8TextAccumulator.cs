@@ -1,12 +1,10 @@
-using Omicron.Core.Text;
-
 namespace Omicron.Core.Content;
 
 /// <summary>
-/// Accumulates UTF-8 text without forcing intermediate string allocations.
-/// Provides backward-compatible <see cref="ToString()"/> for callers that
-/// still need strings, but can also transfer ownership of the underlying
-/// <see cref="Utf8ContentBuffer"/> for UTF-8-native consumption.
+///     Accumulates UTF-8 text without forcing intermediate string allocations.
+///     Provides backward-compatible <see cref="ToString()" /> for callers that
+///     still need strings, but can also transfer ownership of the underlying
+///     <see cref="Utf8ContentBuffer" /> for UTF-8-native consumption.
 /// </summary>
 internal sealed class Utf8TextAccumulator : IDisposable
 {
@@ -20,11 +18,20 @@ internal sealed class Utf8TextAccumulator : IDisposable
     /// <summary>Current byte length of accumulated text.</summary>
     public int Length => _buffer.Length;
 
+    public void Dispose()
+    {
+        _buffer.Dispose();
+    }
+
     /// <summary>Append a string (or null) to the accumulator.</summary>
     public void Append(string? text)
     {
-        if (text is null) return;
-        _buffer.Mutate(text, static (ref Utf8Builder b, string t) => b.Append(t));
+        if (text is null)
+        {
+            return;
+        }
+
+        _buffer.Mutate(text, static (ref b, t) => b.Append(t));
     }
 
     /// <summary>Append raw UTF-8 bytes to the accumulator.</summary>
@@ -55,19 +62,14 @@ internal sealed class Utf8TextAccumulator : IDisposable
     }
 
     /// <summary>
-    /// Transfer ownership of the underlying <see cref="Utf8ContentBuffer"/>.
-    /// After this call, the accumulator is empty and must not be used until reinitialized.
-    /// Caller is responsible for disposing the returned buffer.
+    ///     Transfer ownership of the underlying <see cref="Utf8ContentBuffer" />.
+    ///     After this call, the accumulator is empty and must not be used until reinitialized.
+    ///     Caller is responsible for disposing the returned buffer.
     /// </summary>
     public Utf8ContentBuffer ToOwnedBuffer()
     {
-        var result = _buffer;
+        Utf8ContentBuffer result = _buffer;
         _buffer = new Utf8ContentBuffer();
         return result;
-    }
-
-    public void Dispose()
-    {
-        _buffer.Dispose();
     }
 }

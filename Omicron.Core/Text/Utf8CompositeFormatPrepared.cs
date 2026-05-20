@@ -3,10 +3,10 @@ using System.Buffers;
 namespace Omicron.Core.Text;
 
 /// <summary>
-/// A single parsed segment of a prepared format template.
-/// <c>FormatIndex == -1</c> indicates a literal segment;
-/// <c>Offset</c> and <c>Count</c> refer into the owned literal buffer.
-/// <c>FormatIndex >= 0</c> indicates a placeholder for the argument at that index.
+///     A single parsed segment of a prepared format template.
+///     <c>FormatIndex == -1</c> indicates a literal segment;
+///     <c>Offset</c> and <c>Count</c> refer into the owned literal buffer.
+///     <c>FormatIndex >= 0</c> indicates a placeholder for the argument at that index.
 /// </summary>
 internal readonly struct Utf8FormatSegment
 {
@@ -17,7 +17,13 @@ internal readonly struct Utf8FormatSegment
     public readonly int SpecStart; // -1 if no specifier
     public readonly int SpecLength;
 
-    public Utf8FormatSegment(int offset, int count, int formatIndex, int alignment = 0, int specStart = -1, int specLength = 0)
+    public Utf8FormatSegment(
+        int offset,
+        int count,
+        int formatIndex,
+        int alignment = 0,
+        int specStart = -1,
+        int specLength = 0)
     {
         Offset = offset;
         Count = count;
@@ -33,19 +39,19 @@ internal readonly struct Utf8FormatSegment
 // ──────────────────────────────────────────────
 
 /// <summary>
-/// A pre-parsed UTF-8 composite format template for one argument.
-/// Skips re-scanning the template on each use.
+///     A pre-parsed UTF-8 composite format template for one argument.
+///     Skips re-scanning the template on each use.
 /// </summary>
 public sealed class PreparedUtf8CompositeFormat<T1>
     where T1 : IUtf8SpanFormattable
 {
-    private readonly byte[] _literalBuffer;
     private readonly byte[] _formatBuffer;
+    private readonly byte[] _literalBuffer;
     private readonly Utf8FormatSegment[] _segments;
 
     internal PreparedUtf8CompositeFormat(ReadOnlySpan<byte> format)
     {
-        (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, maxIndex: 0);
+        (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, 0);
         _formatBuffer = format.ToArray();
     }
 
@@ -53,28 +59,40 @@ public sealed class PreparedUtf8CompositeFormat<T1>
     public bool TryFormat(Span<byte> destination, out int written, T1 arg1)
     {
         written = 0;
-        foreach (ref readonly var seg in _segments.AsSpan())
+        foreach (ref readonly Utf8FormatSegment seg in _segments.AsSpan())
         {
             if (seg.FormatIndex < 0)
             {
-                var src = _literalBuffer.AsSpan(seg.Offset, seg.Count);
+                Span<byte> src = _literalBuffer.AsSpan(seg.Offset, seg.Count);
                 if (src.Length > destination.Length - written)
+                {
                     return false;
+                }
+
                 src.CopyTo(destination.Slice(written));
                 written += src.Length;
             }
             else
             {
-                if (!Utf8CompositeFormat.TryFormatAligned(arg1, destination, ref written,
-                    seg.SpecStart >= 0 ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength) : default,
-                    seg.Alignment))
+                if (
+                    !Utf8CompositeFormat.TryFormatAligned(arg1,
+                        destination,
+                        ref written,
+                        seg.SpecStart >= 0
+                            ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength)
+                            : default,
+                        seg.Alignment)
+                )
+                {
                     return false;
+                }
             }
         }
+
         return true;
     }
 
-    /// <summary>Format into an <see cref="IBufferWriter{byte}"/>.</summary>
+    /// <summary>Format into an <see cref="IBufferWriter{byte}" />.</summary>
     public void Format<TBufferWriter>(ref TBufferWriter writer, T1 arg1)
         where TBufferWriter : IBufferWriter<byte>
     {
@@ -89,8 +107,12 @@ public sealed class PreparedUtf8CompositeFormat<T1>
                 writer.Advance(written);
                 return;
             }
+
             if (capacity >= maxCap)
+            {
                 throw new InvalidOperationException("Prepared format: output exceeds safety limit.");
+            }
+
             capacity = Math.Min(capacity * 2, maxCap);
         }
     }
@@ -105,13 +127,13 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2>
     where T1 : IUtf8SpanFormattable
     where T2 : IUtf8SpanFormattable
 {
-    private readonly byte[] _literalBuffer;
     private readonly byte[] _formatBuffer;
+    private readonly byte[] _literalBuffer;
     private readonly Utf8FormatSegment[] _segments;
 
     internal PreparedUtf8CompositeFormat(ReadOnlySpan<byte> format)
     {
-        (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, maxIndex: 1);
+        (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, 1);
         _formatBuffer = format.ToArray();
     }
 
@@ -119,13 +141,16 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2>
     public bool TryFormat(Span<byte> destination, out int written, T1 arg1, T2 arg2)
     {
         written = 0;
-        foreach (ref readonly var seg in _segments.AsSpan())
+        foreach (ref readonly Utf8FormatSegment seg in _segments.AsSpan())
         {
             if (seg.FormatIndex < 0)
             {
-                var src = _literalBuffer.AsSpan(seg.Offset, seg.Count);
+                Span<byte> src = _literalBuffer.AsSpan(seg.Offset, seg.Count);
                 if (src.Length > destination.Length - written)
+                {
                     return false;
+                }
+
                 src.CopyTo(destination.Slice(written));
                 written += src.Length;
             }
@@ -133,21 +158,33 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2>
             {
                 bool ok = seg.FormatIndex switch
                 {
-                    0 => Utf8CompositeFormat.TryFormatAligned(arg1, destination, ref written,
-                    seg.SpecStart >= 0 ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength) : default,
-                    seg.Alignment),
-                    1 => Utf8CompositeFormat.TryFormatAligned(arg2, destination, ref written,
-                    seg.SpecStart >= 0 ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength) : default,
-                    seg.Alignment),
+                    0 => Utf8CompositeFormat.TryFormatAligned(arg1,
+                        destination,
+                        ref written,
+                        seg.SpecStart >= 0
+                            ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength)
+                            : default,
+                        seg.Alignment),
+                    1 => Utf8CompositeFormat.TryFormatAligned(arg2,
+                        destination,
+                        ref written,
+                        seg.SpecStart >= 0
+                            ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength)
+                            : default,
+                        seg.Alignment),
                     _ => throw new FormatException($"Invalid placeholder index {seg.FormatIndex}.")
                 };
-                if (!ok) return false;
+                if (!ok)
+                {
+                    return false;
+                }
             }
         }
+
         return true;
     }
 
-    /// <summary>Format into an <see cref="IBufferWriter{byte}"/>.</summary>
+    /// <summary>Format into an <see cref="IBufferWriter{byte}" />.</summary>
     public void Format<TBufferWriter>(ref TBufferWriter writer, T1 arg1, T2 arg2)
         where TBufferWriter : IBufferWriter<byte>
     {
@@ -162,8 +199,12 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2>
                 writer.Advance(written);
                 return;
             }
+
             if (capacity >= maxCap)
+            {
                 throw new InvalidOperationException("Prepared format: output exceeds safety limit.");
+            }
+
             capacity = Math.Min(capacity * 2, maxCap);
         }
     }
@@ -179,13 +220,13 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2, T3>
     where T2 : IUtf8SpanFormattable
     where T3 : IUtf8SpanFormattable
 {
-    private readonly byte[] _literalBuffer;
     private readonly byte[] _formatBuffer;
+    private readonly byte[] _literalBuffer;
     private readonly Utf8FormatSegment[] _segments;
 
     internal PreparedUtf8CompositeFormat(ReadOnlySpan<byte> format)
     {
-        (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, maxIndex: 2);
+        (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, 2);
         _formatBuffer = format.ToArray();
     }
 
@@ -193,13 +234,16 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2, T3>
     public bool TryFormat(Span<byte> destination, out int written, T1 arg1, T2 arg2, T3 arg3)
     {
         written = 0;
-        foreach (ref readonly var seg in _segments.AsSpan())
+        foreach (ref readonly Utf8FormatSegment seg in _segments.AsSpan())
         {
             if (seg.FormatIndex < 0)
             {
-                var src = _literalBuffer.AsSpan(seg.Offset, seg.Count);
+                Span<byte> src = _literalBuffer.AsSpan(seg.Offset, seg.Count);
                 if (src.Length > destination.Length - written)
+                {
                     return false;
+                }
+
                 src.CopyTo(destination.Slice(written));
                 written += src.Length;
             }
@@ -207,24 +251,40 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2, T3>
             {
                 bool ok = seg.FormatIndex switch
                 {
-                    0 => Utf8CompositeFormat.TryFormatAligned(arg1, destination, ref written,
-                    seg.SpecStart >= 0 ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength) : default,
-                    seg.Alignment),
-                    1 => Utf8CompositeFormat.TryFormatAligned(arg2, destination, ref written,
-                    seg.SpecStart >= 0 ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength) : default,
-                    seg.Alignment),
-                    2 => Utf8CompositeFormat.TryFormatAligned(arg3, destination, ref written,
-                    seg.SpecStart >= 0 ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength) : default,
-                    seg.Alignment),
+                    0 => Utf8CompositeFormat.TryFormatAligned(arg1,
+                        destination,
+                        ref written,
+                        seg.SpecStart >= 0
+                            ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength)
+                            : default,
+                        seg.Alignment),
+                    1 => Utf8CompositeFormat.TryFormatAligned(arg2,
+                        destination,
+                        ref written,
+                        seg.SpecStart >= 0
+                            ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength)
+                            : default,
+                        seg.Alignment),
+                    2 => Utf8CompositeFormat.TryFormatAligned(arg3,
+                        destination,
+                        ref written,
+                        seg.SpecStart >= 0
+                            ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength)
+                            : default,
+                        seg.Alignment),
                     _ => throw new FormatException($"Invalid placeholder index {seg.FormatIndex}.")
                 };
-                if (!ok) return false;
+                if (!ok)
+                {
+                    return false;
+                }
             }
         }
+
         return true;
     }
 
-    /// <summary>Format into an <see cref="IBufferWriter{byte}"/>.</summary>
+    /// <summary>Format into an <see cref="IBufferWriter{byte}" />.</summary>
     public void Format<TBufferWriter>(ref TBufferWriter writer, T1 arg1, T2 arg2, T3 arg3)
         where TBufferWriter : IBufferWriter<byte>
     {
@@ -239,8 +299,12 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2, T3>
                 writer.Advance(written);
                 return;
             }
+
             if (capacity >= maxCap)
+            {
                 throw new InvalidOperationException("Prepared format: output exceeds safety limit.");
+            }
+
             capacity = Math.Min(capacity * 2, maxCap);
         }
     }
@@ -257,27 +321,36 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2, T3, T4>
     where T3 : IUtf8SpanFormattable
     where T4 : IUtf8SpanFormattable
 {
-    private readonly byte[] _literalBuffer;
     private readonly byte[] _formatBuffer;
+    private readonly byte[] _literalBuffer;
     private readonly Utf8FormatSegment[] _segments;
 
     internal PreparedUtf8CompositeFormat(ReadOnlySpan<byte> format)
     {
-        (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, maxIndex: 3);
+        (_literalBuffer, _segments) = Utf8CompositeFormat.ParseFormat(format, 3);
         _formatBuffer = format.ToArray();
     }
 
     /// <summary>Format into a fixed buffer.</summary>
-    public bool TryFormat(Span<byte> destination, out int written, T1 arg1, T2 arg2, T3 arg3, T4 arg4)
+    public bool TryFormat(
+        Span<byte> destination,
+        out int written,
+        T1 arg1,
+        T2 arg2,
+        T3 arg3,
+        T4 arg4)
     {
         written = 0;
-        foreach (ref readonly var seg in _segments.AsSpan())
+        foreach (ref readonly Utf8FormatSegment seg in _segments.AsSpan())
         {
             if (seg.FormatIndex < 0)
             {
-                var src = _literalBuffer.AsSpan(seg.Offset, seg.Count);
+                Span<byte> src = _literalBuffer.AsSpan(seg.Offset, seg.Count);
                 if (src.Length > destination.Length - written)
+                {
                     return false;
+                }
+
                 src.CopyTo(destination.Slice(written));
                 written += src.Length;
             }
@@ -285,27 +358,47 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2, T3, T4>
             {
                 bool ok = seg.FormatIndex switch
                 {
-                    0 => Utf8CompositeFormat.TryFormatAligned(arg1, destination, ref written,
-                    seg.SpecStart >= 0 ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength) : default,
-                    seg.Alignment),
-                    1 => Utf8CompositeFormat.TryFormatAligned(arg2, destination, ref written,
-                    seg.SpecStart >= 0 ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength) : default,
-                    seg.Alignment),
-                    2 => Utf8CompositeFormat.TryFormatAligned(arg3, destination, ref written,
-                    seg.SpecStart >= 0 ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength) : default,
-                    seg.Alignment),
-                    3 => Utf8CompositeFormat.TryFormatAligned(arg4, destination, ref written,
-                    seg.SpecStart >= 0 ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength) : default,
-                    seg.Alignment),
+                    0 => Utf8CompositeFormat.TryFormatAligned(arg1,
+                        destination,
+                        ref written,
+                        seg.SpecStart >= 0
+                            ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength)
+                            : default,
+                        seg.Alignment),
+                    1 => Utf8CompositeFormat.TryFormatAligned(arg2,
+                        destination,
+                        ref written,
+                        seg.SpecStart >= 0
+                            ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength)
+                            : default,
+                        seg.Alignment),
+                    2 => Utf8CompositeFormat.TryFormatAligned(arg3,
+                        destination,
+                        ref written,
+                        seg.SpecStart >= 0
+                            ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength)
+                            : default,
+                        seg.Alignment),
+                    3 => Utf8CompositeFormat.TryFormatAligned(arg4,
+                        destination,
+                        ref written,
+                        seg.SpecStart >= 0
+                            ? _formatBuffer.AsSpan(seg.SpecStart, seg.SpecLength)
+                            : default,
+                        seg.Alignment),
                     _ => throw new FormatException($"Invalid placeholder index {seg.FormatIndex}.")
                 };
-                if (!ok) return false;
+                if (!ok)
+                {
+                    return false;
+                }
             }
         }
+
         return true;
     }
 
-    /// <summary>Format into an <see cref="IBufferWriter{byte}"/>.</summary>
+    /// <summary>Format into an <see cref="IBufferWriter{byte}" />.</summary>
     public void Format<TBufferWriter>(ref TBufferWriter writer, T1 arg1, T2 arg2, T3 arg3, T4 arg4)
         where TBufferWriter : IBufferWriter<byte>
     {
@@ -320,8 +413,12 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2, T3, T4>
                 writer.Advance(written);
                 return;
             }
+
             if (capacity >= maxCap)
+            {
                 throw new InvalidOperationException("Prepared format: output exceeds safety limit.");
+            }
+
             capacity = Math.Min(capacity * 2, maxCap);
         }
     }
@@ -334,7 +431,9 @@ public sealed class PreparedUtf8CompositeFormat<T1, T2, T3, T4>
 public static partial class Utf8CompositeFormat
 {
     /// <summary>Parse a UTF-8 format template into literal buffer + segments.</summary>
-    internal static (byte[] literalBuffer, Utf8FormatSegment[] segments) ParseFormat(ReadOnlySpan<byte> format, int maxIndex = -1)
+    internal static (byte[] literalBuffer, Utf8FormatSegment[] segments) ParseFormat(
+        ReadOnlySpan<byte> format,
+        int maxIndex = -1)
     {
         // First pass: scan to count segments and compute literal buffer size
         int segmentCount = 0;
@@ -352,6 +451,7 @@ public static partial class Utf8CompositeFormat
                     i++;
                     continue;
                 }
+
                 // Placeholder ends literal run; placeholder itself contributes no literal bytes
                 segmentCount++;
                 i = SkipPlaceholder(format, i);
@@ -365,6 +465,7 @@ public static partial class Utf8CompositeFormat
                     i++;
                     continue;
                 }
+
                 throw new FormatException("Malformed UTF-8 format template: unexpected '}' outside placeholder.");
             }
             else
@@ -377,7 +478,7 @@ public static partial class Utf8CompositeFormat
         segmentCount++; // at least one segment (possibly empty)
 
         // Allocate
-        var buffer = new byte[literalByteCount];
+        byte[] buffer = new byte[literalByteCount];
         var segments = new Utf8FormatSegment[segmentCount];
         int bufPos = 0;
         int segIdx = 0;
@@ -392,6 +493,7 @@ public static partial class Utf8CompositeFormat
                 {
                     segments[segIdx++] = new Utf8FormatSegment(litStart, len, -1);
                 }
+
                 litStart = -1;
             }
         }
@@ -399,7 +501,9 @@ public static partial class Utf8CompositeFormat
         void StartLiteral()
         {
             if (litStart < 0)
+            {
                 litStart = bufPos;
+            }
         }
 
         // Second pass: build segments
@@ -415,12 +519,26 @@ public static partial class Utf8CompositeFormat
                     i++;
                     continue;
                 }
+
                 FlushLiteral();
                 // Parse index
-                int argIndex = ParsePlaceholderIndex(format, ref i, out int align, out int specStart, out int specLen);
+                int argIndex = ParsePlaceholderIndex(format,
+                    ref i,
+                    out int align,
+                    out int specStart,
+                    out int specLen);
                 if (maxIndex >= 0 && argIndex > maxIndex)
-                    throw new FormatException($"Placeholder {{{argIndex}}} exceeds available arguments (max index {maxIndex}).");
-                segments[segIdx++] = new Utf8FormatSegment(0, 0, argIndex, align, specStart, specLen);
+                {
+                    throw new FormatException(
+                        $"Placeholder {{{argIndex}}} exceeds available arguments (max index {maxIndex}).");
+                }
+
+                segments[segIdx++] = new Utf8FormatSegment(0,
+                    0,
+                    argIndex,
+                    align,
+                    specStart,
+                    specLen);
             }
             else if (b == (byte)'}')
             {
@@ -429,7 +547,6 @@ public static partial class Utf8CompositeFormat
                     StartLiteral();
                     buffer[bufPos++] = (byte)'}';
                     i++;
-                    continue;
                 }
                 // Should not reach here — validated in first pass
             }
@@ -444,7 +561,9 @@ public static partial class Utf8CompositeFormat
 
         // Trim segment array if we allocated too many
         if (segIdx < segments.Length)
+        {
             Array.Resize(ref segments, segIdx);
+        }
 
         return (buffer, segments);
     }
@@ -455,21 +574,41 @@ public static partial class Utf8CompositeFormat
         i++; // skip '{'
         // Skip index digits (at least one required)
         if (i >= format.Length || format[i] < (byte)'0' || format[i] > (byte)'9')
+        {
             throw new FormatException("Empty placeholder index.");
+        }
+
         while (i < format.Length && format[i] >= (byte)'0' && format[i] <= (byte)'9')
+        {
             i++;
+        }
+
         // Skip optional alignment
         if (i < format.Length && format[i] == (byte)',')
         {
             i++;
-            while (i < format.Length && format[i] == (byte)' ') i++;
-            if (i < format.Length && format[i] == (byte)'-') i++;
+            while (i < format.Length && format[i] == (byte)' ')
+            {
+                i++;
+            }
+
+            if (i < format.Length && format[i] == (byte)'-')
+            {
+                i++;
+            }
+
             // At least one digit required after alignment sign
             if (i >= format.Length || format[i] < (byte)'0' || format[i] > (byte)'9')
+            {
                 throw new FormatException("Expected alignment digits after ','.");
+            }
+
             while (i < format.Length && format[i] >= (byte)'0' && format[i] <= (byte)'9')
+            {
                 i++;
+            }
         }
+
         // Skip optional format specifier
         if (i < format.Length && format[i] == (byte)':')
         {
@@ -477,18 +616,29 @@ public static partial class Utf8CompositeFormat
             while (i < format.Length && format[i] != (byte)'}')
             {
                 if (format[i] == (byte)'{')
+                {
                     throw new FormatException("Nested '{' in format specifier.");
+                }
+
                 i++;
             }
         }
+
         if (i < format.Length && format[i] == (byte)'}')
+        {
             return i;
+        }
+
         throw new FormatException("Unclosed placeholder.");
     }
 
     /// <summary>Parse the integer index of a placeholder starting after the opening brace. Advances i past the closing brace.</summary>
-    private static int ParsePlaceholderIndex(ReadOnlySpan<byte> format, scoped ref int i,
-        out int alignment, out int specStart, out int specLength)
+    private static int ParsePlaceholderIndex(
+        ReadOnlySpan<byte> format,
+        scoped ref int i,
+        out int alignment,
+        out int specStart,
+        out int specLength)
     {
         i++; // skip '{'
         int index = 0;
@@ -499,22 +649,38 @@ public static partial class Utf8CompositeFormat
             index = index * 10 + (format[i] - (byte)'0');
             i++;
         }
+
         if (!hasDigit)
+        {
             throw new FormatException("Empty placeholder.");
+        }
 
         alignment = 0;
         if (i < format.Length && format[i] == (byte)',')
         {
             i++;
-            while (i < format.Length && format[i] == (byte)' ') i++;
+            while (i < format.Length && format[i] == (byte)' ')
+            {
+                i++;
+            }
+
             bool neg = false;
-            if (i < format.Length && format[i] == (byte)'-') { neg = true; i++; }
+            if (i < format.Length && format[i] == (byte)'-')
+            {
+                neg = true;
+                i++;
+            }
+
             while (i < format.Length && format[i] >= (byte)'0' && format[i] <= (byte)'9')
             {
                 alignment = alignment * 10 + (format[i] - (byte)'0');
                 i++;
             }
-            if (neg) alignment = -alignment;
+
+            if (neg)
+            {
+                alignment = -alignment;
+            }
         }
 
         specStart = -1;
@@ -527,14 +693,20 @@ public static partial class Utf8CompositeFormat
             {
                 // Reject non-ASCII specifier bytes at prepare time
                 if (format[i] > 127)
+                {
                     throw new FormatException("Non-ASCII format specifier is not supported.");
+                }
+
                 specLength++;
                 i++;
             }
         }
 
         if (i >= format.Length || format[i] != (byte)'}')
+        {
             throw new FormatException("Missing closing '}' in placeholder.");
+        }
+
         // Note: for loop caller increments i past '}'
         return index;
     }

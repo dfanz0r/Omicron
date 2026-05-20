@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.Models;
@@ -13,33 +14,82 @@ public class SessionProjectionTests
     private static readonly SessionId TestSessionId = SessionId.New();
     private static readonly AgentId TestAgentId = AgentId.New();
 
-    private static SessionStartedEvent Started() =>
-        new(new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, TestSessionId), TestAgentId, "gpt-4o", "openai");
+    private static SessionStartedEvent Started()
+    {
+        return new SessionStartedEvent(new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, TestSessionId),
+            TestAgentId,
+            "gpt-4o",
+            "openai");
+    }
 
-    private static UserMessageEvent UserMsg(string text, long seq = 2) =>
-        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId), Utf8String.FromString(text));
+    private static UserMessageEvent UserMsg(string text, long seq = 2)
+    {
+        return new UserMessageEvent(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
+            Utf8String.FromString(text));
+    }
 
-    private static AssistantResponseCompleteEvent AssistantResp(string text, int input = 10, int output = 20, long seq = 3) =>
-        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId), Utf8String.FromString(text), null,
+    private static AssistantResponseCompleteEvent AssistantResp(
+        string text,
+        int input = 10,
+        int output = 20,
+        long seq = 3)
+    {
+        return new AssistantResponseCompleteEvent(
+            new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
+            Utf8String.FromString(text),
+            null,
             new TokenUsage(input, output));
+    }
 
-    private static ToolInvocationStartedEvent ToolStart(string id, string name, long seq = 4) =>
-        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
-            new ToolCallId(id), name, new Dictionary<string, object?>());
+    private static ToolInvocationStartedEvent ToolStart(string id, string name, long seq = 4)
+    {
+        return new ToolInvocationStartedEvent(
+            new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
+            new ToolCallId(id),
+            name,
+            new Dictionary<string, object?>());
+    }
 
-    private static ToolInvocationCompletedEvent ToolEnd(string id, string name, string result, bool isError = false, long seq = 5) =>
-        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
-            new ToolCallId(id), name, Utf8String.FromString(result), isError);
+    private static ToolInvocationCompletedEvent ToolEnd(
+        string id,
+        string name,
+        string result,
+        bool isError = false,
+        long seq = 5)
+    {
+        return new ToolInvocationCompletedEvent(
+            new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
+            new ToolCallId(id),
+            name,
+            Utf8String.FromString(result),
+            isError);
+    }
 
-    private static ProviderStateUpdatedEvent ProvUpdate(ProviderStateKey key, string? prevRespId, long seq = 6) =>
-        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
-            new ProviderStateSnapshot(key, prevRespId, null, null, null), "test");
+    private static ProviderStateUpdatedEvent ProvUpdate(
+        ProviderStateKey key,
+        string? prevRespId,
+        long seq = 6)
+    {
+        return new ProviderStateUpdatedEvent(
+            new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
+            new ProviderStateSnapshot(key, prevRespId, null, null, null),
+            "test");
+    }
 
-    private static ProviderStateClearedEvent ProvClear(ProviderStateKey key, long seq = 7) =>
-        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId), key, "test");
+    private static ProviderStateClearedEvent ProvClear(ProviderStateKey key, long seq = 7)
+    {
+        return new ProviderStateClearedEvent(
+            new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
+            key,
+            "test");
+    }
 
-    private static SessionErrorEvent Err(string msg, long seq = 8) =>
-        new(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId), msg, "test_error");
+    private static SessionErrorEvent Err(string msg, long seq = 8)
+    {
+        return new SessionErrorEvent(new EventEnvelope(EventId.New(), seq, DateTimeOffset.UtcNow, TestSessionId),
+            msg,
+            "test_error");
+    }
 
     [Fact]
     public void SimplePrompt_ReconstructsMessages()
@@ -47,12 +97,10 @@ public class SessionProjectionTests
         var projector = new SessionProjector();
         var events = new OmicronEvent[]
         {
-            Started(),
-            UserMsg("Hello"),
-            AssistantResp("Hi there!", 10, 20)
+            Started(), UserMsg("Hello"), AssistantResp("Hi there!")
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         Assert.Equal(TestSessionId, projection.SessionId);
         Assert.Equal(2, projection.Messages.Count);
@@ -73,14 +121,11 @@ public class SessionProjectionTests
         var projector = new SessionProjector();
         var events = new OmicronEvent[]
         {
-            Started(),
-            UserMsg("What's the weather?"),
-            ToolStart("call_1", "get_weather"),
-            ToolEnd("call_1", "get_weather", "Sunny, 25°C"),
-            AssistantResp("It's sunny!", 5, 10)
+            Started(), UserMsg("What's the weather?"), ToolStart("call_1", "get_weather"),
+            ToolEnd("call_1", "get_weather", "Sunny, 25°C"), AssistantResp("It's sunny!", 5, 10)
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         Assert.Equal(4, projection.Messages.Count);
 
@@ -91,7 +136,7 @@ public class SessionProjectionTests
         // Message[1]: assistant with tool call (created by ToolStart)
         Assert.Equal(MessageRole.Assistant, projection.Messages[1].Role);
         Assert.NotNull(projection.Messages[1].ToolCalls);
-        var tc1 = Assert.Single(projection.Messages[1].ToolCalls!);
+        ToolCallContent tc1 = Assert.Single(projection.Messages[1].ToolCalls!);
         Assert.Equal("call_1", tc1!.Id);
         Assert.Equal("get_weather", tc1!.Name);
 
@@ -114,16 +159,18 @@ public class SessionProjectionTests
     public void ProviderState_UpdatesAndClears()
     {
         var projector = new SessionProjector();
-        var key = ProviderStateKey.Create(TestSessionId, TestAgentId, "openai", "gpt-5.5", ApiType.OpenAiResponses);
+        var key = ProviderStateKey.Create(TestSessionId,
+            TestAgentId,
+            "openai",
+            "gpt-5.5",
+            ApiType.OpenAiResponses);
 
         var events = new OmicronEvent[]
         {
-            Started(),
-            ProvUpdate(key, "resp_123"),
-            ProvClear(key)
+            Started(), ProvUpdate(key, "resp_123"), ProvClear(key)
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         Assert.Empty(projection.ProviderStates);
     }
@@ -132,22 +179,28 @@ public class SessionProjectionTests
     public void ProviderState_PreservesAllFields()
     {
         var projector = new SessionProjector();
-        var key = ProviderStateKey.Create(TestSessionId, TestAgentId, "openai", "gpt-5.5", ApiType.OpenAiResponses);
-        var metadata = System.Text.Json.JsonSerializer.SerializeToElement(new { foo = "bar" });
+        var key = ProviderStateKey.Create(TestSessionId,
+            TestAgentId,
+            "openai",
+            "gpt-5.5",
+            ApiType.OpenAiResponses);
+        JsonElement metadata = JsonSerializer.SerializeToElement(new
+        {
+            foo = "bar"
+        });
 
         var events = new OmicronEvent[]
         {
-            Started(),
-            new ProviderStateUpdatedEvent(
+            Started(), new ProviderStateUpdatedEvent(
                 new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, TestSessionId),
                 new ProviderStateSnapshot(key, "resp_123", "conv_456", "affinity_key", metadata),
                 "test")
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         Assert.Single(projection.ProviderStates);
-        var state = projection.ProviderStates[key];
+        ProviderTurnState state = projection.ProviderStates[key];
         Assert.Equal("resp_123", state.PreviousResponseId);
         Assert.Equal("conv_456", state.ConversationId);
         Assert.Equal("affinity_key", state.SessionAffinityKey);
@@ -159,15 +212,18 @@ public class SessionProjectionTests
     public void ProviderState_UpdatePersists()
     {
         var projector = new SessionProjector();
-        var key = ProviderStateKey.Create(TestSessionId, TestAgentId, "openai", "gpt-5.5", ApiType.OpenAiResponses);
+        var key = ProviderStateKey.Create(TestSessionId,
+            TestAgentId,
+            "openai",
+            "gpt-5.5",
+            ApiType.OpenAiResponses);
 
         var events = new OmicronEvent[]
         {
-            Started(),
-            ProvUpdate(key, "resp_123")
+            Started(), ProvUpdate(key, "resp_123")
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         Assert.Single(projection.ProviderStates);
         Assert.True(projection.ProviderStates.ContainsKey(key));
@@ -178,21 +234,20 @@ public class SessionProjectionTests
     public void Reset_ClearsMessagesAndProviderState()
     {
         var projector = new SessionProjector();
-        var key = ProviderStateKey.Create(TestSessionId, TestAgentId, "openai", "gpt-5.5", ApiType.OpenAiResponses);
+        var key = ProviderStateKey.Create(TestSessionId,
+            TestAgentId,
+            "openai",
+            "gpt-5.5",
+            ApiType.OpenAiResponses);
 
         var events = new OmicronEvent[]
         {
-            Started(),
-            UserMsg("Hello"),
-            AssistantResp("Hi!"),
-            ProvUpdate(key, "resp_123"),
-            new SessionResetEvent(
-                new EventEnvelope(EventId.New(), 10, DateTimeOffset.UtcNow, TestSessionId)),
-            UserMsg("Again"),
-            AssistantResp("Reset response")
+            Started(), UserMsg("Hello"), AssistantResp("Hi!"), ProvUpdate(key, "resp_123"),
+            new SessionResetEvent(new EventEnvelope(EventId.New(), 10, DateTimeOffset.UtcNow, TestSessionId)),
+            UserMsg("Again"), AssistantResp("Reset response")
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         Assert.True(projection.IsReset);
         Assert.Equal(2, projection.Messages.Count); // Only messages after reset
@@ -207,24 +262,25 @@ public class SessionProjectionTests
         var projector = new SessionProjector();
         var events = new OmicronEvent[]
         {
-            Started(),
-            UserMsg("Hi"),
-            Err("Something went wrong")
+            Started(), UserMsg("Hi"), Err("Something went wrong")
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         Assert.Single(projection.Errors);
         Assert.Equal("Something went wrong", projection.Errors[0].Message);
         // Error also creates an assistant message
-        Assert.Contains(projection.Messages, m => m.Role == MessageRole.Assistant && m.GetTextString().Contains("Something went wrong"));
+        Assert.Contains(projection.Messages,
+            m =>
+                m.Role == MessageRole.Assistant
+                && m.GetTextString().Contains("Something went wrong"));
     }
 
     [Fact]
     public void EmptyEvents_ReturnsDefaultProjection()
     {
         var projector = new SessionProjector();
-        var projection = projector.Project(Array.Empty<OmicronEvent>());
+        SessionProjection projection = projector.Project(Array.Empty<OmicronEvent>());
 
         Assert.Equal(default, projection.SessionId);
         Assert.Empty(projection.Messages);
@@ -240,13 +296,11 @@ public class SessionProjectionTests
         var projector = new SessionProjector();
         var events = new OmicronEvent[]
         {
-            Started(),
-            UserMsg("Q1"), AssistantResp("A1", 10, 20),
-            UserMsg("Q2"), AssistantResp("A2", 30, 40),
-            UserMsg("Q3"), AssistantResp("A3", 50, 60)
+            Started(), UserMsg("Q1"), AssistantResp("A1"), UserMsg("Q2"), AssistantResp("A2", 30, 40), UserMsg("Q3"),
+            AssistantResp("A3", 50, 60)
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         Assert.Equal((90, 120), projection.TotalUsage);
     }
@@ -254,37 +308,46 @@ public class SessionProjectionTests
     [Fact]
     public async Task ReplayFromJsonlStore_ReconstructsProjection()
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"omicron-proj-test-{Guid.NewGuid():N}");
+        string tempDir = Path.Combine(Path.GetTempPath(), $"omicron-proj-test-{Guid.NewGuid():N}");
         try
         {
             SessionId sessionId;
             using (var store = new JsonlSessionStore(tempDir))
             {
-                var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat,
+                var request = new SessionCreateRequest("gpt-4o",
+                    "openai",
+                    ApiType.OpenAiChat,
                     SystemPrompt: "You are helpful.");
-                var record = await store.CreateSessionAsync(request);
+                SessionRecord record = await store.CreateSessionAsync(request);
                 sessionId = record.SessionId;
 
                 var events = new List<OmicronEvent>
-                    {
-                        new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId), TestAgentId, "gpt-4o", "openai"),
-                        new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId), "Hello"u8),
-                        new AssistantResponseCompleteEvent(
-                new EventEnvelope(EventId.New(), 3, DateTimeOffset.UtcNow, sessionId), "Hi back!"u8, null,
-                new TokenUsage(5, 15))
-                    };
+                {
+                    new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId),
+                        TestAgentId,
+                        "gpt-4o",
+                        "openai"),
+                    new UserMessageEvent(new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId),
+                        "Hello"u8),
+                    new AssistantResponseCompleteEvent(
+                        new EventEnvelope(EventId.New(), 3, DateTimeOffset.UtcNow, sessionId),
+                        "Hi back!"u8,
+                        null,
+                        new TokenUsage(5, 15))
+                };
                 await store.AppendEventsAsync(sessionId, events);
             }
 
             // Reopen and replay
             using var reopened = new JsonlSessionStore(tempDir);
             var readEvents = new List<OmicronEvent>();
-            await foreach (var e in reopened.ReadEventsAsync(sessionId, EventSequenceRange.All))
+            await foreach (OmicronEvent e in reopened.ReadEventsAsync(sessionId, EventSequenceRange.All))
+            {
                 readEvents.Add(e);
+            }
 
             var projector = new SessionProjector();
-            var projection = projector.Project(readEvents);
+            SessionProjection projection = projector.Project(readEvents);
 
             Assert.Equal(sessionId, projection.SessionId);
             Assert.Equal(2, projection.Messages.Count);
@@ -294,7 +357,11 @@ public class SessionProjectionTests
         }
         finally
         {
-            try { Directory.Delete(tempDir, recursive: true); } catch { }
+            try
+            {
+                Directory.Delete(tempDir, true);
+            }
+            catch { }
         }
     }
 
@@ -314,37 +381,41 @@ public class SessionProjectionTests
             {
                 Responses =
                 {
-                    () => Task.FromResult(new LlmResult
-                    {
-                        Text = "Response 1",
-                        StopReason = StopReason.Stop,
-                        Usage = new UsageInfo(10, 20)
-                    }),
-                    () => Task.FromResult(new LlmResult
-                    {
-                        Text = "Response 2",
-                        StopReason = StopReason.Stop,
-                        Usage = new UsageInfo(30, 40)
-                    })
+                    () =>
+                        Task.FromResult(new LlmResult
+                        {
+                            Text = "Response 1",
+                            StopReason = StopReason.Stop,
+                            Usage = new UsageInfo(10, 20)
+                        }),
+                    () =>
+                        Task.FromResult(new LlmResult
+                        {
+                            Text = "Response 2",
+                            StopReason = StopReason.Stop,
+                            Usage = new UsageInfo(30, 40)
+                        })
                 }
             }
         };
 
-        var session = host.CreateSession(model);
+        AgentSession session = host.CreateSession(model);
 
         // First turn
-        await foreach (var _ in session.PromptAsync("First message")) { }
+        await foreach (OmicronEvent _ in session.PromptAsync("First message")) { }
 
         // Second turn
-        await foreach (var _ in session.PromptAsync("Second message")) { }
+        await foreach (OmicronEvent _ in session.PromptAsync("Second message")) { }
 
         // Read all events from store and project
         var allEvents = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        {
             allEvents.Add(e);
+        }
 
         var projector = new SessionProjector();
-        var projection = projector.Project(allEvents);
+        SessionProjection projection = projector.Project(allEvents);
 
         Assert.Equal(session.Id, projection.SessionId);
         Assert.Equal(4, projection.Messages.Count);
@@ -364,8 +435,7 @@ public class SessionProjectionTests
         var toolRegistry = (ToolRegistry)host.Tools;
 
         // Register a test tool so the session loop processes tool calls
-        var toolDef = new ToolDefinition(
-            "test_tool",
+        var toolDef = new ToolDefinition("test_tool",
             "A test tool",
             null,
             _ => Task.FromResult(new ToolResult("Tool executed!")));
@@ -373,23 +443,25 @@ public class SessionProjectionTests
 
         var fakeProvider = new FakeProvider();
         // First response: tool call
-        fakeProvider.Responses.Add(() => Task.FromResult(new LlmResult
-        {
-            Text = "",
-            ToolCalls = new List<ToolCallContent>
+        fakeProvider.Responses.Add(() =>
+            Task.FromResult(new LlmResult
             {
-                new("call_abc", "test_tool", new Dictionary<string, object?>())
-            },
-            StopReason = StopReason.ToolUse,
-            Usage = new UsageInfo(10, 5)
-        }));
+                Text = "",
+                ToolCalls = new List<ToolCallContent>
+                {
+                    new("call_abc", "test_tool", new Dictionary<string, object?>())
+                },
+                StopReason = StopReason.ToolUse,
+                Usage = new UsageInfo(10, 5)
+            }));
         // Second response: final answer after tool result
-        fakeProvider.Responses.Add(() => Task.FromResult(new LlmResult
-        {
-            Text = "Here is the answer.",
-            StopReason = StopReason.Stop,
-            Usage = new UsageInfo(15, 25)
-        }));
+        fakeProvider.Responses.Add(() =>
+            Task.FromResult(new LlmResult
+            {
+                Text = "Here is the answer.",
+                StopReason = StopReason.Stop,
+                Usage = new UsageInfo(15, 25)
+            }));
 
         var model = new Model
         {
@@ -400,17 +472,19 @@ public class SessionProjectionTests
             Provider = fakeProvider
         };
 
-        var session = host.CreateSession(model);
+        AgentSession session = host.CreateSession(model);
 
-        await foreach (var _ in session.PromptAsync("Use a tool")) { }
+        await foreach (OmicronEvent _ in session.PromptAsync("Use a tool")) { }
 
         // Read all events from store and project
         var allEvents = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        {
             allEvents.Add(e);
+        }
 
         var projector = new SessionProjector();
-        var projection = projector.Project(allEvents);
+        SessionProjection projection = projector.Project(allEvents);
 
         Assert.Equal(session.Id, projection.SessionId);
 
@@ -428,7 +502,7 @@ public class SessionProjectionTests
         // Assistant tool-call message
         Assert.Equal(MessageRole.Assistant, projection.Messages[1].Role);
         Assert.NotNull(projection.Messages[1].ToolCalls);
-        var tc2 = Assert.Single(projection.Messages[1].ToolCalls!);
+        ToolCallContent tc2 = Assert.Single(projection.Messages[1].ToolCalls!);
         Assert.Equal("test_tool", tc2!.Name);
 
         // Tool result
@@ -453,19 +527,15 @@ public class SessionProjectionTests
         var projector = new SessionProjector();
         var events = new OmicronEvent[]
         {
-            Started(),
-            UserMsg("Use multiple tools"),
+            Started(), UserMsg("Use multiple tools"),
             // Tool-call turn: ARC marks the boundary, then interleaved Start/End
-            AssistantResp("Let me check", 5, 3),
-            ToolStart("call_1", "tool_a"),
-            ToolEnd("call_1", "tool_a", "Result A"),
-            ToolStart("call_2", "tool_b"),
-            ToolEnd("call_2", "tool_b", "Result B"),
+            AssistantResp("Let me check", 5, 3), ToolStart("call_1", "tool_a"), ToolEnd("call_1", "tool_a", "Result A"),
+            ToolStart("call_2", "tool_b"), ToolEnd("call_2", "tool_b", "Result B"),
             // Final response after tool round completes
-            AssistantResp("Done with tools", 10, 20)
+            AssistantResp("Done with tools")
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         // Messages: [User, Assistant(Text="Let me check", ToolCalls=[a,b]), ToolResult(a), ToolResult(b), Assistant(Done)]
         Assert.Equal(5, projection.Messages.Count);
@@ -477,7 +547,7 @@ public class SessionProjectionTests
         Assert.Equal(MessageRole.Assistant, projection.Messages[1].Role);
         Assert.True(projection.Messages[1].TextUtf8.SequenceEqual("Let me check"u8));
         Assert.NotNull(projection.Messages[1].ToolCalls);
-        var toolCalls = projection.Messages[1].ToolCalls!;
+        IReadOnlyList<ToolCallContent>? toolCalls = projection.Messages[1].ToolCalls!;
         Assert.Equal(2, toolCalls.Count);
         Assert.Equal("tool_a", toolCalls[0].Name);
         Assert.Equal("call_1", toolCalls[0].Id);
@@ -503,22 +573,29 @@ public class SessionProjectionTests
     public void ProviderState_PreservesStoragePolicy()
     {
         var projector = new SessionProjector();
-        var key = ProviderStateKey.Create(TestSessionId, TestAgentId, "openai", "gpt-5.5", ApiType.OpenAiResponses);
+        var key = ProviderStateKey.Create(TestSessionId,
+            TestAgentId,
+            "openai",
+            "gpt-5.5",
+            ApiType.OpenAiResponses);
 
         var events = new OmicronEvent[]
         {
-            Started(),
-            new ProviderStateUpdatedEvent(
+            Started(), new ProviderStateUpdatedEvent(
                 new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, TestSessionId),
-                new ProviderStateSnapshot(key, "resp_1", null, null, null,
+                new ProviderStateSnapshot(key,
+                    "resp_1",
+                    null,
+                    null,
+                    null,
                     ProviderStoragePolicy.AllowProviderStoredState),
                 "test")
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         Assert.Single(projection.ProviderStates);
-        var state = projection.ProviderStates[key];
+        ProviderTurnState state = projection.ProviderStates[key];
         Assert.Equal("resp_1", state.PreviousResponseId);
         Assert.Equal(ProviderStoragePolicy.AllowProviderStoredState, state.StoragePolicy);
     }
@@ -532,14 +609,17 @@ public class SessionProjectionTests
 
         var events = new OmicronEvent[]
         {
-            new SessionStartedEvent(new EventEnvelope(EventId.New(), 1, ts1, TestSessionId), TestAgentId, "gpt-4o", "openai"),
-            new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, ts2, TestSessionId), "Hello"u8)
+            new SessionStartedEvent(new EventEnvelope(EventId.New(), 1, ts1, TestSessionId),
+                TestAgentId,
+                "gpt-4o",
+                "openai"),
+            new UserMessageEvent(new EventEnvelope(EventId.New(), 2, ts2, TestSessionId),
+                "Hello"u8)
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
-        var msg = Assert.Single(projection.Messages);
+        Message msg = Assert.Single(projection.Messages);
         Assert.Equal(ts2.DateTime, msg.Timestamp);
     }
 
@@ -551,21 +631,17 @@ public class SessionProjectionTests
         var projector = new SessionProjector();
         var events = new OmicronEvent[]
         {
-            Started(),
-            UserMsg("Do two things"),
+            Started(), UserMsg("Do two things"),
             // Tool-call turn 1: one tool
-            AssistantResp("", 5, 3),
-            ToolStart("call_1", "first_tool"),
-            ToolEnd("call_1", "first_tool", "First result"),
+            AssistantResp("", 5, 3), ToolStart("call_1", "first_tool"), ToolEnd("call_1", "first_tool", "First result"),
             // Tool-call turn 2: one tool
-            AssistantResp("", 7, 4),
-            ToolStart("call_2", "second_tool"),
+            AssistantResp("", 7, 4), ToolStart("call_2", "second_tool"),
             ToolEnd("call_2", "second_tool", "Second result"),
             // Final response
-            AssistantResp("All done", 10, 20)
+            AssistantResp("All done")
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         // Should produce:
         // [0] User "Do two things"
@@ -578,7 +654,7 @@ public class SessionProjectionTests
 
         // [1] First tool-call assistant
         Assert.Equal(MessageRole.Assistant, projection.Messages[1].Role);
-        var tc1 = Assert.Single(projection.Messages[1].ToolCalls!);
+        ToolCallContent tc1 = Assert.Single(projection.Messages[1].ToolCalls!);
         Assert.Equal("first_tool", tc1.Name);
 
         // [2] First tool result
@@ -587,7 +663,7 @@ public class SessionProjectionTests
 
         // [3] Second tool-call assistant (separate turn)
         Assert.Equal(MessageRole.Assistant, projection.Messages[3].Role);
-        var tc2 = Assert.Single(projection.Messages[3].ToolCalls!);
+        ToolCallContent tc2 = Assert.Single(projection.Messages[3].ToolCalls!);
         Assert.Equal("second_tool", tc2.Name);
 
         // [4] Second tool result
@@ -602,4 +678,3 @@ public class SessionProjectionTests
         Assert.Equal((22, 27), projection.TotalUsage);
     }
 }
-

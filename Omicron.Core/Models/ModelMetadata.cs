@@ -1,9 +1,9 @@
 namespace Omicron.Core.Models;
 
 /// <summary>
-/// Describes model capabilities and properties.
-/// Metadata is layered from multiple sources (static, models.dev, provider endpoints, user config).
-/// Null fields mean "not specified by this source" — they do not overwrite known values from earlier sources.
+///     Describes model capabilities and properties.
+///     Metadata is layered from multiple sources (static, models.dev, provider endpoints, user config).
+///     Null fields mean "not specified by this source" — they do not overwrite known values from earlier sources.
 /// </summary>
 public sealed record ModelMetadata(
     string ModelId,

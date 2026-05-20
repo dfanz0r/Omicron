@@ -1,8 +1,5 @@
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace Omicron.Core.Collections;
 
@@ -10,55 +7,61 @@ namespace Omicron.Core.Collections;
 [StructLayout(LayoutKind.Explicit, Size = 64)]
 internal struct CacheLineUInt32
 {
-    [FieldOffset(0)]
-    public uint Value;
+    [FieldOffset(0)] public uint Value;
 }
 
 /// <summary>
-/// Single-producer single-consumer (SPSC) lock-free ring buffer.
-/// 
-/// One thread calls <see cref="TryPush"/> / <see cref="PushAsync"/> (producer).
-/// A different thread calls <see cref="TryPop"/> / <see cref="PopAsync"/> (consumer).
-/// Mixing producers or consumers on the same side is undefined behaviour.
-/// 
-/// Index shuffling spreads concurrent access across cache lines to minimise
-/// false sharing on CPUs with aggressive prefetchers.
+///     Single-producer single-consumer (SPSC) lock-free ring buffer.
+///     One thread calls <see cref="TryPush" /> / <see cref="PushAsync" /> (producer).
+///     A different thread calls <see cref="TryPop" /> / <see cref="PopAsync" /> (consumer).
+///     Mixing producers or consumers on the same side is undefined behaviour.
+///     Index shuffling spreads concurrent access across cache lines to minimise
+///     false sharing on CPUs with aggressive prefetchers.
 /// </summary>
 public sealed class QueueSPSC<T>
 {
-    private CacheLineUInt32 mHead;
-    private CacheLineUInt32 mCachedTail;
-    private CacheLineUInt32 mTail;
-    private CacheLineUInt32 mCachedHead;
-
     private readonly T[] mQueueBuffer;
     private readonly int mShuffleBits;
-    private readonly int mCapacity;
-
-    // Async waiting states (0 = awake, 1 = waiting)
-    private int mConsumerWaiting;
-    private int mProducerWaiting;
+    private CacheLineUInt32 mCachedHead;
+    private CacheLineUInt32 mCachedTail;
 
     // TaskCompletionSources for async yielding
     private TaskCompletionSource<bool>? mConsumerTcs;
+
+    // Async waiting states (0 = awake, 1 = waiting)
+    private int mConsumerWaiting;
+    private CacheLineUInt32 mHead;
     private TaskCompletionSource<bool>? mProducerTcs;
+    private int mProducerWaiting;
+    private CacheLineUInt32 mTail;
 
     public QueueSPSC(int capacity)
     {
         if (capacity <= 0)
+        {
             throw new ArgumentOutOfRangeException(nameof(capacity), "Capacity must be positive.");
-        if (!AtomicQueueDetails.IsPowerOfTwo((uint)capacity))
-            throw new ArgumentException("Capacity must be a power of two.", nameof(capacity));
+        }
 
-        mCapacity = capacity;
+        if (!AtomicQueueDetails.IsPowerOfTwo((uint)capacity))
+        {
+            throw new ArgumentException("Capacity must be a power of two.", nameof(capacity));
+        }
+
+        Capacity = capacity;
         mQueueBuffer = new T[capacity];
         mShuffleBits = AtomicQueueDetails.GetIndexShuffleBits(capacity, Unsafe.SizeOf<T>(), true);
+    }
+
+    public int Capacity
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        get;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private uint RemapIndex(uint value)
     {
-        return AtomicQueueDetails.RemapAnd(value, (uint)mCapacity, mShuffleBits);
+        return AtomicQueueDetails.RemapAnd(value, (uint)Capacity, mShuffleBits);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -68,14 +71,16 @@ public sealed class QueueSPSC<T>
         uint currentHead = mHead.Value;
         uint cachedTail = mCachedTail.Value;
 
-        if ((int)(currentHead - cachedTail) >= mCapacity)
+        if ((int)(currentHead - cachedTail) >= Capacity)
         {
             // .Acquire equivalent
             cachedTail = Volatile.Read(ref mTail.Value);
             mCachedTail.Value = cachedTail;
 
-            if ((int)(currentHead - cachedTail) >= mCapacity)
+            if ((int)(currentHead - cachedTail) >= Capacity)
+            {
                 return false;
+            }
         }
 
         mQueueBuffer[(int)RemapIndex(currentHead)] = item;
@@ -119,7 +124,9 @@ public sealed class QueueSPSC<T>
 
         // .NET GC Fix: clear reference so the array doesn't hold memory leaks
         if (RuntimeHelpers.IsReferenceOrContainsReferences<T>())
+        {
             mQueueBuffer[index] = default!;
+        }
 
         // .Release equivalent
         Volatile.Write(ref mTail.Value, currentTail + 1);
@@ -138,17 +145,22 @@ public sealed class QueueSPSC<T>
 
     public void Push(T item)
     {
-        SpinWait spinner = new SpinWait();
+        var spinner = new SpinWait();
         while (!TryPush(item))
+        {
             spinner.SpinOnce();
+        }
     }
 
     public T Pop()
     {
         T item = default!;
-        SpinWait spinner = new SpinWait();
+        var spinner = new SpinWait();
         while (!TryPop(out item))
+        {
             spinner.SpinOnce();
+        }
+
         return item;
     }
 
@@ -160,7 +172,9 @@ public sealed class QueueSPSC<T>
         T item = default!;
         // Fast path: if we pop successfully immediately, return zero-allocation ValueTask
         if (TryPop(out item))
+        {
             return new ValueTask<T>(item);
+        }
 
         return PopAsyncSlow(cancellationToken);
     }
@@ -168,7 +182,7 @@ public sealed class QueueSPSC<T>
     private async ValueTask<T> PopAsyncSlow(CancellationToken ct)
     {
         T item = default!;
-        SpinWait spinner = new SpinWait();
+        var spinner = new SpinWait();
 
         while (!TryPop(out item))
         {
@@ -191,17 +205,22 @@ public sealed class QueueSPSC<T>
             if (TryPop(out item))
             {
                 if (Interlocked.Exchange(ref mConsumerWaiting, 0) == 1)
+                {
                     mConsumerTcs = null; // We got the item, cancel the sleep
+                }
 
                 return item;
             }
 
             // Sleep asynchronously
-            using var ctr = ct.Register(state =>
-            {
-                if (Interlocked.Exchange(ref mConsumerWaiting, 0) == 1)
-                    ((TaskCompletionSource<bool>)state!).TrySetCanceled();
-            }, tcs);
+            using CancellationTokenRegistration ctr = ct.Register(state =>
+                {
+                    if (Interlocked.Exchange(ref mConsumerWaiting, 0) == 1)
+                    {
+                        ((TaskCompletionSource<bool>)state!).TrySetCanceled();
+                    }
+                },
+                tcs);
 
             try
             {
@@ -220,14 +239,16 @@ public sealed class QueueSPSC<T>
     public ValueTask PushAsync(T item, CancellationToken cancellationToken = default)
     {
         if (TryPush(item))
+        {
             return default;
+        }
 
         return PushAsyncSlow(item, cancellationToken);
     }
 
     private async ValueTask PushAsyncSlow(T item, CancellationToken ct)
     {
-        SpinWait spinner = new SpinWait();
+        var spinner = new SpinWait();
 
         while (!TryPush(item))
         {
@@ -247,15 +268,21 @@ public sealed class QueueSPSC<T>
             if (TryPush(item))
             {
                 if (Interlocked.Exchange(ref mProducerWaiting, 0) == 1)
+                {
                     mProducerTcs = null;
+                }
+
                 return;
             }
 
-            using var ctr = ct.Register(state =>
-            {
-                if (Interlocked.Exchange(ref mProducerWaiting, 0) == 1)
-                    ((TaskCompletionSource<bool>)state!).TrySetCanceled();
-            }, tcs);
+            using CancellationTokenRegistration ctr = ct.Register(state =>
+                {
+                    if (Interlocked.Exchange(ref mProducerWaiting, 0) == 1)
+                    {
+                        ((TaskCompletionSource<bool>)state!).TrySetCanceled();
+                    }
+                },
+                tcs);
 
             try
             {
@@ -276,7 +303,7 @@ public sealed class QueueSPSC<T>
         // Atomically claim the right to wake the consumer
         if (Interlocked.Exchange(ref mConsumerWaiting, 0) == 1)
         {
-            var tcs = mConsumerTcs;
+            TaskCompletionSource<bool>? tcs = mConsumerTcs;
             if (tcs != null)
             {
                 mConsumerTcs = null;
@@ -291,7 +318,7 @@ public sealed class QueueSPSC<T>
         // Atomically claim the right to wake the producer
         if (Interlocked.Exchange(ref mProducerWaiting, 0) == 1)
         {
-            var tcs = mProducerTcs;
+            TaskCompletionSource<bool>? tcs = mProducerTcs;
             if (tcs != null)
             {
                 mProducerTcs = null;
@@ -320,12 +347,6 @@ public sealed class QueueSPSC<T>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool WasFull()
     {
-        return WasSize() >= mCapacity;
-    }
-
-    public int Capacity
-    {
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        get => mCapacity;
+        return WasSize() >= Capacity;
     }
 }

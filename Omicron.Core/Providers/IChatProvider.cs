@@ -1,7 +1,5 @@
 using System.Buffers;
-using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 using Omicron.Core.Content;
 using Omicron.Core.Models;
@@ -10,8 +8,8 @@ using Omicron.Core.Sessions;
 namespace Omicron.Core.Providers;
 
 /// <summary>
-/// Options for a single LLM call.
-/// Also carries provider state context for stateful API support.
+///     Options for a single LLM call.
+///     Also carries provider state context for stateful API support.
 /// </summary>
 public record ChatOptions
 {
@@ -29,28 +27,28 @@ public record ChatOptions
     // ============================================================
 
     /// <summary>
-    /// The provider state key scoping this request.
-    /// Set by AgentSession before calling the provider.
+    ///     The provider state key scoping this request.
+    ///     Set by AgentSession before calling the provider.
     /// </summary>
     public ProviderStateKey? ProviderStateKey { get; init; }
 
     /// <summary>
-    /// The current provider turn state (if any) for stateful continuation.
-    /// When present and the model supports stateful mode, the provider
-    /// should send previous_response_id and only new input items.
+    ///     The current provider turn state (if any) for stateful continuation.
+    ///     When present and the model supports stateful mode, the provider
+    ///     should send previous_response_id and only new input items.
     /// </summary>
     public ProviderTurnState? CurrentProviderState { get; init; }
 
     /// <summary>
-    /// Storage policy for this request. Overrides Model.StoragePolicy
-    /// if set. Used by Responses API shape to decide store flag and
-    /// whether to use previous_response_id.
+    ///     Storage policy for this request. Overrides Model.StoragePolicy
+    ///     if set. Used by Responses API shape to decide store flag and
+    ///     whether to use previous_response_id.
     /// </summary>
     public ProviderStoragePolicy? StoragePolicy { get; init; }
 }
 
 /// <summary>
-/// Streaming event emitted during an LLM response.
+///     Streaming event emitted during an LLM response.
 /// </summary>
 public enum StreamEventType
 {
@@ -63,7 +61,7 @@ public enum StreamEventType
 }
 
 /// <summary>
-/// A single chunk of a streaming LLM response.
+///     A single chunk of a streaming LLM response.
 /// </summary>
 public class StreamEvent
 {
@@ -75,6 +73,7 @@ public class StreamEvent
     public string? ErrorMessage { get; init; }
     public UsageInfo? Usage { get; init; }
     public StopReason? StopReason { get; init; }
+
     /// <summary>Reasoning/thinking text (DeepSeek, OpenAI o-series). Must be echoed back on subsequent requests.</summary>
     public string? ReasoningText { get; init; }
 }
@@ -85,9 +84,9 @@ public class StreamEvent
 // ============================================================
 
 /// <summary>
-/// Interface all LLM providers must implement.
-/// A provider is the "backend service" layer — it handles the base URL,
-/// authentication, and model→shape routing.
+///     Interface all LLM providers must implement.
+///     A provider is the "backend service" layer — it handles the base URL,
+///     authentication, and model→shape routing.
 /// </summary>
 public interface IChatProvider
 {
@@ -98,9 +97,9 @@ public interface IChatProvider
     string DefaultBaseUrl { get; }
 
     /// <summary>
-    /// Send messages to the LLM and stream the response.
-    /// Implementations use <see cref="Model.ApiType"/> to select the
-    /// appropriate <see cref="IApiShape"/> for wire formatting.
+    ///     Send messages to the LLM and stream the response.
+    ///     Implementations use <see cref="Model.ApiType" /> to select the
+    ///     appropriate <see cref="IApiShape" /> for wire formatting.
     /// </summary>
     IAsyncEnumerable<StreamEvent> StreamAsync(
         Model model,
@@ -110,7 +109,7 @@ public interface IChatProvider
         ChatOptions options);
 
     /// <summary>
-    /// Non-streaming convenience: collects all events and returns a single LlmResult.
+    ///     Non-streaming convenience: collects all events and returns a single LlmResult.
     /// </summary>
     async Task<LlmResult> CompleteAsync(
         Model model,
@@ -126,7 +125,7 @@ public interface IChatProvider
         UsageInfo? usage = null;
         string? responseId = null;
 
-        await foreach (var evt in StreamAsync(model, messages, systemPrompt, tools, options))
+        await foreach (StreamEvent evt in StreamAsync(model, messages, systemPrompt, tools, options))
         {
             switch (evt.Type)
             {
@@ -165,33 +164,23 @@ public interface IChatProvider
 // ============================================================
 
 /// <summary>
-/// Base HTTP + SSE streaming logic used by providers that delegate
-/// to an <see cref="IApiShape"/> for wire formatting.
+///     Base HTTP + SSE streaming logic used by providers that delegate
+///     to an <see cref="IApiShape" /> for wire formatting.
 /// </summary>
 public abstract class ShapeBasedProvider : IChatProvider
 {
-    public abstract string Name { get; }
-    public abstract string DefaultBaseUrl { get; }
+    protected ShapeBasedProvider(HttpClient? http = null)
+    {
+        HttpClient = http ?? new HttpClient();
+    }
+
     protected HttpClient HttpClient { get; }
 
     /// <summary>Map from ApiType to IApiShape instances.</summary>
     protected abstract IReadOnlyDictionary<ApiType, IApiShape> Shapes { get; }
 
-    /// <summary>
-    /// Optionally override the base URL per model (e.g. OpenCode Zen
-    /// uses a different URL for Anthropic models).
-    /// </summary>
-    protected virtual string ResolveBaseUrl(Model model) => model.BaseUrl;
-
-    /// <summary>
-    /// Optionally set custom request headers per provider/model.
-    /// </summary>
-    protected virtual void SetAuthHeader(HttpRequestMessage request, string? apiKey) { }
-
-    protected ShapeBasedProvider(HttpClient? http = null)
-    {
-        HttpClient = http ?? new HttpClient();
-    }
+    public abstract string Name { get; }
+    public abstract string DefaultBaseUrl { get; }
 
     public async IAsyncEnumerable<StreamEvent> StreamAsync(
         Model model,
@@ -200,10 +189,10 @@ public abstract class ShapeBasedProvider : IChatProvider
         IReadOnlyList<Tool>? tools,
         ChatOptions options)
     {
-        var ct = options.CancellationToken;
+        CancellationToken ct = options.CancellationToken;
 
         // Resolve the ApiShape for this model
-        if (!Shapes.TryGetValue(model.ApiType, out var shape))
+        if (!Shapes.TryGetValue(model.ApiType, out IApiShape? shape))
         {
             yield return new StreamEvent
             {
@@ -218,10 +207,11 @@ public abstract class ShapeBasedProvider : IChatProvider
         {
             shape.WriteRequestBody(jsonWriter, model, messages, systemPrompt, tools, options);
         }
-        var jsonBytes = requestBuffer.WrittenSpan;
 
-        var baseUrl = ResolveBaseUrl(model);
-        var endpoint = model.ApiType switch
+        ReadOnlySpan<byte> jsonBytes = requestBuffer.WrittenSpan;
+
+        string baseUrl = ResolveBaseUrl(model);
+        string endpoint = model.ApiType switch
         {
             ApiType.AnthropicMessages => $"{baseUrl.TrimEnd('/')}/messages",
             ApiType.OpenAiResponses => $"{baseUrl.TrimEnd('/')}/responses",
@@ -230,7 +220,10 @@ public abstract class ShapeBasedProvider : IChatProvider
         };
 
         var content = new ByteArrayContent(jsonBytes.ToArray());
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json")
+        {
+            CharSet = "utf-8"
+        };
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = content
@@ -245,7 +238,7 @@ public abstract class ShapeBasedProvider : IChatProvider
             request.Headers.Add("anthropic-version", "2023-06-01");
         }
 
-        var sendResult = await SendRequestAsync(request, ct);
+        SendResult sendResult = await SendRequestAsync(request, ct);
         if (sendResult.Error is not null)
         {
             yield return sendResult.Error;
@@ -253,7 +246,7 @@ public abstract class ShapeBasedProvider : IChatProvider
         }
 
         var toolCallAccumulators = new Dictionary<int, ToolCallAccumulator>();
-        var stream = sendResult.Stream!;
+        Stream stream = sendResult.Stream!;
 
         // Read SSE frames using a reusable byte sseBuffer, scanning for LF-delimited lines.
         // Avoids StreamReader and string allocation for each SSE line.
@@ -279,12 +272,20 @@ public abstract class ShapeBasedProvider : IChatProvider
                 if (sseLen >= sseBuffer.Length)
                 {
                     // Line too long — grow sseBuffer or skip
-                    yield return new StreamEvent { Type = StreamEventType.Error, ErrorMessage = "SSE line exceeds sseBuffer size" };
+                    yield return new StreamEvent
+                    {
+                        Type = StreamEventType.Error,
+                        ErrorMessage = "SSE line exceeds sseBuffer size"
+                    };
                     yield break;
                 }
-                var read = await stream.ReadAsync(sseBuffer.AsMemory(sseLen), ct);
+
+                int read = await stream.ReadAsync(sseBuffer.AsMemory(sseLen), ct);
                 if (read == 0)
+                {
                     break; // EOF
+                }
+
                 sseLen += read;
                 continue;
             }
@@ -294,12 +295,20 @@ public abstract class ShapeBasedProvider : IChatProvider
 
             // Remove \r if present before \n
             if (lineSpan.Length > 0 && lineSpan[^1] == (byte)'\r')
+            {
                 lineSpan = lineSpan[..^1];
+            }
 
             // Strip UTF-8 BOM if present
-            if (lineSpan.Length >= 3 &&
-                lineSpan[0] == 0xEF && lineSpan[1] == 0xBB && lineSpan[2] == 0xBF)
+            if (
+                lineSpan.Length >= 3
+                && lineSpan[0] == 0xEF
+                && lineSpan[1] == 0xBB
+                && lineSpan[2] == 0xBF
+            )
+            {
                 lineSpan = lineSpan[3..];
+            }
 
             // Check for "data: " prefix BEFORE shifting the sseBuffer
             // (the span references the sseBuffer, so shifting would corrupt it).
@@ -310,32 +319,49 @@ public abstract class ShapeBasedProvider : IChatProvider
                 // Shift remaining data and skip
                 int skipRemaining = sseLen - lfIndex - 1;
                 if (skipRemaining > 0)
+                {
                     Buffer.BlockCopy(sseBuffer, lfIndex + 1, sseBuffer, 0, skipRemaining);
+                }
+
                 sseLen = skipRemaining;
                 continue;
             }
 
             // Slice after "data: " and trim trailing whitespace
-            var payload = lineSpan[6..];
-            while (payload.Length > 0 && (payload[^1] == (byte)' ' || payload[^1] == (byte)'\t' || payload[^1] == (byte)'\r'))
+            ReadOnlySpan<byte> payload = lineSpan[6..];
+            while (
+                payload.Length > 0
+                && (
+                    payload[^1] == (byte)' '
+                    || payload[^1] == (byte)'\t'
+                    || payload[^1] == (byte)'\r'
+                )
+            )
+            {
                 payload = payload[..^1];
+            }
+
             while (payload.Length > 0 && (payload[0] == (byte)' ' || payload[0] == (byte)'\t'))
+            {
                 payload = payload[1..];
+            }
 
             // Copy payload to heap before shifting sseBuffer (span references the sseBuffer)
-            var payloadBytes = payload.Length > 0
-                ? ArrayPool<byte>.Shared.Rent(payload.Length)
-                : null;
+            byte[]? payloadBytes =
+                payload.Length > 0 ? ArrayPool<byte>.Shared.Rent(payload.Length) : null;
             if (payloadBytes is not null)
             {
                 payload.CopyTo(payloadBytes.AsSpan());
                 // Trim to actual length (ArrayPool may return a larger sseBuffer)
-                var trimmedPayload = payloadBytes.AsSpan(0, payload.Length);
+                Span<byte> trimmedPayload = payloadBytes.AsSpan(0, payload.Length);
 
                 // Shift remaining data in sseBuffer
                 int dataRemaining = sseLen - lfIndex - 1;
                 if (dataRemaining > 0)
+                {
                     Buffer.BlockCopy(sseBuffer, lfIndex + 1, sseBuffer, 0, dataRemaining);
+                }
+
                 sseLen = dataRemaining;
 
                 // Check for [DONE]
@@ -345,23 +371,31 @@ public abstract class ShapeBasedProvider : IChatProvider
                     break;
                 }
 
-                var parsed = shape.ParseSseChunk(payloadBytes.AsMemory(0, payload.Length), toolCallAccumulators);
+                StreamEvent? parsed = shape.ParseSseChunk(payloadBytes.AsMemory(0, payload.Length),
+                    toolCallAccumulators);
                 ArrayPool<byte>.Shared.Return(payloadBytes);
 
-                if (parsed is null) continue;
+                if (parsed is null)
+                {
+                    continue;
+                }
 
                 yield return parsed;
                 if (parsed.Type == StreamEventType.Error)
+                {
                     yield break;
+                }
             }
             else
             {
                 // Empty payload — shift sseBuffer and continue
                 int dataRemaining = sseLen - lfIndex - 1;
                 if (dataRemaining > 0)
+                {
                     Buffer.BlockCopy(sseBuffer, lfIndex + 1, sseBuffer, 0, dataRemaining);
+                }
+
                 sseLen = dataRemaining;
-                continue;
             }
         }
 
@@ -370,38 +404,57 @@ public abstract class ShapeBasedProvider : IChatProvider
         // all tools, but ParseSseChunk only emits one ToolCallEnd per call.
         // Anthropic already removes each accumulator on content_block_stop
         // so this is typically a no-op for non-OpenAI shapes.
-        foreach (var (_, acc) in toolCallAccumulators)
+        foreach ((int _, ToolCallAccumulator acc) in toolCallAccumulators)
         {
             Dictionary<string, object?>? args = null;
             try
             {
-                args = acc.Args.Length > 0
-                    ? JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString())
-                    : new Dictionary<string, object?>();
+                args =
+                    acc.Args.Length > 0
+                        ? JsonSerializer.Deserialize<Dictionary<string, object?>>(acc.Args.ToString())
+                        : new Dictionary<string, object?>();
             }
             catch
             {
-                args = new();
+                args = new Dictionary<string, object?>();
             }
+
             yield return new StreamEvent
             {
                 Type = StreamEventType.ToolCallEnd,
-                ToolCall = new ToolCallContent(
-                    acc.Id ?? Guid.NewGuid().ToString("N")[..12],
+                ToolCall = new ToolCallContent(acc.Id ?? Guid.NewGuid().ToString("N")[..12],
                     acc.Name,
-                    args ?? new())
+                    args ?? new Dictionary<string, object?>())
             };
         }
     }
 
-    private async Task<SendResult> SendRequestAsync(HttpRequestMessage request, CancellationToken ct)
+    /// <summary>
+    ///     Optionally override the base URL per model (e.g. OpenCode Zen
+    ///     uses a different URL for Anthropic models).
+    /// </summary>
+    protected virtual string ResolveBaseUrl(Model model)
+    {
+        return model.BaseUrl;
+    }
+
+    /// <summary>
+    ///     Optionally set custom request headers per provider/model.
+    /// </summary>
+    protected virtual void SetAuthHeader(HttpRequestMessage request, string? apiKey) { }
+
+    private async Task<SendResult> SendRequestAsync(
+        HttpRequestMessage request,
+        CancellationToken ct)
     {
         try
         {
-            var response = await HttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            HttpResponseMessage response = await HttpClient.SendAsync(request,
+                HttpCompletionOption.ResponseHeadersRead,
+                ct);
             if (!response.IsSuccessStatusCode)
             {
-                var errorBody = await response.Content.ReadAsStringAsync(ct);
+                string errorBody = await response.Content.ReadAsStringAsync(ct);
                 return new SendResult
                 {
                     Error = new StreamEvent
@@ -411,8 +464,12 @@ public abstract class ShapeBasedProvider : IChatProvider
                     }
                 };
             }
-            var stream = await response.Content.ReadAsStreamAsync(ct);
-            return new SendResult { Stream = stream };
+
+            Stream stream = await response.Content.ReadAsStreamAsync(ct);
+            return new SendResult
+            {
+                Stream = stream
+            };
         }
         catch (Exception ex)
         {

@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Text;
 using Omicron.Core.Rendering;
 using Omicron.Core.Rendering.Layout;
@@ -7,24 +6,24 @@ using Omicron.Core.Text;
 namespace Omicron.CLI.Tui;
 
 /// <summary>
-/// Multi-line text editor for the TUI input line.
-/// Supports cursor movement, backspace, delete, home, end,
-/// multi-line editing, and submit on Ctrl+Enter.
-/// Uses <see cref="CellWidthCalculator"/> for correct cursor positioning with CJK/emoji.
+///     Multi-line text editor for the TUI input line.
+///     Supports cursor movement, backspace, delete, home, end,
+///     multi-line editing, and submit on Ctrl+Enter.
+///     Uses <see cref="CellWidthCalculator" /> for correct cursor positioning with CJK/emoji.
 /// </summary>
 public sealed class InputEditorWidget : ITuiWidget
 {
-    private readonly List<StringBuilder> _lines = [new()];
-    private int _cursorLine;
-    private int _cursorColumn;
-    private Rect _bounds;
-    private IReadOnlyList<string>? _pendingCompletions;
-    private string _completionAnchor = "";
-    private string _killBuffer = ""; // for Ctrl+U/K/Y yank/paste
-
     // ── Input history ──
     private readonly List<string> _history = [];
+    private readonly List<StringBuilder> _lines = [new()];
+
+    // ── Paste markers (pi-style large paste preview) ──
+    private readonly Dictionary<int, string> _pastes = new();
+    private Rect _bounds;
+    private string _completionAnchor = "";
     private int _historyIndex = -1; // -1 means current (new) input
+    private string _killBuffer = ""; // for Ctrl+U/K/Y yank/paste
+    private int _pasteCounter;
 
     /// <summary>Maximum number of lines in the input editor.</summary>
     public int MaxInputLines { get; set; } = 50;
@@ -32,29 +31,13 @@ public sealed class InputEditorWidget : ITuiWidget
     /// <summary>Maximum number of history entries to keep.</summary>
     public int MaxHistory { get; set; } = 100;
 
-    // ── Paste markers (pi-style large paste preview) ──
-    private readonly Dictionary<int, string> _pastes = new();
-    private int _pasteCounter;
-
-    /// <summary>Add an entry to the input history.</summary>
-    public void AddToHistory(string text)
-    {
-        if (string.IsNullOrEmpty(text)) return;
-        // Don't add duplicates of the most recent entry
-        if (_history.Count > 0 && _history[^1] == text) return;
-        _history.Add(text);
-        if (_history.Count > MaxHistory)
-            _history.RemoveAt(0);
-        _historyIndex = -1;
-    }
-
     /// <summary>
-    /// Maximum number of completion items to display in the popup.
+    ///     Maximum number of completion items to display in the popup.
     /// </summary>
     public int MaxVisibleCompletions { get; set; } = 8;
 
     /// <summary>
-    /// Height reserved for the completion popup (0 when no completions).
+    ///     Height reserved for the completion popup (0 when no completions).
     /// </summary>
     public int ReservedPopupHeight { get; private set; }
 
@@ -65,16 +48,156 @@ public sealed class InputEditorWidget : ITuiWidget
     public Func<string, IReadOnlyList<string>>? CompletionProvider { get; set; }
 
     /// <summary>Completions stashed for display when Tab has no unique prefix.</summary>
-    public IReadOnlyList<string>? PendingCompletions => _pendingCompletions;
+    public IReadOnlyList<string>? PendingCompletions { get; private set; }
 
     /// <summary>Current cursor line index (0-based).</summary>
-    public int CursorLine => _cursorLine;
+    public int CursorLine { get; private set; }
 
     /// <summary>Current cursor column within the current line (0-based).</summary>
-    public int CursorColumn => _cursorColumn;
+    public int CursorColumn { get; private set; }
 
     /// <summary>Whether the widget has unsubmitted content on any line.</summary>
     public bool HasContent => _lines.Any(l => l.Length > 0);
+
+    // ── ITuiWidget implementation ──
+
+    public Size Measure(Size available)
+    {
+        ReservedPopupHeight = 0;
+        if (PendingCompletions is { Count: > 0 })
+        {
+            int visibleCount = Math.Min(PendingCompletions.Count, MaxVisibleCompletions);
+            ReservedPopupHeight = visibleCount + 1; // items + title bar
+        }
+
+        // Grow up to half the terminal height, then let the rest overflow
+        int lineCount = Math.Min(_lines.Count, Math.Max(1, available.Height / 2));
+        return new Size(available.Width, lineCount + ReservedPopupHeight);
+    }
+
+    public void Arrange(Rect bounds)
+    {
+        _bounds = bounds;
+    }
+
+    public void Render(RenderContext context)
+    {
+        TextStyle style = TextStyle.Default;
+
+        // Input area occupies the bottom rows of our bounds
+        int visibleLineCount = Math.Min(_lines.Count, _bounds.Height - ReservedPopupHeight);
+        int inputStartRow = _bounds.Bottom - visibleLineCount;
+
+        // If there are pending completions, draw popup above the input area
+        if (PendingCompletions is { Count: > 0 })
+        {
+            DrawCompletions(context, _bounds.Y, inputStartRow);
+        }
+
+        var emptyCell = new RenderCell
+        {
+            Glyph = GlyphRef.Ascii((byte)' '),
+            Width = 1,
+            Style = style
+        };
+
+        // Determine which slice of _lines to render (newest lines at bottom)
+        int lineOffset = _lines.Count - visibleLineCount;
+        if (lineOffset < 0)
+        {
+            lineOffset = 0;
+        }
+
+        // Draw each visible line
+        for (int i = 0; i < visibleLineCount; i++)
+        {
+            int lineIndex = lineOffset + i;
+            int row = inputStartRow + i;
+            string prefix = lineIndex == 0 ? "> " : "  ";
+            const int prefixWidth = 2;
+
+            // Clear the row
+            var inputRect = new Rect(_bounds.X, row, _bounds.Width, 1);
+            context.FillRect(inputRect, emptyCell);
+
+            // Draw prefix
+            TextStyle prefixStyle =
+                lineIndex == 0
+                    ? TextStyle.ForegroundOnly(235, 195, 80)
+                    : TextStyle.ForegroundOnly(120, 120, 130);
+            context.DrawText(_bounds.X, row, Encoding.UTF8.GetBytes(prefix), prefixStyle);
+
+            int lineStartX = _bounds.X + prefixWidth;
+            string lineText = _lines[lineIndex].ToString();
+
+            if (lineIndex == CursorLine)
+            {
+                // This line has the cursor
+                int cursorDisplayWidth = GetDisplayWidth(lineText[..CursorColumn]);
+                int cursorScreenCol = lineStartX + cursorDisplayWidth;
+
+                // Draw text before cursor
+                if (CursorColumn > 0)
+                {
+                    context.DrawText(lineStartX,
+                        row,
+                        Encoding.UTF8.GetBytes(lineText[..CursorColumn]),
+                        style);
+                }
+
+                // Draw cursor (block cursor via inverted character)
+                if (cursorScreenCol < _bounds.Right)
+                {
+                    string cursorChar =
+                        CursorColumn < lineText.Length ? lineText[CursorColumn].ToString() : " ";
+                    context.DrawText(cursorScreenCol,
+                        row,
+                        Encoding.UTF8.GetBytes(cursorChar),
+                        TextStyle.Inverted);
+                }
+
+                // Draw text after cursor
+                if (CursorColumn + 1 < lineText.Length)
+                {
+                    context.DrawText(cursorScreenCol + 1,
+                        row,
+                        Encoding.UTF8.GetBytes(lineText[(CursorColumn + 1)..]),
+                        style);
+                }
+            }
+            else
+            {
+                // No cursor on this line, draw full text
+                if (lineText.Length > 0)
+                {
+                    context.DrawText(lineStartX, row, Encoding.UTF8.GetBytes(lineText), style);
+                }
+            }
+        }
+    }
+
+    /// <summary>Add an entry to the input history.</summary>
+    public void AddToHistory(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        // Don't add duplicates of the most recent entry
+        if (_history.Count > 0 && _history[^1] == text)
+        {
+            return;
+        }
+
+        _history.Add(text);
+        if (_history.Count > MaxHistory)
+        {
+            _history.RemoveAt(0);
+        }
+
+        _historyIndex = -1;
+    }
 
     /// <summary>Event raised when the user presses Ctrl+Enter with content.</summary>
     public event Action<string>? OnSubmit;
@@ -82,11 +205,14 @@ public sealed class InputEditorWidget : ITuiWidget
     /// <summary>Insert text at the current cursor position, handling newlines.</summary>
     public void Insert(string text)
     {
-        if (string.IsNullOrEmpty(text)) return;
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
 
         // Normalize line endings and split
         string normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
-        var parts = normalized.Split('\n');
+        string[] parts = normalized.Split('\n');
 
         // Large paste: store full text and insert a short marker instead
         if (parts.Length > 10 || normalized.Length > 1000)
@@ -94,148 +220,159 @@ public sealed class InputEditorWidget : ITuiWidget
             _pasteCounter++;
             int pasteId = _pasteCounter;
             _pastes[pasteId] = normalized;
-            var marker = parts.Length > 10
-                ? $"[paste #{pasteId} +{parts.Length} lines]"
-                : $"[paste #{pasteId} {normalized.Length} chars]";
+            string marker =
+                parts.Length > 10
+                    ? $"[paste #{pasteId} +{parts.Length} lines]"
+                    : $"[paste #{pasteId} {normalized.Length} chars]";
             InsertSingleLine(marker);
             return;
         }
 
-        var currentLine = _lines[_cursorLine];
+        StringBuilder currentLine = _lines[CursorLine];
 
         // Insert first part at cursor position
-        currentLine.Insert(_cursorColumn, parts[0]);
-        _cursorColumn += parts[0].Length;
+        currentLine.Insert(CursorColumn, parts[0]);
+        CursorColumn += parts[0].Length;
 
         // For each subsequent part, create new lines
         for (int i = 1; i < parts.Length; i++)
         {
             // Split current line at cursor: what remains after cursor becomes start of next line
-            int restLen = currentLine.Length - _cursorColumn;
-            string rest = restLen > 0 ? currentLine.ToString(_cursorColumn, restLen) : "";
+            int restLen = currentLine.Length - CursorColumn;
+            string rest = restLen > 0 ? currentLine.ToString(CursorColumn, restLen) : "";
             if (restLen > 0)
-                currentLine.Remove(_cursorColumn, restLen);
+            {
+                currentLine.Remove(CursorColumn, restLen);
+            }
 
             // Insert new line with remainder + next part
-            _lines.Insert(_cursorLine + 1, new StringBuilder(parts[i] + rest));
-            _cursorLine++;
-            _cursorColumn = parts[i].Length;
-            currentLine = _lines[_cursorLine];
+            _lines.Insert(CursorLine + 1, new StringBuilder(parts[i] + rest));
+            CursorLine++;
+            CursorColumn = parts[i].Length;
+            currentLine = _lines[CursorLine];
         }
     }
 
     /// <summary>Insert text at cursor on the current line without splitting on newlines.</summary>
     private void InsertSingleLine(string text)
     {
-        var line = _lines[_cursorLine];
-        line.Insert(_cursorColumn, text);
-        _cursorColumn += text.Length;
+        StringBuilder line = _lines[CursorLine];
+        line.Insert(CursorColumn, text);
+        CursorColumn += text.Length;
     }
 
     /// <summary>Delete the character before the cursor, merging lines as needed.</summary>
     public void Backspace()
     {
-        if (_cursorColumn > 0)
+        if (CursorColumn > 0)
         {
-            _lines[_cursorLine].Remove(_cursorColumn - 1, 1);
-            _cursorColumn--;
+            _lines[CursorLine].Remove(CursorColumn - 1, 1);
+            CursorColumn--;
         }
-        else if (_cursorLine > 0)
+        else if (CursorLine > 0)
         {
             // Merge current line with previous line
-            var prevLine = _lines[_cursorLine - 1];
-            var currentLine = _lines[_cursorLine];
-            _cursorColumn = prevLine.Length;
+            StringBuilder prevLine = _lines[CursorLine - 1];
+            StringBuilder currentLine = _lines[CursorLine];
+            CursorColumn = prevLine.Length;
             prevLine.Append(currentLine);
-            _lines.RemoveAt(_cursorLine);
-            _cursorLine--;
+            _lines.RemoveAt(CursorLine);
+            CursorLine--;
         }
     }
 
     /// <summary>Delete the character at the cursor, merging lines as needed.</summary>
     public void Delete()
     {
-        var line = _lines[_cursorLine];
-        if (_cursorColumn < line.Length)
+        StringBuilder line = _lines[CursorLine];
+        if (CursorColumn < line.Length)
         {
-            line.Remove(_cursorColumn, 1);
+            line.Remove(CursorColumn, 1);
         }
-        else if (_cursorLine < _lines.Count - 1)
+        else if (CursorLine < _lines.Count - 1)
         {
             // Merge with next line
-            var nextLine = _lines[_cursorLine + 1];
+            StringBuilder nextLine = _lines[CursorLine + 1];
             line.Append(nextLine);
-            _lines.RemoveAt(_cursorLine + 1);
+            _lines.RemoveAt(CursorLine + 1);
         }
     }
 
     /// <summary>Move cursor left, wrapping to previous line at start.</summary>
     public void MoveLeft()
     {
-        if (_cursorColumn > 0)
+        if (CursorColumn > 0)
         {
-            _cursorColumn--;
+            CursorColumn--;
         }
-        else if (_cursorLine > 0)
+        else if (CursorLine > 0)
         {
-            _cursorLine--;
-            _cursorColumn = _lines[_cursorLine].Length;
+            CursorLine--;
+            CursorColumn = _lines[CursorLine].Length;
         }
     }
 
     /// <summary>Move cursor right, wrapping to next line at end.</summary>
     public void MoveRight()
     {
-        var line = _lines[_cursorLine];
-        if (_cursorColumn < line.Length)
+        StringBuilder line = _lines[CursorLine];
+        if (CursorColumn < line.Length)
         {
-            _cursorColumn++;
+            CursorColumn++;
         }
-        else if (_cursorLine < _lines.Count - 1)
+        else if (CursorLine < _lines.Count - 1)
         {
-            _cursorLine++;
-            _cursorColumn = 0;
+            CursorLine++;
+            CursorColumn = 0;
         }
     }
 
     /// <summary>Move cursor up one line, clamping column.</summary>
     public void MoveUp()
     {
-        if (_cursorLine > 0)
+        if (CursorLine > 0)
         {
-            _cursorLine--;
-            _cursorColumn = Math.Min(_cursorColumn, _lines[_cursorLine].Length);
+            CursorLine--;
+            CursorColumn = Math.Min(CursorColumn, _lines[CursorLine].Length);
         }
     }
 
     /// <summary>Move cursor down one line, clamping column.</summary>
     public void MoveDown()
     {
-        if (_cursorLine < _lines.Count - 1)
+        if (CursorLine < _lines.Count - 1)
         {
-            _cursorLine++;
-            _cursorColumn = Math.Min(_cursorColumn, _lines[_cursorLine].Length);
+            CursorLine++;
+            CursorColumn = Math.Min(CursorColumn, _lines[CursorLine].Length);
         }
     }
 
     /// <summary>Move cursor to the beginning of the current line.</summary>
-    public void MoveHome() => _cursorColumn = 0;
+    public void MoveHome()
+    {
+        CursorColumn = 0;
+    }
 
     /// <summary>Move cursor to the end of the current line.</summary>
-    public void MoveEnd() => _cursorColumn = _lines[_cursorLine].Length;
+    public void MoveEnd()
+    {
+        CursorColumn = _lines[CursorLine].Length;
+    }
 
     /// <summary>Submit the current content and clear the buffer.</summary>
     public void Submit()
     {
         if (_lines.Count == 0 || (_lines.Count == 1 && _lines[0].Length == 0))
+        {
             return;
+        }
 
-        var expanded = ExpandPasteMarkers(Text);
+        string expanded = ExpandPasteMarkers(Text);
         _lines.Clear();
         _lines.Add(new StringBuilder());
-        _cursorLine = 0;
-        _cursorColumn = 0;
-        _pendingCompletions = null;
+        CursorLine = 0;
+        CursorColumn = 0;
+        PendingCompletions = null;
         _completionAnchor = "";
         _pastes.Clear();
         _pasteCounter = 0;
@@ -245,9 +382,9 @@ public sealed class InputEditorWidget : ITuiWidget
 
     private string ExpandPasteMarkers(string text)
     {
-        foreach (var (pasteId, content) in _pastes)
+        foreach ((int pasteId, string content) in _pastes)
         {
-            var marker = $"[paste #{pasteId}";
+            string marker = $"[paste #{pasteId}";
             int idx = text.IndexOf(marker, StringComparison.Ordinal);
             if (idx >= 0)
             {
@@ -259,6 +396,7 @@ public sealed class InputEditorWidget : ITuiWidget
                 }
             }
         }
+
         return text;
     }
 
@@ -267,129 +405,190 @@ public sealed class InputEditorWidget : ITuiWidget
     {
         _lines.Clear();
         _lines.Add(new StringBuilder());
-        _cursorLine = 0;
-        _cursorColumn = 0;
-        _pendingCompletions = null;
+        CursorLine = 0;
+        CursorColumn = 0;
+        PendingCompletions = null;
         _completionAnchor = "";
     }
 
     // ── Readline-like editing commands ──
 
     /// <summary>
-    /// Pi-style backslash workaround: if the character before the cursor is \,
-    /// backspace it and insert a newline.  Returns true if the workaround
-    /// was applied (caller should NOT submit/insert after this).
+    ///     Pi-style backslash workaround: if the character before the cursor is \,
+    ///     backspace it and insert a newline.  Returns true if the workaround
+    ///     was applied (caller should NOT submit/insert after this).
     /// </summary>
     private bool TryBackslashNewline()
     {
-        var line = _lines[_cursorLine];
-        if (_cursorColumn > 0 && line.Length > 0 && line[_cursorColumn - 1] == '\\')
+        StringBuilder line = _lines[CursorLine];
+        if (CursorColumn > 0 && line.Length > 0 && line[CursorColumn - 1] == '\\')
         {
             Backspace();
             Insert("\n");
             return true;
         }
+
         return false;
     }
 
     /// <summary>Move cursor to the previous word boundary on the current line.</summary>
     public void MoveWordLeft()
     {
-        var line = _lines[_cursorLine];
-        if (_cursorColumn <= 0) return;
-        int pos = _cursorColumn - 1;
-        while (pos >= 0 && !IsWordChar(line[pos])) pos--;
-        while (pos >= 0 && IsWordChar(line[pos])) pos--;
-        _cursorColumn = Math.Max(0, pos + 1);
+        StringBuilder line = _lines[CursorLine];
+        if (CursorColumn <= 0)
+        {
+            return;
+        }
+
+        int pos = CursorColumn - 1;
+        while (pos >= 0 && !IsWordChar(line[pos]))
+        {
+            pos--;
+        }
+
+        while (pos >= 0 && IsWordChar(line[pos]))
+        {
+            pos--;
+        }
+
+        CursorColumn = Math.Max(0, pos + 1);
     }
 
     /// <summary>Move cursor to the next word boundary on the current line.</summary>
     public void MoveWordRight()
     {
-        var line = _lines[_cursorLine];
-        if (_cursorColumn >= line.Length) return;
-        int pos = _cursorColumn;
-        while (pos < line.Length && IsWordChar(line[pos])) pos++;
-        while (pos < line.Length && !IsWordChar(line[pos])) pos++;
-        _cursorColumn = pos;
+        StringBuilder line = _lines[CursorLine];
+        if (CursorColumn >= line.Length)
+        {
+            return;
+        }
+
+        int pos = CursorColumn;
+        while (pos < line.Length && IsWordChar(line[pos]))
+        {
+            pos++;
+        }
+
+        while (pos < line.Length && !IsWordChar(line[pos]))
+        {
+            pos++;
+        }
+
+        CursorColumn = pos;
     }
 
     /// <summary>Delete the word backward from the cursor.</summary>
     public void DeleteWordBackward()
     {
-        var line = _lines[_cursorLine];
+        StringBuilder line = _lines[CursorLine];
 
         // At start of line — merge with previous line first, then continue
-        if (_cursorColumn <= 0)
+        if (CursorColumn <= 0)
         {
-            if (_cursorLine > 0)
+            if (CursorLine > 0)
             {
-                var prevLine = _lines[_cursorLine - 1];
-                _cursorColumn = prevLine.Length;
+                StringBuilder prevLine = _lines[CursorLine - 1];
+                CursorColumn = prevLine.Length;
                 prevLine.Append(line);
-                _lines.RemoveAt(_cursorLine);
-                _cursorLine--;
+                _lines.RemoveAt(CursorLine);
+                CursorLine--;
             }
             else
             {
                 return; // Top of buffer, nothing to delete
             }
-            line = _lines[_cursorLine];
+
+            line = _lines[CursorLine];
         }
 
-        int start = _cursorColumn - 1;
-        while (start >= 0 && !IsWordChar(line[start])) start--;
-        while (start >= 0 && IsWordChar(line[start])) start--;
+        int start = CursorColumn - 1;
+        while (start >= 0 && !IsWordChar(line[start]))
+        {
+            start--;
+        }
+
+        while (start >= 0 && IsWordChar(line[start]))
+        {
+            start--;
+        }
+
         start++;
-        int len = _cursorColumn - start;
+        int len = CursorColumn - start;
         _killBuffer = line.ToString(start, len);
         line.Remove(start, len);
-        _cursorColumn = start;
+        CursorColumn = start;
     }
 
     /// <summary>Kill (cut) text from cursor to beginning of the current line.</summary>
     public void KillToStart()
     {
-        var line = _lines[_cursorLine];
-        if (_cursorColumn <= 0) return;
-        _killBuffer = line.ToString(0, _cursorColumn);
-        line.Remove(0, _cursorColumn);
-        _cursorColumn = 0;
+        StringBuilder line = _lines[CursorLine];
+        if (CursorColumn <= 0)
+        {
+            return;
+        }
+
+        _killBuffer = line.ToString(0, CursorColumn);
+        line.Remove(0, CursorColumn);
+        CursorColumn = 0;
     }
 
     /// <summary>Kill (cut) text from cursor to end of the current line.</summary>
     public void KillToEnd()
     {
-        var line = _lines[_cursorLine];
-        if (_cursorColumn >= line.Length) return;
-        _killBuffer = line.ToString(_cursorColumn, line.Length - _cursorColumn);
-        line.Remove(_cursorColumn, line.Length - _cursorColumn);
+        StringBuilder line = _lines[CursorLine];
+        if (CursorColumn >= line.Length)
+        {
+            return;
+        }
+
+        _killBuffer = line.ToString(CursorColumn, line.Length - CursorColumn);
+        line.Remove(CursorColumn, line.Length - CursorColumn);
     }
 
     /// <summary>Yank (paste) the last killed text at the cursor.</summary>
     public void Yank()
     {
-        if (string.IsNullOrEmpty(_killBuffer)) return;
-        var line = _lines[_cursorLine];
-        line.Insert(_cursorColumn, _killBuffer);
-        _cursorColumn += _killBuffer.Length;
+        if (string.IsNullOrEmpty(_killBuffer))
+        {
+            return;
+        }
+
+        StringBuilder line = _lines[CursorLine];
+        line.Insert(CursorColumn, _killBuffer);
+        CursorColumn += _killBuffer.Length;
     }
 
     /// <summary>Transpose characters at and before the cursor on the current line.</summary>
     public void TransposeChars()
     {
-        var line = _lines[_cursorLine];
-        if (line.Length < 2) return;
-        int pos = _cursorColumn;
-        if (pos == 0) pos = 1;
-        if (pos >= line.Length) pos = line.Length - 1;
+        StringBuilder line = _lines[CursorLine];
+        if (line.Length < 2)
+        {
+            return;
+        }
+
+        int pos = CursorColumn;
+        if (pos == 0)
+        {
+            pos = 1;
+        }
+
+        if (pos >= line.Length)
+        {
+            pos = line.Length - 1;
+        }
+
         char tmp = line[pos - 1];
         line[pos - 1] = line[pos];
         line[pos] = tmp;
-        _cursorColumn = pos + 1;
+        CursorColumn = pos + 1;
     }
 
-    private static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+    private static bool IsWordChar(char c)
+    {
+        return char.IsLetterOrDigit(c) || c == '_';
+    }
 
     /// <summary>Handle a terminal key event. Returns true if the key was consumed.</summary>
     public bool HandleKey(KeyEvent ke)
@@ -413,6 +612,7 @@ public sealed class InputEditorWidget : ITuiWidget
                 Insert(text);
                 return true;
             }
+
             // Backspace sent as control character (BS = 0x08, DEL = 0x7F)
             if (c == '\b' || c == 0x7F)
             {
@@ -445,7 +645,11 @@ public sealed class InputEditorWidget : ITuiWidget
                     TransposeChars();
                     return true;
                 case '\r': // Enter via legacy raw character
-                    if (TryBackslashNewline()) return true;
+                    if (TryBackslashNewline())
+                    {
+                        return true;
+                    }
+
                     Submit();
                     return true;
                 case '\n': // Ctrl+J / legacy line feed
@@ -467,7 +671,11 @@ public sealed class InputEditorWidget : ITuiWidget
                 // Pi-style backslash workaround: if char before cursor is \,
                 // backspace it and insert newline instead of submitting.
                 // This handles Shift+Enter on terminals that send \ + \r.
-                if (TryBackslashNewline()) return true;
+                if (TryBackslashNewline())
+                {
+                    return true;
+                }
+
                 Submit();
                 return true;
 
@@ -479,7 +687,11 @@ public sealed class InputEditorWidget : ITuiWidget
                 return true;
 
             case Key.Character when ke.Text?.Value == '\r':
-                if (TryBackslashNewline()) return true;
+                if (TryBackslashNewline())
+                {
+                    return true;
+                }
+
                 Submit();
                 return true;
 
@@ -507,7 +719,7 @@ public sealed class InputEditorWidget : ITuiWidget
                 MoveRight();
                 return true;
 
-            case Key.Up when _cursorLine == 0 && _history.Count > 0:
+            case Key.Up when CursorLine == 0 && _history.Count > 0:
                 HistoryPrevious();
                 return true;
 
@@ -515,7 +727,7 @@ public sealed class InputEditorWidget : ITuiWidget
                 MoveUp();
                 return true;
 
-            case Key.Down when _cursorLine == _lines.Count - 1 && _historyIndex >= 0:
+            case Key.Down when CursorLine == _lines.Count - 1 && _historyIndex >= 0:
                 HistoryNext();
                 return true;
 
@@ -544,8 +756,8 @@ public sealed class InputEditorWidget : ITuiWidget
     }
 
     /// <summary>
-    /// Navigate to the previous entry in history (most recent first).
-    /// History is stored oldest-first, so we access from the end.
+    ///     Navigate to the previous entry in history (most recent first).
+    ///     History is stored oldest-first, so we access from the end.
     /// </summary>
     private void HistoryPrevious()
     {
@@ -572,33 +784,47 @@ public sealed class InputEditorWidget : ITuiWidget
             _historyIndex = -1;
             _lines.Clear();
             _lines.Add(new StringBuilder());
-            _cursorLine = 0;
-            _cursorColumn = 0;
+            CursorLine = 0;
+            CursorColumn = 0;
         }
     }
 
     private void LoadHistoryEntry(int index)
     {
-        if (index < 0 || index >= _history.Count) return;
+        if (index < 0 || index >= _history.Count)
+        {
+            return;
+        }
+
         string text = _history[index];
         _lines.Clear();
-        foreach (var part in text.Split('\n'))
+        foreach (string part in text.Split('\n'))
+        {
             _lines.Add(new StringBuilder(part));
+        }
+
         if (_lines.Count == 0)
+        {
             _lines.Add(new StringBuilder());
-        _cursorLine = _lines.Count - 1;
-        _cursorColumn = _lines[_cursorLine].Length;
+        }
+
+        CursorLine = _lines.Count - 1;
+        CursorColumn = _lines[CursorLine].Length;
     }
 
     /// <summary>Trigger tab completion on the current buffer content.</summary>
     private void Complete()
     {
         if (CompletionProvider is null)
+        {
             return;
+        }
 
-        var current = _lines[_cursorLine].ToString();
-        if (_pendingCompletions is not null && current != _completionAnchor)
-            _pendingCompletions = null;
+        string current = _lines[CursorLine].ToString();
+        if (PendingCompletions is not null && current != _completionAnchor)
+        {
+            PendingCompletions = null;
+        }
 
         var completions = CompletionProvider(current)
             .Where(c => !string.IsNullOrWhiteSpace(c))
@@ -607,169 +833,81 @@ public sealed class InputEditorWidget : ITuiWidget
             .ToList();
 
         if (completions.Count == 0)
+        {
             return;
+        }
 
         if (completions.Count == 1)
         {
-            _pendingCompletions = null;
+            PendingCompletions = null;
             _completionAnchor = "";
             ReplaceBuffer(completions[0]);
             return;
         }
 
-        var commonPrefix = LongestCommonPrefix(completions);
+        string commonPrefix = LongestCommonPrefix(completions);
         if (commonPrefix.Length > current.Length)
         {
-            _pendingCompletions = null;
+            PendingCompletions = null;
             _completionAnchor = "";
             ReplaceBuffer(commonPrefix);
             return;
         }
 
         // Multiple completions, no common prefix extension — stash for display
-        _pendingCompletions = completions;
+        PendingCompletions = completions;
         _completionAnchor = current;
     }
 
     private void ReplaceBuffer(string value)
     {
         _lines.Clear();
-        foreach (var part in value.Split('\n'))
+        foreach (string part in value.Split('\n'))
+        {
             _lines.Add(new StringBuilder(part));
+        }
+
         if (_lines.Count == 0)
+        {
             _lines.Add(new StringBuilder());
-        _cursorLine = _lines.Count - 1;
-        _cursorColumn = _lines[_cursorLine].Length;
+        }
+
+        CursorLine = _lines.Count - 1;
+        CursorColumn = _lines[CursorLine].Length;
     }
 
     private static string LongestCommonPrefix(IReadOnlyList<string> values)
     {
-        if (values.Count == 0) return string.Empty;
-        var prefix = values[0];
-        for (var i = 1; i < values.Count; i++)
+        if (values.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        string prefix = values[0];
+        for (int i = 1; i < values.Count; i++)
         {
             while (!values[i].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
-                if (prefix.Length == 0) return string.Empty;
+                if (prefix.Length == 0)
+                {
+                    return string.Empty;
+                }
+
                 prefix = prefix[..^1];
             }
         }
+
         return prefix;
-    }
-
-    // ── ITuiWidget implementation ──
-
-    public Size Measure(Size available)
-    {
-        ReservedPopupHeight = 0;
-        if (_pendingCompletions is { Count: > 0 })
-        {
-            int visibleCount = Math.Min(_pendingCompletions.Count, MaxVisibleCompletions);
-            ReservedPopupHeight = visibleCount + 1; // items + title bar
-        }
-        // Grow up to half the terminal height, then let the rest overflow
-        int lineCount = Math.Min(_lines.Count, Math.Max(1, available.Height / 2));
-        return new Size(available.Width, lineCount + ReservedPopupHeight);
-    }
-
-    public void Arrange(Rect bounds)
-    {
-        _bounds = bounds;
-    }
-
-    public void Render(RenderContext context)
-    {
-        var style = TextStyle.Default;
-
-        // Input area occupies the bottom rows of our bounds
-        int visibleLineCount = Math.Min(_lines.Count, _bounds.Height - ReservedPopupHeight);
-        int inputStartRow = _bounds.Bottom - visibleLineCount;
-
-        // If there are pending completions, draw popup above the input area
-        if (_pendingCompletions is { Count: > 0 })
-        {
-            DrawCompletions(context, _bounds.Y, inputStartRow);
-        }
-
-        var emptyCell = new RenderCell
-        {
-            Glyph = GlyphRef.Ascii((byte)' '),
-            Width = 1,
-            Style = style,
-        };
-
-        // Determine which slice of _lines to render (newest lines at bottom)
-        int lineOffset = _lines.Count - visibleLineCount;
-        if (lineOffset < 0) lineOffset = 0;
-
-        // Draw each visible line
-        for (int i = 0; i < visibleLineCount; i++)
-        {
-            int lineIndex = lineOffset + i;
-            int row = inputStartRow + i;
-            string prefix = (lineIndex == 0) ? "> " : "  ";
-            const int prefixWidth = 2;
-
-            // Clear the row
-            var inputRect = new Rect(_bounds.X, row, _bounds.Width, 1);
-            context.FillRect(inputRect, emptyCell);
-
-            // Draw prefix
-            var prefixStyle = (lineIndex == 0)
-                ? TextStyle.ForegroundOnly(235, 195, 80)
-                : TextStyle.ForegroundOnly(120, 120, 130);
-            context.DrawText(_bounds.X, row, Encoding.UTF8.GetBytes(prefix), prefixStyle);
-
-            int lineStartX = _bounds.X + prefixWidth;
-            string lineText = _lines[lineIndex].ToString();
-
-            if (lineIndex == _cursorLine)
-            {
-                // This line has the cursor
-                int cursorDisplayWidth = GetDisplayWidth(lineText[.._cursorColumn]);
-                int cursorScreenCol = lineStartX + cursorDisplayWidth;
-
-                // Draw text before cursor
-                if (_cursorColumn > 0)
-                {
-                    context.DrawText(lineStartX, row, Encoding.UTF8.GetBytes(lineText[.._cursorColumn]), style);
-                }
-
-                // Draw cursor (block cursor via inverted character)
-                if (cursorScreenCol < _bounds.Right)
-                {
-                    string cursorChar = _cursorColumn < lineText.Length
-                        ? lineText[_cursorColumn].ToString()
-                        : " ";
-                    context.DrawText(cursorScreenCol, row,
-                        Encoding.UTF8.GetBytes(cursorChar),
-                        TextStyle.Inverted);
-                }
-
-                // Draw text after cursor
-                if (_cursorColumn + 1 < lineText.Length)
-                {
-                    context.DrawText(cursorScreenCol + 1, row,
-                        Encoding.UTF8.GetBytes(lineText[(_cursorColumn + 1)..]), style);
-                }
-            }
-            else
-            {
-                // No cursor on this line, draw full text
-                if (lineText.Length > 0)
-                {
-                    context.DrawText(lineStartX, row, Encoding.UTF8.GetBytes(lineText), style);
-                }
-            }
-        }
     }
 
     private void DrawCompletions(RenderContext context, int popupStart, int inputStartRow)
     {
-        if (_pendingCompletions is null || _pendingCompletions.Count == 0)
+        if (PendingCompletions is null || PendingCompletions.Count == 0)
+        {
             return;
+        }
 
-        int maxItems = Math.Min(_pendingCompletions.Count, MaxVisibleCompletions);
+        int maxItems = Math.Min(PendingCompletions.Count, MaxVisibleCompletions);
         int popupWidth = Math.Min(_bounds.Width - 4, 60);
         int popupX = _bounds.X + 2;
 
@@ -778,31 +916,33 @@ public sealed class InputEditorWidget : ITuiWidget
         {
             Glyph = GlyphRef.Ascii((byte)' '),
             Width = 1,
-            Style = new TextStyle(200, 200, 200, 40, 40, 45, false, false, false),
+            Style = new TextStyle(200, 200, 200, 40, 40, 45, false, false, false)
         };
         context.FillRect(new Rect(popupX, popupStart, popupWidth, maxItems + 1), popupBg);
 
         // Title
-        context.DrawText(popupX + 1, popupStart,
-            Encoding.UTF8.GetBytes($" Completions ({_pendingCompletions.Count}): "),
+        context.DrawText(popupX + 1,
+            popupStart,
+            Encoding.UTF8.GetBytes($" Completions ({PendingCompletions.Count}): "),
             TextStyle.ForegroundOnly(150, 150, 160));
 
         // Items (first item highlighted)
         for (int i = 0; i < maxItems; i++)
         {
-            string line = $" {_pendingCompletions[i]}";
-            var itemStyle = (i == 0)
-                ? TextStyle.Inverted
-                : TextStyle.ForegroundOnly(200, 200, 200);
-            context.DrawText(popupX + 1, popupStart + 1 + i,
-                Encoding.UTF8.GetBytes(line), itemStyle);
+            string line = $" {PendingCompletions[i]}";
+            TextStyle itemStyle = i == 0 ? TextStyle.Inverted : TextStyle.ForegroundOnly(200, 200, 200);
+            context.DrawText(popupX + 1,
+                popupStart + 1 + i,
+                Encoding.UTF8.GetBytes(line),
+                itemStyle);
         }
 
         // If there are more items than we can show, indicate that
-        if (_pendingCompletions.Count > maxItems)
+        if (PendingCompletions.Count > maxItems)
         {
-            context.DrawText(popupX + 1, popupStart + 1 + maxItems - 1,
-                Encoding.UTF8.GetBytes($" ... and {_pendingCompletions.Count - maxItems + 1} more"),
+            context.DrawText(popupX + 1,
+                popupStart + 1 + maxItems - 1,
+                Encoding.UTF8.GetBytes($" ... and {PendingCompletions.Count - maxItems + 1} more"),
                 TextStyle.ForegroundOnly(120, 120, 130));
         }
     }
@@ -810,8 +950,11 @@ public sealed class InputEditorWidget : ITuiWidget
     private static int GetDisplayWidth(string text)
     {
         int width = 0;
-        foreach (var rune in text.EnumerateRunes())
+        foreach (Rune rune in text.EnumerateRunes())
+        {
             width += CellWidthCalculator.GetWidth(rune);
+        }
+
         return width;
     }
 }

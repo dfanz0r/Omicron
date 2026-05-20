@@ -1,8 +1,10 @@
+using System.Text;
+
 namespace Omicron.CLI;
 
 /// <summary>
-/// Represents a key press for the LineEditor engine.
-/// Models the minimal inputs needed for testing.
+///     Represents a key press for the LineEditor engine.
+///     Models the minimal inputs needed for testing.
 /// </summary>
 public readonly record struct EditorKeyInfo(
     ConsoleKey Key,
@@ -10,7 +12,11 @@ public readonly record struct EditorKeyInfo(
     ConsoleModifiers Modifiers)
 {
     public static readonly EditorKeyInfo Enter = new(ConsoleKey.Enter, '\r', 0);
-    public static readonly EditorKeyInfo ShiftEnter = new(ConsoleKey.Enter, '\r', ConsoleModifiers.Shift);
+
+    public static readonly EditorKeyInfo ShiftEnter = new(ConsoleKey.Enter,
+        '\r',
+        ConsoleModifiers.Shift);
+
     public static readonly EditorKeyInfo Backspace = new(ConsoleKey.Backspace, '\0', 0);
     public static readonly EditorKeyInfo Tab = new(ConsoleKey.Tab, '\t', 0);
     public static readonly EditorKeyInfo Escape = new(ConsoleKey.Escape, '\0', 0);
@@ -21,16 +27,19 @@ public readonly record struct EditorKeyInfo(
     public static readonly EditorKeyInfo Delete = new(ConsoleKey.Delete, '\0', 0);
     public static readonly EditorKeyInfo CtrlC = new(ConsoleKey.C, '\0', ConsoleModifiers.Control);
 
-    public static EditorKeyInfo Char(char c) => new(ConsoleKey.OemPeriod, c, 0);
+    public static EditorKeyInfo Char(char c)
+    {
+        return new EditorKeyInfo(ConsoleKey.OemPeriod, c, 0);
+    }
 }
 
 /// <summary>
-/// Mutable state for the LineEditor engine.
-/// Tracks the buffer, cursor position, and completion state.
+///     Mutable state for the LineEditor engine.
+///     Tracks the buffer, cursor position, and completion state.
 /// </summary>
 public sealed class LineEditorState
 {
-    public System.Text.StringBuilder Buffer { get; } = new();
+    public StringBuilder Buffer { get; } = new();
     public int Cursor { get; set; }
     public bool EscapePressed { get; set; }
 
@@ -39,18 +48,18 @@ public sealed class LineEditorState
 }
 
 /// <summary>
-/// Result of processing a key in LineEditorEngine.
+///     Result of processing a key in LineEditorEngine.
 /// </summary>
 public enum LineEditorAction
 {
     None,
     Submit,
-    Cancel,
+    Cancel
 }
 
 /// <summary>
-/// Testable core of the LineEditor. Processes key input against state
-/// without any console I/O. The real LineEditor wraps this engine.
+///     Testable core of the LineEditor. Processes key input against state
+///     without any console I/O. The real LineEditor wraps this engine.
 /// </summary>
 public class LineEditorEngine
 {
@@ -62,9 +71,9 @@ public class LineEditorEngine
     }
 
     /// <summary>
-    /// Process a single key press against the given state.
-    /// Returns the action that should be taken (Submit/Cancel/None).
-    /// The caller is responsible for updating the console display.
+    ///     Process a single key press against the given state.
+    ///     Returns the action that should be taken (Submit/Cancel/None).
+    ///     The caller is responsible for updating the console display.
     /// </summary>
     public LineEditorAction ProcessKey(EditorKeyInfo key, LineEditorState state)
     {
@@ -77,7 +86,9 @@ public class LineEditorEngine
         }
 
         if (key == EditorKeyInfo.CtrlC)
+        {
             return LineEditorAction.Cancel;
+        }
 
         if (key.Key == ConsoleKey.Enter)
         {
@@ -90,6 +101,7 @@ public class LineEditorEngine
                     state.Buffer.Remove(state.Cursor - 1, 1);
                     state.Cursor--;
                 }
+
                 Insert('\n', state);
                 return LineEditorAction.None;
             }
@@ -159,9 +171,11 @@ public class LineEditorEngine
     private void Complete(LineEditorState state)
     {
         if (_completionProvider is null || state.Cursor != state.Buffer.Length)
+        {
             return;
+        }
 
-        var current = state.Buffer.ToString();
+        string current = state.Buffer.ToString();
         var completions = _completionProvider(current)
             .Where(c => !string.IsNullOrWhiteSpace(c))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -169,7 +183,9 @@ public class LineEditorEngine
             .ToList();
 
         if (completions.Count == 0)
+        {
             return;
+        }
 
         if (completions.Count == 1)
         {
@@ -178,7 +194,7 @@ public class LineEditorEngine
             return;
         }
 
-        var commonPrefix = LongestCommonPrefix(completions);
+        string commonPrefix = LongestCommonPrefix(completions);
         if (commonPrefix.Length > current.Length)
         {
             state.PendingCompletions = null;
@@ -199,16 +215,25 @@ public class LineEditorEngine
 
     private static string LongestCommonPrefix(IReadOnlyList<string> values)
     {
-        if (values.Count == 0) return string.Empty;
-        var prefix = values[0];
-        for (var i = 1; i < values.Count; i++)
+        if (values.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        string prefix = values[0];
+        for (int i = 1; i < values.Count; i++)
         {
             while (!values[i].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             {
-                if (prefix.Length == 0) return string.Empty;
+                if (prefix.Length == 0)
+                {
+                    return string.Empty;
+                }
+
                 prefix = prefix[..^1];
             }
         }
+
         return prefix;
     }
 }

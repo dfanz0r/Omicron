@@ -3,26 +3,25 @@ using System.Buffers;
 namespace Omicron.Core.Rendering;
 
 /// <summary>
-/// Renders <see cref="TerminalFrame"/> instances through a <see cref="SwapChain"/>
-/// double-buffer, emitting minimal ANSI updates to an <see cref="IBufferWriter{T}"/>.
+///     Renders <see cref="TerminalFrame" /> instances through a <see cref="SwapChain" />
+///     double-buffer, emitting minimal ANSI updates to an <see cref="IBufferWriter{T}" />.
 /// </summary>
 public sealed class DifferentialRenderer
 {
-    private readonly SwapChain _swapChain;
     private bool _firstRender = true;
     private bool _fullRedrawQueued;
 
-    /// <summary>The swap chain backing this renderer.</summary>
-    public SwapChain SwapChain => _swapChain;
-
     public DifferentialRenderer(int width, int height)
     {
-        _swapChain = new SwapChain(width, height);
+        SwapChain = new SwapChain(width, height);
     }
 
+    /// <summary>The swap chain backing this renderer.</summary>
+    public SwapChain SwapChain { get; }
+
     /// <summary>
-    /// Render the next frame: copies the source into the back buffer,
-    /// diffs against the front buffer, and emits ANSI updates.
+    ///     Render the next frame: copies the source into the back buffer,
+    ///     diffs against the front buffer, and emits ANSI updates.
     /// </summary>
     public void Render(TerminalFrame source, IBufferWriter<byte> output)
     {
@@ -30,7 +29,7 @@ public sealed class DifferentialRenderer
         // We do NOT copy the glyph table — instead we pass the source glyph
         // table directly to Diff/EmitFullFrame, avoiding an O(n) hash-map
         // rebuild on every single render.
-        var current = _swapChain.Current;
+        TerminalFrame current = SwapChain.Current;
         Array.Copy(source.Cells, current.Cells, source.Cells.Length);
 
         if (_firstRender || _fullRedrawQueued)
@@ -53,26 +52,26 @@ public sealed class DifferentialRenderer
         else
         {
             // Diff against previous, using synchronized output (DEC 2026)
-            _swapChain.Diff(output, useSynchronizedOutput: true, source.GlyphTable);
+            SwapChain.Diff(output, true, source.GlyphTable);
         }
 
         // Swap buffers
-        _swapChain.Swap();
+        SwapChain.Swap();
     }
 
     /// <summary>Resize the rendering buffers.</summary>
     public void Resize(int width, int height)
     {
-        _swapChain.Resize(width, height);
+        SwapChain.Resize(width, height);
         _firstRender = true; // Force full redraw on resize
     }
 
     /// <summary>
-    /// Request a full frame redraw on the next render (without clearing the screen).
-    /// Call this when the viewport scrolls to avoid the row-by-row flicker
-    /// that the diff renderer produces during large viewport shifts.
-    /// The full redraw wraps the entire frame in synchronized output so the
-    /// terminal renders all rows atomically.
+    ///     Request a full frame redraw on the next render (without clearing the screen).
+    ///     Call this when the viewport scrolls to avoid the row-by-row flicker
+    ///     that the diff renderer produces during large viewport shifts.
+    ///     The full redraw wraps the entire frame in synchronized output so the
+    ///     terminal renders all rows atomically.
     /// </summary>
     public void RequestFullRedraw()
     {
@@ -80,9 +79,9 @@ public sealed class DifferentialRenderer
     }
 
     /// <summary>
-    /// Force a full screen clear + full frame redraw on the next render.
-    /// Use when switching from a modal overlay back to the main app so
-    /// diff artifacts from the modal don't leak into the main view.
+    ///     Force a full screen clear + full frame redraw on the next render.
+    ///     Use when switching from a modal overlay back to the main app so
+    ///     diff artifacts from the modal don't leak into the main view.
     /// </summary>
     public void ForceFullRedraw()
     {
@@ -90,11 +89,14 @@ public sealed class DifferentialRenderer
         _fullRedrawQueued = true;
     }
 
-    private static void EmitFullFrame(TerminalFrame frame, IBufferWriter<byte> output, GlyphInternTable? glyphTable = null)
+    private static void EmitFullFrame(
+        TerminalFrame frame,
+        IBufferWriter<byte> output,
+        GlyphInternTable? glyphTable = null)
     {
         int width = frame.Width;
         int height = frame.Height;
-        var glyphs = glyphTable ?? frame.GlyphTable;
+        GlyphInternTable glyphs = glyphTable ?? frame.GlyphTable;
 
         for (int row = 0; row < height; row++)
         {
@@ -102,7 +104,7 @@ public sealed class DifferentialRenderer
             int lastCol = -1;
             for (int c = width - 1; c >= 0; c--)
             {
-                var cell = frame.Cells[row * width + c];
+                RenderCell cell = frame.Cells[row * width + c];
                 if (!cell.IsEmpty || cell.Style != TextStyle.Default)
                 {
                     lastCol = c;
@@ -111,7 +113,9 @@ public sealed class DifferentialRenderer
             }
 
             if (lastCol < 0)
+            {
                 continue; // Entirely empty row — skip
+            }
 
             // Write the entire row so trailing empty cells get the explicit
             // default background. Otherwise cells beyond lastCol retain the
@@ -123,14 +127,16 @@ public sealed class DifferentialRenderer
             AnsiEncoder.ResetStyle(output); // ESC[2J does not reset SGR
             TextStyle? currentStyle = null;
 
-            ReadOnlySpan<byte> spaceSpan = " "u8;
+            var spaceSpan = " "u8;
 
             for (int col = 0; col <= lastCol; col++)
             {
-                var cell = frame.Cells[row * width + col];
+                RenderCell cell = frame.Cells[row * width + col];
 
                 if (cell.Width == 0) // Continuation cell — skip
+                {
                     continue;
+                }
 
                 if (cell.Style != currentStyle)
                 {

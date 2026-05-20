@@ -16,19 +16,28 @@ public class JsonlSessionStoreTests : IDisposable
 
     public void Dispose()
     {
-        try { Directory.Delete(_tempDir, recursive: true); } catch { }
+        try
+        {
+            Directory.Delete(_tempDir, true);
+        }
+        catch { }
     }
 
-    private JsonlSessionStore CreateStore() => new(_tempDir);
+    private JsonlSessionStore CreateStore()
+    {
+        return new JsonlSessionStore(_tempDir);
+    }
 
     [Fact]
     public async Task CreateAndGetSession()
     {
-        using var store = CreateStore();
-        var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat,
+        using JsonlSessionStore store = CreateStore();
+        var request = new SessionCreateRequest("gpt-4o",
+            "openai",
+            ApiType.OpenAiChat,
             SystemPrompt: "You are helpful.");
 
-        var record = await store.CreateSessionAsync(request);
+        SessionRecord record = await store.CreateSessionAsync(request);
 
         Assert.NotEqual(default, record.SessionId);
         Assert.Equal("gpt-4o", record.ModelId);
@@ -36,7 +45,7 @@ public class JsonlSessionStoreTests : IDisposable
         Assert.Equal(ApiType.OpenAiChat, record.ApiType);
         Assert.Equal("You are helpful.", record.SystemPrompt);
 
-        var retrieved = await store.GetSessionAsync(record.SessionId);
+        SessionRecord? retrieved = await store.GetSessionAsync(record.SessionId);
         Assert.NotNull(retrieved);
         Assert.Equal(record.SessionId, retrieved.SessionId);
     }
@@ -44,31 +53,40 @@ public class JsonlSessionStoreTests : IDisposable
     [Fact]
     public async Task ListSessions()
     {
-        using var store = CreateStore();
+        using JsonlSessionStore store = CreateStore();
         await store.CreateSessionAsync(new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
         await store.CreateSessionAsync(new SessionCreateRequest("claude-3", "anthropic", ApiType.AnthropicMessages));
 
-        var sessions = await store.ListSessionsAsync(new SessionListQuery());
+        IReadOnlyList<SessionRecord> sessions = await store.ListSessionsAsync(new SessionListQuery());
         Assert.Equal(2, sessions.Count);
     }
 
     [Fact]
     public async Task AppendAndReadEvents()
     {
-        using var store = CreateStore();
-        var record = await store.CreateSessionAsync(
+        using JsonlSessionStore store = CreateStore();
+        SessionRecord record = await store.CreateSessionAsync(
             new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
 
-        var event1 = new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow,
-            record.SessionId), AgentId.New(), "gpt-4o", "openai");
-        var event2 = new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId), "Hello"u8);
+        var event1 = new SessionStartedEvent(
+            new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, record.SessionId),
+            AgentId.New(),
+            "gpt-4o",
+            "openai");
+        var event2 = new UserMessageEvent(new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, record.SessionId),
+            "Hello"u8);
 
-        await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent> { event1, event2 });
+        await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent>
+        {
+            event1,
+            event2
+        });
 
         var readBack = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(record.SessionId, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(record.SessionId, EventSequenceRange.All))
+        {
             readBack.Add(e);
+        }
 
         Assert.Equal(2, readBack.Count);
         Assert.IsType<SessionStartedEvent>(readBack[0]);
@@ -80,22 +98,25 @@ public class JsonlSessionStoreTests : IDisposable
     public async Task ReopenAndListSessions()
     {
         SessionId sessionId;
-        using (var store = CreateStore())
+        using (JsonlSessionStore store = CreateStore())
         {
-            var record = await store.CreateSessionAsync(
+            SessionRecord record = await store.CreateSessionAsync(
                 new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
             sessionId = record.SessionId;
 
-            await store.AppendEventsAsync(sessionId, new List<OmicronEvent>
-            {
-                new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow,
-                    sessionId), AgentId.New(), "gpt-4o", "openai")
-            });
+            await store.AppendEventsAsync(sessionId,
+                new List<OmicronEvent>
+                {
+                    new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId),
+                        AgentId.New(),
+                        "gpt-4o",
+                        "openai")
+                });
         }
 
         // Reopen
-        using var reopened = CreateStore();
-        var sessions = await reopened.ListSessionsAsync(new SessionListQuery());
+        using JsonlSessionStore reopened = CreateStore();
+        IReadOnlyList<SessionRecord> sessions = await reopened.ListSessionsAsync(new SessionListQuery());
         Assert.Single(sessions);
         Assert.Equal(sessionId, sessions[0].SessionId);
         Assert.Equal("gpt-4o", sessions[0].ModelId);
@@ -105,30 +126,35 @@ public class JsonlSessionStoreTests : IDisposable
     public async Task ReopenAndReadEvents()
     {
         SessionId sessionId;
-        using (var store = CreateStore())
+        using (JsonlSessionStore store = CreateStore())
         {
-            var record = await store.CreateSessionAsync(
+            SessionRecord record = await store.CreateSessionAsync(
                 new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
             sessionId = record.SessionId;
 
-            await store.AppendEventsAsync(sessionId, new List<OmicronEvent>
-            {
-                new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow,
-                    sessionId), AgentId.New(), "gpt-4o", "openai"),
-                new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId), "Hi after reopen"u8)
-            });
+            await store.AppendEventsAsync(sessionId,
+                new List<OmicronEvent>
+                {
+                    new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId),
+                        AgentId.New(),
+                        "gpt-4o",
+                        "openai"),
+                    new UserMessageEvent(new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId),
+                        "Hi after reopen"u8)
+                });
         }
 
         // Reopen and read
-        using var reopened = CreateStore();
+        using JsonlSessionStore reopened = CreateStore();
         var events = new List<OmicronEvent>();
-        await foreach (var e in reopened.ReadEventsAsync(sessionId, EventSequenceRange.All))
+        await foreach (OmicronEvent e in reopened.ReadEventsAsync(sessionId, EventSequenceRange.All))
+        {
             events.Add(e);
+        }
 
         Assert.Equal(2, events.Count);
         Assert.IsType<SessionStartedEvent>(events[0]);
-        var userMsg = Assert.IsType<UserMessageEvent>(events[1]);
+        UserMessageEvent userMsg = Assert.IsType<UserMessageEvent>(events[1]);
         Assert.Equal("Hi after reopen", userMsg.Text.ToString());
     }
 
@@ -136,55 +162,65 @@ public class JsonlSessionStoreTests : IDisposable
     public async Task GetEventCount_AfterReopen()
     {
         SessionId sessionId;
-        using (var store = CreateStore())
+        using (JsonlSessionStore store = CreateStore())
         {
-            var record = await store.CreateSessionAsync(
+            SessionRecord record = await store.CreateSessionAsync(
                 new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
             sessionId = record.SessionId;
 
-            await store.AppendEventsAsync(sessionId, new List<OmicronEvent>
-            {
-                new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow,
-                    sessionId), AgentId.New(), "gpt-4o", "openai"),
-                new UserMessageEvent(
-                new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId), "Count me"u8)
-            });
+            await store.AppendEventsAsync(sessionId,
+                new List<OmicronEvent>
+                {
+                    new SessionStartedEvent(new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId),
+                        AgentId.New(),
+                        "gpt-4o",
+                        "openai"),
+                    new UserMessageEvent(new EventEnvelope(EventId.New(), 2, DateTimeOffset.UtcNow, sessionId),
+                        "Count me"u8)
+                });
         }
 
-        using var reopened = CreateStore();
-        var count = await reopened.GetEventCountAsync(sessionId);
+        using JsonlSessionStore reopened = CreateStore();
+        long count = await reopened.GetEventCountAsync(sessionId);
         Assert.Equal(2, count);
     }
 
     [Fact]
     public async Task SessionEndedEvent_RoundTrip()
     {
-        using var store = CreateStore();
-        var record = await store.CreateSessionAsync(
+        using JsonlSessionStore store = CreateStore();
+        SessionRecord record = await store.CreateSessionAsync(
             new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat));
 
-        var ended = new SessionEndedEvent(
-                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, record.SessionId), "user_requested");
+        var ended = new SessionEndedEvent(new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, record.SessionId),
+            "user_requested");
 
-        await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent> { ended });
+        await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent>
+        {
+            ended
+        });
 
         var events = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(record.SessionId, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(record.SessionId, EventSequenceRange.All))
+        {
             events.Add(e);
+        }
 
-        var deserialized = Assert.IsType<SessionEndedEvent>(events[0]);
+        SessionEndedEvent deserialized = Assert.IsType<SessionEndedEvent>(events[0]);
         Assert.Equal("user_requested", deserialized.Reason);
     }
 
     [Fact]
     public async Task DuplicateSessionId_Throws()
     {
-        using var store = CreateStore();
-        var request = new SessionCreateRequest("gpt-4o", "openai", ApiType.OpenAiChat,
-            SessionId: SessionId.New());
-        var first = await store.CreateSessionAsync(request);
+        using JsonlSessionStore store = CreateStore();
+        var request = new SessionCreateRequest("gpt-4o",
+            "openai",
+            ApiType.OpenAiChat,
+            SessionId.New());
+        SessionRecord first = await store.CreateSessionAsync(request);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             store.CreateSessionAsync(request).AsTask());
         Assert.Contains("already exists", ex.Message);
     }
@@ -192,23 +228,32 @@ public class JsonlSessionStoreTests : IDisposable
     [Fact]
     public async Task ProviderStateEvent_RoundTrip()
     {
-        using var store = CreateStore();
-        var record = await store.CreateSessionAsync(
+        using JsonlSessionStore store = CreateStore();
+        SessionRecord record = await store.CreateSessionAsync(
             new SessionCreateRequest("gpt-5.5", "openai", ApiType.OpenAiResponses));
 
-        var key = ProviderStateKey.Create(record.SessionId, AgentId.New(), "openai", "gpt-5.5", ApiType.OpenAiResponses);
+        var key = ProviderStateKey.Create(record.SessionId,
+            AgentId.New(),
+            "openai",
+            "gpt-5.5",
+            ApiType.OpenAiResponses);
         var pse = new ProviderStateUpdatedEvent(
-                new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, record.SessionId),
-                new ProviderStateSnapshot(key, "resp_123", null, null, null),
-                "test");
+            new EventEnvelope(EventId.New(), 1, DateTimeOffset.UtcNow, record.SessionId),
+            new ProviderStateSnapshot(key, "resp_123", null, null, null),
+            "test");
 
-        await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent> { pse });
+        await store.AppendEventsAsync(record.SessionId, new List<OmicronEvent>
+        {
+            pse
+        });
 
         var events = new List<OmicronEvent>();
-        await foreach (var e in store.ReadEventsAsync(record.SessionId, EventSequenceRange.All))
+        await foreach (OmicronEvent e in store.ReadEventsAsync(record.SessionId, EventSequenceRange.All))
+        {
             events.Add(e);
+        }
 
-        var deserialized = Assert.IsType<ProviderStateUpdatedEvent>(events[0]);
+        ProviderStateUpdatedEvent deserialized = Assert.IsType<ProviderStateUpdatedEvent>(events[0]);
         Assert.Equal("resp_123", deserialized.State.PreviousResponseId);
         Assert.Equal("test", deserialized.Reason);
     }
@@ -229,27 +274,32 @@ public class JsonlSessionStoreTests : IDisposable
             {
                 Responses =
                 {
-                    () => Task.FromResult(new LlmResult { Text = "Hello", StopReason = StopReason.Stop })
+                    () =>
+                        Task.FromResult(new LlmResult
+                        {
+                            Text = "Hello",
+                            StopReason = StopReason.Stop
+                        })
                 }
             }
         };
 
-        var session = host.CreateSession(SessionConfig.Create(model));
-        await foreach (var _ in session.PromptAsync("Hi")) { }
+        AgentSession session = host.CreateSession(SessionConfig.Create(model));
+        await foreach (OmicronEvent _ in session.PromptAsync("Hi")) { }
 
         // Verify via reopened store
         using var reopened = new JsonlSessionStore(_tempDir);
-        var sessions = await reopened.ListSessionsAsync(new SessionListQuery());
+        IReadOnlyList<SessionRecord> sessions = await reopened.ListSessionsAsync(new SessionListQuery());
         Assert.NotEmpty(sessions);
         Assert.Contains(sessions, s => s.SessionId == session.Id);
 
         var events = new List<OmicronEvent>();
-        await foreach (var e in reopened.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        await foreach (OmicronEvent e in reopened.ReadEventsAsync(session.Id, EventSequenceRange.All))
+        {
             events.Add(e);
+        }
 
         Assert.Contains(events, e => e is SessionStartedEvent);
         Assert.Contains(events, e => e is UserMessageEvent);
     }
 }
-
-

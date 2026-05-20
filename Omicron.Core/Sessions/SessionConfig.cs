@@ -3,8 +3,8 @@ using Omicron.Core.Models;
 namespace Omicron.Core.Sessions;
 
 /// <summary>
-/// Immutable configuration for an AgentSession.
-/// Passed at construction and cannot be mutated afterward.
+///     Immutable configuration for an AgentSession.
+///     Passed at construction and cannot be mutated afterward.
 /// </summary>
 public sealed record SessionConfig(
     Model Model,
@@ -16,7 +16,7 @@ public sealed record SessionConfig(
     int MaxIterations)
 {
     /// <summary>
-    /// Create a default SessionConfig from a model and optional overrides.
+    ///     Create a default SessionConfig from a model and optional overrides.
     /// </summary>
     public static SessionConfig Create(
         Model model,
@@ -26,5 +26,7 @@ public sealed record SessionConfig(
         double? temperature = null,
         string? reasoningEffort = null,
         int maxIterations = 100)
-        => new(model, systemPrompt, apiKey, maxTokens, temperature, reasoningEffort, maxIterations);
+    {
+        return new SessionConfig(model, systemPrompt, apiKey, maxTokens, temperature, reasoningEffort, maxIterations);
+    }
 }

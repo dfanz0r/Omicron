@@ -27,16 +27,20 @@ public class CompatibilityDetectorTests
     [InlineData("openrouter", "openai/gpt-5.4-mini", ApiType.OpenAiResponses)]
     [InlineData("openrouter", "o3-mini", ApiType.OpenAiResponses)]
     [InlineData("unknown", "some-model", ApiType.OpenAiChat)]
-    public void CompatibilityDetector_ResolveApiType(string provider, string modelId, ApiType expected)
+    public void CompatibilityDetector_ResolveApiType(
+        string provider,
+        string modelId,
+        ApiType expected)
     {
-        var result = CompatibilityDetector.ResolveApiType(provider, modelId);
+        ApiType result = CompatibilityDetector.ResolveApiType(provider, modelId);
         Assert.Equal(expected, result);
     }
 
     [Fact]
     public void CompatibilityDetector_ResolveApiType_WithResponsesBaseUrl()
     {
-        var result = CompatibilityDetector.ResolveApiType("openai", "custom-model",
+        ApiType result = CompatibilityDetector.ResolveApiType("openai",
+            "custom-model",
             "https://api.openai.com/v1/responses");
         Assert.Equal(ApiType.OpenAiResponses, result);
     }
@@ -44,7 +48,7 @@ public class CompatibilityDetectorTests
     [Fact]
     public void CompatibilityDetector_ResolveCompatibility_OpenAiChat()
     {
-        var compat = CompatibilityDetector.ResolveCompatibility(ApiType.OpenAiChat, "openai");
+        ProviderCompatibility compat = CompatibilityDetector.ResolveCompatibility(ApiType.OpenAiChat, "openai");
         Assert.True(compat.SupportsStreamingUsage);
         Assert.False(compat.SupportsStore);
     }
@@ -52,7 +56,7 @@ public class CompatibilityDetectorTests
     [Fact]
     public void CompatibilityDetector_ResolveCompatibility_OpenAiResponses()
     {
-        var compat = CompatibilityDetector.ResolveCompatibility(ApiType.OpenAiResponses, "openai");
+        ProviderCompatibility compat = CompatibilityDetector.ResolveCompatibility(ApiType.OpenAiResponses, "openai");
         Assert.True(compat.SupportsStore);
     }
 
@@ -60,7 +64,7 @@ public class CompatibilityDetectorTests
     public void CompatibilityDetector_ResolveCompatibility_OpenAiResponses_NonOpenAi()
     {
         // Non-OpenAI providers with Responses API may not support store or previous_response_id
-        var compat = CompatibilityDetector.ResolveCompatibility(ApiType.OpenAiResponses, "other");
+        ProviderCompatibility compat = CompatibilityDetector.ResolveCompatibility(ApiType.OpenAiResponses, "other");
         Assert.False(compat.SupportsStore);
         Assert.False(compat.SupportsPreviousResponseId);
     }
@@ -68,7 +72,8 @@ public class CompatibilityDetectorTests
     [Fact]
     public void CompatibilityDetector_ResolveCompatibility_OpenRouterResponses_IsStatelessByDefault()
     {
-        var compat = CompatibilityDetector.ResolveCompatibility(ApiType.OpenAiResponses, "openrouter");
+        ProviderCompatibility compat = CompatibilityDetector.ResolveCompatibility(ApiType.OpenAiResponses,
+            "openrouter");
         Assert.False(compat.SupportsStore);
         Assert.False(compat.SupportsPreviousResponseId);
     }
@@ -76,28 +81,30 @@ public class CompatibilityDetectorTests
     [Fact]
     public void CompatibilityDetector_ResolveCompatibility_Anthropic()
     {
-        var compat = CompatibilityDetector.ResolveCompatibility(ApiType.AnthropicMessages, "anthropic");
+        ProviderCompatibility compat = CompatibilityDetector.ResolveCompatibility(ApiType.AnthropicMessages,
+            "anthropic");
         Assert.Equal(ToolCallIdFormat.Anthropic, compat.ToolCallIdFormat);
     }
 
     [Fact]
     public void CompatibilityDetector_ResolveStoragePolicy_Responses()
     {
-        var policy = CompatibilityDetector.ResolveStoragePolicy(ApiType.OpenAiResponses, "openai");
+        ProviderStoragePolicy policy = CompatibilityDetector.ResolveStoragePolicy(ApiType.OpenAiResponses, "openai");
         Assert.Equal(ProviderStoragePolicy.AllowProviderStateNoStore, policy);
     }
 
     [Fact]
     public void CompatibilityDetector_ResolveStoragePolicy_OpenRouterResponses_PreferStateless()
     {
-        var policy = CompatibilityDetector.ResolveStoragePolicy(ApiType.OpenAiResponses, "openrouter");
+        ProviderStoragePolicy policy = CompatibilityDetector.ResolveStoragePolicy(ApiType.OpenAiResponses,
+            "openrouter");
         Assert.Equal(ProviderStoragePolicy.PreferStateless, policy);
     }
 
     [Fact]
     public void CompatibilityDetector_ResolveStoragePolicy_Chat()
     {
-        var policy = CompatibilityDetector.ResolveStoragePolicy(ApiType.OpenAiChat, "openai");
+        ProviderStoragePolicy policy = CompatibilityDetector.ResolveStoragePolicy(ApiType.OpenAiChat, "openai");
         Assert.Equal(ProviderStoragePolicy.PreferStateless, policy);
     }
 
@@ -107,9 +114,12 @@ public class CompatibilityDetectorTests
     [InlineData(ApiType.OpenAiResponses, ProviderStoragePolicy.PreferStateless, false)]
     [InlineData(ApiType.OpenAiChat, ProviderStoragePolicy.AllowProviderStateNoStore, false)]
     [InlineData(ApiType.AnthropicMessages, ProviderStoragePolicy.AllowProviderStateNoStore, false)]
-    public void CompatibilityDetector_SupportsStatefulContinuation(ApiType apiType, ProviderStoragePolicy policy, bool expected)
+    public void CompatibilityDetector_SupportsStatefulContinuation(
+        ApiType apiType,
+        ProviderStoragePolicy policy,
+        bool expected)
     {
-        var result = CompatibilityDetector.SupportsStatefulContinuation(apiType, policy);
+        bool result = CompatibilityDetector.SupportsStatefulContinuation(apiType, policy);
         Assert.Equal(expected, result);
     }
 }

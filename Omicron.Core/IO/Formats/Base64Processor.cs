@@ -3,16 +3,16 @@ using Omicron.Core.Content;
 namespace Omicron.Core.IO;
 
 /// <summary>
-/// Produces raw base64-encoded file content with MIME type header.
-/// Used only when <c>format: "base64"</c> is specified — never resolved
-/// from the registry by file type.
-/// No line wrapping on the base64 payload.
+///     Produces raw base64-encoded file content with MIME type header.
+///     Used only when <c>format: "base64"</c> is specified — never resolved
+///     from the registry by file type.
+///     No line wrapping on the base64 payload.
 /// </summary>
 public sealed class Base64Processor
 {
     /// <summary>
-    /// Process a file as raw base64. Determines MIME type from
-    /// magic bytes + extension.
+    ///     Process a file as raw base64. Determines MIME type from
+    ///     magic bytes + extension.
     /// </summary>
     public ValueTask<ContentProcessorResult> ProcessAsync(
         ContentProcessorContext context,
@@ -20,13 +20,14 @@ public sealed class Base64Processor
     {
         ct.ThrowIfCancellationRequested();
 
-        var mimeType = GuessMimeType(context.RelativePath, context.Bytes.Span);
-        var b64 = Convert.ToBase64String(context.Bytes.Span);
+        string mimeType = GuessMimeType(context.RelativePath, context.Bytes.Span);
+        string b64 = Convert.ToBase64String(context.Bytes.Span);
 
-        var text = $"[FILE] {context.RelativePath}  ({mimeType}, {FormatSize.Format(context.Bytes.Length)})\nData: {b64}";
+        string text =
+            $"[FILE] {context.RelativePath}  ({mimeType}, {FormatSize.Format(context.Bytes.Length)})\nData: {b64}";
 
         // Determine appropriate modality based on MIME type
-        var modality = mimeType switch
+        OutputModality modality = mimeType switch
         {
             string m when m.StartsWith("image/") => OutputModality.ImageBase64,
             string m when m == "application/pdf" => OutputModality.PdfBase64,
@@ -35,13 +36,12 @@ public sealed class Base64Processor
             _ => OutputModality.Metadata
         };
 
-        return ValueTask.FromResult(new ContentProcessorResult(
-            text, modality, MimeType: mimeType));
+        return ValueTask.FromResult(new ContentProcessorResult(text, modality, MimeType: mimeType));
     }
 
     private static string GuessMimeType(string path, ReadOnlySpan<byte> header)
     {
-        var ext = Path.GetExtension(path)?.ToLowerInvariant() ?? "";
+        string ext = Path.GetExtension(path)?.ToLowerInvariant() ?? "";
 
         return ext switch
         {
@@ -77,12 +77,36 @@ public sealed class Base64Processor
 
     private static string? GuessByMagic(ReadOnlySpan<byte> header)
     {
-        if (header.Length >= 4 && header[0] == 0x25 && header[1] == 0x50) return "application/pdf";
-        if (header.Length >= 8 && header[0] == 0x89 && header[1] == 0x50) return "image/png";
-        if (header.Length >= 3 && header[0] == 0xFF && header[1] == 0xD8) return "image/jpeg";
-        if (header.Length >= 3 && header[0] == 0x47 && header[1] == 0x49) return "image/gif";
-        if (header.Length >= 4 && header[0] == 0x52 && header[1] == 0x49) return GuessRiffType(header);
-        if (header.Length >= 4 && header[0] == 0x50 && header[1] == 0x4B) return "application/zip";
+        if (header.Length >= 4 && header[0] == 0x25 && header[1] == 0x50)
+        {
+            return "application/pdf";
+        }
+
+        if (header.Length >= 8 && header[0] == 0x89 && header[1] == 0x50)
+        {
+            return "image/png";
+        }
+
+        if (header.Length >= 3 && header[0] == 0xFF && header[1] == 0xD8)
+        {
+            return "image/jpeg";
+        }
+
+        if (header.Length >= 3 && header[0] == 0x47 && header[1] == 0x49)
+        {
+            return "image/gif";
+        }
+
+        if (header.Length >= 4 && header[0] == 0x52 && header[1] == 0x49)
+        {
+            return GuessRiffType(header);
+        }
+
+        if (header.Length >= 4 && header[0] == 0x50 && header[1] == 0x4B)
+        {
+            return "application/zip";
+        }
+
         return null;
     }
 
@@ -90,12 +114,22 @@ public sealed class Base64Processor
     {
         if (header.Length >= 12)
         {
-            if (header[8] == 0x57 && header[9] == 0x45) return "image/webp"; // WEBP
-            if (header[8] == 0x57 && header[9] == 0x41) return "audio/wav";  // WAVE
-            if (header[8] == 0x41 && header[9] == 0x56) return "video/x-msvideo"; // AVI
+            if (header[8] == 0x57 && header[9] == 0x45)
+            {
+                return "image/webp"; // WEBP
+            }
+
+            if (header[8] == 0x57 && header[9] == 0x41)
+            {
+                return "audio/wav"; // WAVE
+            }
+
+            if (header[8] == 0x41 && header[9] == 0x56)
+            {
+                return "video/x-msvideo"; // AVI
+            }
         }
+
         return "application/octet-stream";
     }
-
-
 }

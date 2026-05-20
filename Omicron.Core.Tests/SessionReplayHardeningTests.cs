@@ -1,9 +1,7 @@
-using Omicron.Core.Content;
 using Omicron.Core.Events;
 using Omicron.Core.IO;
 using Omicron.Core.Models;
 using Omicron.Core.Permissions;
-using Omicron.Core.Providers;
 using Omicron.Core.Sessions;
 using Omicron.Core.Tools;
 using Omicron.Core.Workspace;
@@ -21,8 +19,8 @@ public class SessionReplayHardeningTests
     // ============================================================
 
     /// <summary>
-    /// Every registered event type must be either handled by the projector
-    /// or explicitly tagged as intentionally ignored.
+    ///     Every registered event type must be either handled by the projector
+    ///     or explicitly tagged as intentionally ignored.
     /// </summary>
     [Fact]
     public void Projection_CoversAllRegisteredEventTypes()
@@ -38,7 +36,7 @@ public class SessionReplayHardeningTests
             typeof(ToolInvocationStartedEvent),
             typeof(ToolInvocationCompletedEvent),
             typeof(ProviderStateUpdatedEvent),
-            typeof(ProviderStateClearedEvent),
+            typeof(ProviderStateClearedEvent)
         };
 
         // Event types that are intentionally ignored by projection
@@ -54,7 +52,7 @@ public class SessionReplayHardeningTests
             typeof(SessionEndedEvent),
             typeof(PermissionRequestedEvent),
             typeof(ExecutionStartedEvent),
-            typeof(ExecutionCompletedEvent),
+            typeof(ExecutionCompletedEvent)
         };
 
         var registered = OmicronEventRegistry.AllTypes.ToHashSet();
@@ -81,10 +79,13 @@ public class SessionReplayHardeningTests
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
             new UserMessageEvent(Envelope(), "hello"u8),
             new ModalityUsedEvent(Envelope(), "image", "photo.png", OutputModality.ImageBase64),
-            new AssistantResponseCompleteEvent(Envelope(), "response"u8, null, new TokenUsage(10, 20)),
+            new AssistantResponseCompleteEvent(Envelope(),
+                "response"u8,
+                null,
+                new TokenUsage(10, 20))
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
         Assert.Equal(2, projection.Messages.Count); // User + Assistant; ModalityUsedEvent ignored
         Assert.Equal(MessageRole.User, projection.Messages[0].Role);
         Assert.True(projection.Messages[0].TextUtf8.SequenceEqual("hello"u8));
@@ -100,13 +101,12 @@ public class SessionReplayHardeningTests
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
             new TransactionStartedEvent(Envelope(), txId),
             new TransactionStagedEvent(Envelope(), txId, "file.txt", "write"),
-            new TransactionCommittedEvent(Envelope(), txId),
-            new TransactionRolledBackEvent(Envelope(), txId),
-            new UserMessageEvent(Envelope(), "hello"u8),
+            new TransactionCommittedEvent(Envelope(), txId), new TransactionRolledBackEvent(Envelope(), txId),
+            new UserMessageEvent(Envelope(), "hello"u8)
         };
 
-        var projection = projector.Project(events);
-        var userMsg = Assert.Single(projection.Messages);
+        SessionProjection projection = projector.Project(events);
+        Message userMsg = Assert.Single(projection.Messages);
         Assert.Equal(MessageRole.User, userMsg.Role);
     }
 
@@ -117,11 +117,10 @@ public class SessionReplayHardeningTests
         var events = new OmicronEvent[]
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
-            new SessionEndedEvent(Envelope(), "done"),
-            new UserMessageEvent(Envelope(), "ping"u8),
+            new SessionEndedEvent(Envelope(), "done"), new UserMessageEvent(Envelope(), "ping"u8)
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
         Assert.NotEmpty(projection.Messages);
     }
 
@@ -133,11 +132,10 @@ public class SessionReplayHardeningTests
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
             new ExecutionStartedEvent(Envelope(), "ls -la", "/tmp"),
-            new ExecutionCompletedEvent(Envelope(), "ls -la", 0, 100, false),
-            new UserMessageEvent(Envelope(), "ok"u8),
+            new ExecutionCompletedEvent(Envelope(), "ls -la", 0, 100, false), new UserMessageEvent(Envelope(), "ok"u8)
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
         Assert.Single(projection.Messages);
     }
 
@@ -148,11 +146,10 @@ public class SessionReplayHardeningTests
         var events = new OmicronEvent[]
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
-            new PermissionRequestedEvent(Envelope(), "read_path", true),
-            new UserMessageEvent(Envelope(), "hello"u8),
+            new PermissionRequestedEvent(Envelope(), "read_path", true), new UserMessageEvent(Envelope(), "hello"u8)
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
         Assert.Single(projection.Messages);
     }
 
@@ -160,7 +157,12 @@ public class SessionReplayHardeningTests
     // Work Item 2: AgentSession hydration hardening
     // ============================================================
 
-    private static (IToolRegistry, IPermissionService, IEventSink, IProviderStateManager) CreateMocks()
+    private static (
+        IToolRegistry,
+        IPermissionService,
+        IEventSink,
+        IProviderStateManager
+        ) CreateMocks()
     {
         var tools = new ToolRegistry();
         var permissions = new AllowAllPermissionService();
@@ -173,9 +175,14 @@ public class SessionReplayHardeningTests
     [Fact]
     public void FromProjection_EmptyProjection_HydratesCleanSession()
     {
-        var (tools, permissions, events, providerState) = CreateMocks();
-        var config = SessionConfig.Create(
-            new Model { Id = "gpt-4", ProviderName = "openai", ApiType = ApiType.OpenAiChat });
+        (IToolRegistry tools, IPermissionService permissions, IEventSink events, IProviderStateManager providerState) =
+            CreateMocks();
+        var config = SessionConfig.Create(new Model
+        {
+            Id = "gpt-4",
+            ProviderName = "openai",
+            ApiType = ApiType.OpenAiChat
+        });
 
         var projection = new SessionProjection
         {
@@ -184,8 +191,13 @@ public class SessionReplayHardeningTests
             ProviderStates = new Dictionary<ProviderStateKey, ProviderTurnState>()
         };
 
-        var session = AgentSession.FromProjection(
-            projection, config, TestSessionId, tools, permissions, events, providerState, restoreProviderState: true);
+        var session = AgentSession.FromProjection(projection,
+            config,
+            TestSessionId,
+            tools,
+            permissions,
+            events,
+            providerState);
 
         Assert.Empty(session.Messages);
     }
@@ -193,23 +205,36 @@ public class SessionReplayHardeningTests
     [Fact]
     public void FromProjection_SingleUserMessage_RestoresTranscript()
     {
-        var (tools, permissions, events, providerState) = CreateMocks();
-        var config = SessionConfig.Create(
-            new Model { Id = "gpt-4", ProviderName = "openai", ApiType = ApiType.OpenAiChat });
+        (IToolRegistry tools, IPermissionService permissions, IEventSink events, IProviderStateManager providerState) =
+            CreateMocks();
+        var config = SessionConfig.Create(new Model
+        {
+            Id = "gpt-4",
+            ProviderName = "openai",
+            ApiType = ApiType.OpenAiChat
+        });
 
         var projection = new SessionProjection
         {
             SessionId = TestSessionId,
             Messages = new[]
             {
-                Message.UserMessage("hello"),
-                new Message { Role = MessageRole.Assistant, TextData = "world"u8 }
+                Message.UserMessage("hello"), new Message
+                {
+                    Role = MessageRole.Assistant,
+                    TextData = "world"u8
+                }
             },
             ProviderStates = new Dictionary<ProviderStateKey, ProviderTurnState>()
         };
 
-        var session = AgentSession.FromProjection(
-            projection, config, TestSessionId, tools, permissions, events, providerState, restoreProviderState: true);
+        var session = AgentSession.FromProjection(projection,
+            config,
+            TestSessionId,
+            tools,
+            permissions,
+            events,
+            providerState);
 
         Assert.Equal(2, session.Messages.Count);
         Assert.Equal(MessageRole.User, session.Messages[0].Role);
@@ -225,11 +250,20 @@ public class SessionReplayHardeningTests
     [Fact]
     public void FromProjection_SameModelProviderState_Restored()
     {
-        var (tools, permissions, events, providerState) = CreateMocks();
-        var config = SessionConfig.Create(
-            new Model { Id = "gpt-4", ProviderName = "openai", ApiType = ApiType.OpenAiChat });
+        (IToolRegistry tools, IPermissionService permissions, IEventSink events, IProviderStateManager providerState) =
+            CreateMocks();
+        var config = SessionConfig.Create(new Model
+        {
+            Id = "gpt-4",
+            ProviderName = "openai",
+            ApiType = ApiType.OpenAiChat
+        });
 
-        var key = new ProviderStateKey(TestSessionId, TestAgentId, "openai", "gpt-4", ApiType.OpenAiChat);
+        var key = new ProviderStateKey(TestSessionId,
+            TestAgentId,
+            "openai",
+            "gpt-4",
+            ApiType.OpenAiChat);
         var turnState = new ProviderTurnState(key, "resp-123", "conv-456", null, null);
 
         var projection = new SessionProjection
@@ -242,24 +276,38 @@ public class SessionReplayHardeningTests
             }
         };
 
-        var session = AgentSession.FromProjection(
-            projection, config, TestSessionId, tools, permissions, events, providerState, restoreProviderState: true);
+        var session = AgentSession.FromProjection(projection,
+            config,
+            TestSessionId,
+            tools,
+            permissions,
+            events,
+            providerState);
 
         // The state should be re-keyed and stored
         Assert.NotNull(session);
         // Verify via IProviderStateManager that state was set
-        var storedKeys = providerState.GetSessionKeys(TestSessionId);
+        IReadOnlyList<ProviderStateKey> storedKeys = providerState.GetSessionKeys(TestSessionId);
         Assert.Contains(storedKeys, k => k.ProviderName == "openai" && k.ModelId == "gpt-4");
     }
 
     [Fact]
     public void FromProjection_RestoreProviderStateFalse_ClearsState()
     {
-        var (tools, permissions, events, providerState) = CreateMocks();
-        var config = SessionConfig.Create(
-            new Model { Id = "gpt-4", ProviderName = "openai", ApiType = ApiType.OpenAiChat });
+        (IToolRegistry tools, IPermissionService permissions, IEventSink events, IProviderStateManager providerState) =
+            CreateMocks();
+        var config = SessionConfig.Create(new Model
+        {
+            Id = "gpt-4",
+            ProviderName = "openai",
+            ApiType = ApiType.OpenAiChat
+        });
 
-        var key = new ProviderStateKey(TestSessionId, TestAgentId, "openai", "gpt-4", ApiType.OpenAiChat);
+        var key = new ProviderStateKey(TestSessionId,
+            TestAgentId,
+            "openai",
+            "gpt-4",
+            ApiType.OpenAiChat);
         var turnState = new ProviderTurnState(key, "resp-123", "conv-456", null, null);
 
         var projection = new SessionProjection
@@ -272,11 +320,17 @@ public class SessionReplayHardeningTests
             }
         };
 
-        var session = AgentSession.FromProjection(
-            projection, config, TestSessionId, tools, permissions, events, providerState, restoreProviderState: false);
+        var session = AgentSession.FromProjection(projection,
+            config,
+            TestSessionId,
+            tools,
+            permissions,
+            events,
+            providerState,
+            false);
 
         // State should NOT be restored
-        var storedKeys = providerState.GetSessionKeys(TestSessionId);
+        IReadOnlyList<ProviderStateKey> storedKeys = providerState.GetSessionKeys(TestSessionId);
         Assert.DoesNotContain(storedKeys, k => k.ProviderName == "openai" && k.ModelId == "gpt-4");
     }
 
@@ -291,16 +345,29 @@ public class SessionReplayHardeningTests
         var events = new OmicronEvent[]
         {
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
-            new UserMessageEvent(Envelope(), "read the file"u8),
-            new AssistantResponseCompleteEvent(Envelope(), "I'll read it"u8, null, new TokenUsage(10, 20)),
-            new ToolInvocationStartedEvent(Envelope(), new ToolCallId("tc1"), "read_path",
-                new Dictionary<string, object?> { ["path"] = "test.txt" }),
-            new ToolInvocationCompletedEvent(Envelope(), new ToolCallId("tc1"), "read_path",
-                "[FILE] test.txt (content)"u8, false),
-            new AssistantResponseCompleteEvent(Envelope(), "Here's the content"u8, null, new TokenUsage(5, 10)),
+            new UserMessageEvent(Envelope(), "read the file"u8), new AssistantResponseCompleteEvent(Envelope(),
+                "I'll read it"u8,
+                null,
+                new TokenUsage(10, 20)),
+            new ToolInvocationStartedEvent(Envelope(),
+                new ToolCallId("tc1"),
+                "read_path",
+                new Dictionary<string, object?>
+                {
+                    ["path"] = "test.txt"
+                }),
+            new ToolInvocationCompletedEvent(Envelope(),
+                new ToolCallId("tc1"),
+                "read_path",
+                "[FILE] test.txt (content)"u8,
+                false),
+            new AssistantResponseCompleteEvent(Envelope(),
+                "Here's the content"u8,
+                null,
+                new TokenUsage(5, 10))
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
 
         // Messages: User, Assistant (with tool call), ToolResult, Assistant (final)
         Assert.Equal(4, projection.Messages.Count);
@@ -308,7 +375,7 @@ public class SessionReplayHardeningTests
         Assert.Equal(MessageRole.Assistant, projection.Messages[1].Role);
         Assert.Contains("I'll read it", projection.Messages[1].GetTextString());
         Assert.NotNull(projection.Messages[1].ToolCalls);
-        var toolCall = Assert.Single(projection.Messages[1].ToolCalls!);
+        ToolCallContent toolCall = Assert.Single(projection.Messages[1].ToolCalls!);
         Assert.Equal("read_path", toolCall.Name);
 
         Assert.Equal(MessageRole.ToolResult, projection.Messages[2].Role);
@@ -330,10 +397,10 @@ public class SessionReplayHardeningTests
             new UserMessageEvent(Envelope(), "hello"u8),
             new AssistantResponseCompleteEvent(Envelope(), "hi"u8, null, new TokenUsage(10, 20)),
             new UserMessageEvent(Envelope(), "again"u8),
-            new AssistantResponseCompleteEvent(Envelope(), "ok"u8, null, new TokenUsage(5, 15)),
+            new AssistantResponseCompleteEvent(Envelope(), "ok"u8, null, new TokenUsage(5, 15))
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
         Assert.Equal(15, projection.TotalUsage.InputTokens);
         Assert.Equal(35, projection.TotalUsage.OutputTokens);
     }
@@ -347,12 +414,11 @@ public class SessionReplayHardeningTests
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
             new UserMessageEvent(Envelope(), "hello"u8),
             new AssistantResponseCompleteEvent(Envelope(), "hi"u8, null, new TokenUsage(5, 10)),
-            new SessionResetEvent(Envelope()),
-            new UserMessageEvent(Envelope(), "fresh start"u8),
-            new AssistantResponseCompleteEvent(Envelope(), "ok"u8, null, new TokenUsage(1, 2)),
+            new SessionResetEvent(Envelope()), new UserMessageEvent(Envelope(), "fresh start"u8),
+            new AssistantResponseCompleteEvent(Envelope(), "ok"u8, null, new TokenUsage(1, 2))
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
         // Only messages after reset should exist
         Assert.Equal(2, projection.Messages.Count); // User + Assistant
         Assert.True(projection.Messages[0].TextUtf8.SequenceEqual("fresh start"u8));
@@ -371,16 +437,28 @@ public class SessionReplayHardeningTests
             new SessionStartedEvent(Envelope(), TestAgentId, "gpt-4", "openai"),
             new UserMessageEvent(Envelope(), "do both"u8),
             // Batch: 2 tool calls in parallel
-            new ToolInvocationStartedEvent(Envelope(), new ToolCallId("tc1"), "tool_a",
+            new ToolInvocationStartedEvent(Envelope(),
+                new ToolCallId("tc1"),
+                "tool_a",
                 new Dictionary<string, object?>()),
-            new ToolInvocationStartedEvent(Envelope(), new ToolCallId("tc2"), "tool_b",
+            new ToolInvocationStartedEvent(Envelope(),
+                new ToolCallId("tc2"),
+                "tool_b",
                 new Dictionary<string, object?>()),
-            new ToolInvocationCompletedEvent(Envelope(), new ToolCallId("tc1"), "tool_a", "result_a"u8, false),
-            new ToolInvocationCompletedEvent(Envelope(), new ToolCallId("tc2"), "tool_b", "result_b"u8, false),
-            new AssistantResponseCompleteEvent(Envelope(), "done"u8, null, new TokenUsage(10, 20)),
+            new ToolInvocationCompletedEvent(Envelope(),
+                new ToolCallId("tc1"),
+                "tool_a",
+                "result_a"u8,
+                false),
+            new ToolInvocationCompletedEvent(Envelope(),
+                new ToolCallId("tc2"),
+                "tool_b",
+                "result_b"u8,
+                false),
+            new AssistantResponseCompleteEvent(Envelope(), "done"u8, null, new TokenUsage(10, 20))
         };
 
-        var projection = projector.Project(events);
+        SessionProjection projection = projector.Project(events);
         // Messages: User, Assistant (with 2 tool calls), ToolResult x2, Assistant (final)
         // Note: due to how flushing works, the empty text + tool calls is one assistant msg,
         // then 2 tool results, then final assistant
@@ -402,5 +480,7 @@ public class SessionReplayHardeningTests
     // ============================================================
 
     private static EventEnvelope Envelope()
-        => EventEnvelope.ForSession(TestSessionId);
+    {
+        return EventEnvelope.ForSession(TestSessionId);
+    }
 }

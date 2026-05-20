@@ -4,11 +4,11 @@ using Omicron.Core.Text;
 namespace Omicron.Core.Tools;
 
 /// <summary>
-/// Fast non-cryptographic line hashing for anchor-based editing.
-/// Uses FNV-1a 32-bit over normalized UTF-8 line bytes,
-/// mapped to a 2-letter lowercase anchor ID (a-z, no digits).
-/// This avoids ambiguity between line numbers and hash digits
-/// in the rendering format (e.g. "42sr|content").
+///     Fast non-cryptographic line hashing for anchor-based editing.
+///     Uses FNV-1a 32-bit over normalized UTF-8 line bytes,
+///     mapped to a 2-letter lowercase anchor ID (a-z, no digits).
+///     This avoids ambiguity between line numbers and hash digits
+///     in the rendering format (e.g. "42sr|content").
 /// </summary>
 internal static class LineHash
 {
@@ -17,17 +17,17 @@ internal static class LineHash
     private const uint FnvOffsetBasis = 2166136261;
 
     /// <summary>
-    /// Compute the 32-bit FNV-1a hash of a string line.
+    ///     Compute the 32-bit FNV-1a hash of a string line.
     /// </summary>
     public static uint ComputeHash(string line)
     {
-        var bytes = Encoding.UTF8.GetBytes(line);
+        byte[] bytes = Encoding.UTF8.GetBytes(line);
         return ComputeHash(bytes.AsSpan());
     }
 
     /// <summary>
-    /// Compute the 32-bit FNV-1a hash of raw UTF-8 bytes directly,
-    /// avoiding a string allocation.
+    ///     Compute the 32-bit FNV-1a hash of raw UTF-8 bytes directly,
+    ///     avoiding a string allocation.
     /// </summary>
     public static uint ComputeHash(ReadOnlySpan<byte> utf8Bytes)
     {
@@ -37,25 +37,26 @@ internal static class LineHash
             hash ^= utf8Bytes[i];
             hash *= FnvPrime;
         }
+
         return hash;
     }
 
     /// <summary>
-    /// Map a 32-bit hash to a 2-letter lowercase anchor (aa..zz).
-    /// Collisions are acceptable because old_text serves as a second guard.
-    /// 26×26 = 676 distinct anchors.
+    ///     Map a 32-bit hash to a 2-letter lowercase anchor (aa..zz).
+    ///     Collisions are acceptable because old_text serves as a second guard.
+    ///     26×26 = 676 distinct anchors.
     /// </summary>
     public static string ToAnchor(uint hash)
     {
         // 676 = 26 * 26
-        var index = (int)(hash % 676);
-        var first = (char)('a' + index / 26);
-        var second = (char)('a' + index % 26);
+        int index = (int)(hash % 676);
+        char first = (char)('a' + index / 26);
+        char second = (char)('a' + index % 26);
         return new string([first, second]);
     }
 
     /// <summary>
-    /// Convenience: compute hash and return anchor in one step.
+    ///     Convenience: compute hash and return anchor in one step.
     /// </summary>
     public static string ComputeAnchor(string line)
     {
@@ -63,7 +64,7 @@ internal static class LineHash
     }
 
     /// <summary>
-    /// Compute anchor directly from UTF-8 bytes without a string allocation.
+    ///     Compute anchor directly from UTF-8 bytes without a string allocation.
     /// </summary>
     public static string ComputeAnchorUtf8(ReadOnlySpan<byte> utf8Bytes)
     {
@@ -71,8 +72,8 @@ internal static class LineHash
     }
 
     /// <summary>
-    /// Format a line with its anchor for display: "{line}{anchor}|{text}".
-    /// Example: "42sr|    return a + b;"
+    ///     Format a line with its anchor for display: "{line}{anchor}|{text}".
+    ///     Example: "42sr|    return a + b;"
     /// </summary>
     public static string FormatLine(int lineNumber, string anchor, string text)
     {
@@ -80,9 +81,13 @@ internal static class LineHash
     }
 
     /// <summary>
-    /// Append a formatted hashline directly to a UTF-8 builder.
+    ///     Append a formatted hashline directly to a UTF-8 builder.
     /// </summary>
-    public static void FormatLineUtf8(ref Utf8Builder builder, int lineNumber, string anchor, ReadOnlySpan<byte> utf8Text)
+    public static void FormatLineUtf8(
+        ref Utf8Builder builder,
+        int lineNumber,
+        string anchor,
+        ReadOnlySpan<byte> utf8Text)
     {
         builder.Append(lineNumber);
         builder.Append(anchor);
@@ -92,7 +97,7 @@ internal static class LineHash
     }
 
     /// <summary>
-    /// Format a line directly from its content.
+    ///     Format a line directly from its content.
     /// </summary>
     public static string FormatLine(int lineNumber, string text)
     {

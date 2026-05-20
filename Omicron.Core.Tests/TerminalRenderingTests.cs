@@ -1,7 +1,8 @@
 using System.Buffers;
 using System.Text;
+using Omicron.CLI.Tui;
 using Omicron.Core.Rendering;
-using Omicron.Core.Text;
+using Omicron.Core.Rendering.Layout;
 using Xunit;
 
 namespace Omicron.Core.Tests;
@@ -25,7 +26,7 @@ public class TerminalBackendTests
     public void VirtualTerminalBackend_CapturesOutput()
     {
         using var backend = new VirtualTerminalBackend();
-        var output = backend.Output;
+        IBufferWriter<byte> output = backend.Output;
         output.Write("hello"u8);
         backend.Flush();
         Assert.Equal("hello"u8.ToArray(), backend.CapturedOutput.ToArray());
@@ -39,9 +40,11 @@ public class TerminalBackendTests
         backend.InjectEvent(new KeyEvent(Key.Escape, KeyModifiers.None, null));
 
         var events = new List<TerminalEvent>();
-        var enumerator = backend.ReadEvents(CancellationToken.None).GetAsyncEnumerator();
+        IAsyncEnumerator<TerminalEvent> enumerator = backend.ReadEvents(CancellationToken.None).GetAsyncEnumerator();
         while (await enumerator.MoveNextAsync())
+        {
             events.Add(enumerator.Current);
+        }
 
         Assert.Equal(2, events.Count);
         Assert.IsType<KeyEvent>(events[0]);
@@ -90,7 +93,7 @@ public class TerminalBackendTests
     [Fact]
     public void GlyphRef_Replacement_IsAsciiQuestionMark()
     {
-        var g = GlyphRef.Replacement;
+        GlyphRef g = GlyphRef.Replacement;
         Assert.True(g.IsAscii);
         Assert.Equal((byte)'?', g.AsciiValue);
     }
@@ -98,7 +101,7 @@ public class TerminalBackendTests
     [Fact]
     public void TextStyle_Default_IsWhiteOnBlack()
     {
-        var s = TextStyle.Default;
+        TextStyle s = TextStyle.Default;
         Assert.Equal(255, s.FgR);
         Assert.Equal(0, s.BgR);
         Assert.False(s.Bold);
@@ -107,7 +110,7 @@ public class TerminalBackendTests
     [Fact]
     public void TextStyle_Inverted_IsBlackOnWhite()
     {
-        var s = TextStyle.Inverted;
+        TextStyle s = TextStyle.Inverted;
         Assert.Equal(0, s.FgR);
         Assert.Equal(255, s.BgR);
     }
@@ -115,7 +118,7 @@ public class TerminalBackendTests
     [Fact]
     public void RenderCell_Empty_IsEmpty()
     {
-        var cell = RenderCell.Empty;
+        RenderCell cell = RenderCell.Empty;
         Assert.True(cell.IsEmpty);
         Assert.Equal(1, cell.Width);
         Assert.True(cell.Glyph.IsAscii);
@@ -182,7 +185,9 @@ public class TerminalBackendTests
         frame.Clear();
 
         for (int i = 0; i < 25; i++)
+        {
             Assert.True(frame.Cells[i].IsEmpty);
+        }
     }
 
     [Fact]
@@ -193,7 +198,7 @@ public class TerminalBackendTests
         {
             Glyph = GlyphRef.Ascii((byte)'X'),
             Width = 1,
-            Style = TextStyle.Default,
+            Style = TextStyle.Default
         };
         frame.FillRect(2, 2, 3, 3, cell);
 
@@ -234,16 +239,18 @@ public class TerminalBackendTests
         for (int i = 0; i < overflowAt - 1; i++)
         {
             // Generate unique ASCII-only byte sequences like "a0000", "a0001", etc.
-            var data = Encoding.UTF8.GetBytes($"a{i:D4}");
+            byte[] data = Encoding.UTF8.GetBytes($"a{i:D4}");
             int id = table.Intern(data);
             Assert.Equal(i, id); // Ensure sequential IDs
         }
+
         Assert.False(table.Overflowed, $"Count={table.Count} should be {overflowAt - 1}");
         Assert.Equal(overflowAt - 1, table.Count);
 
         // This should overflow
         int overflowResult = table.Intern("overflow"u8);
-        Assert.True(table.Overflowed, $"Overflow should be true after {overflowAt} entries, Count={table.Count}");
+        Assert.True(table.Overflowed,
+            $"Overflow should be true after {overflowAt} entries, Count={table.Count}");
         Assert.Equal(0, overflowResult);
     }
 
@@ -256,7 +263,7 @@ public class TerminalBackendTests
     {
         var output = new ArrayBufferWriter();
         AnsiEncoder.ClearScreen(output);
-        var bytes = output.WrittenSpan.ToArray();
+        byte[] bytes = output.WrittenSpan.ToArray();
         Assert.Contains((byte)0x1B, bytes);
         Assert.Contains((byte)'2', bytes);
         Assert.Contains((byte)'J', bytes);
@@ -267,7 +274,7 @@ public class TerminalBackendTests
     {
         var output = new ArrayBufferWriter();
         AnsiEncoder.SetCursorPosition(0, 0, output);
-        var text = Encoding.UTF8.GetString(output.WrittenSpan);
+        string text = Encoding.UTF8.GetString(output.WrittenSpan);
         Assert.Contains("\x1b[1;1H", text);
     }
 
@@ -277,7 +284,7 @@ public class TerminalBackendTests
         var output = new ArrayBufferWriter();
         var style = TextStyle.ForegroundOnly(100, 150, 200);
         AnsiEncoder.SetStyle(style, null, output);
-        var text = Encoding.UTF8.GetString(output.WrittenSpan);
+        string text = Encoding.UTF8.GetString(output.WrittenSpan);
         Assert.Contains("38;2;100;150;200", text);
     }
 
@@ -296,12 +303,12 @@ public class TerminalBackendTests
     {
         var start = new ArrayBufferWriter();
         AnsiEncoder.BeginSynchronizedOutput(start);
-        var startText = Encoding.UTF8.GetString(start.WrittenSpan);
+        string startText = Encoding.UTF8.GetString(start.WrittenSpan);
         Assert.Contains("\x1b[?2026h", startText);
 
         var end = new ArrayBufferWriter();
         AnsiEncoder.EndSynchronizedOutput(end);
-        var endText = Encoding.UTF8.GetString(end.WrittenSpan);
+        string endText = Encoding.UTF8.GetString(end.WrittenSpan);
         Assert.Contains("\x1b[?2026l", endText);
     }
 
@@ -334,7 +341,7 @@ public class TerminalBackendTests
     public void SwapChain_Swap_ExchangesBuffers()
     {
         var swap = new SwapChain(10, 10);
-        var firstCurrent = swap.Current;
+        TerminalFrame firstCurrent = swap.Current;
 
         // Write to current
         swap.Current.SetText(0, 0, "X"u8, TextStyle.Default);
@@ -357,7 +364,7 @@ public class TerminalBackendTests
         renderer.Render(frame, output);
 
         // Should contain clear screen + cursor hide + "hello"
-        var bytes = output.WrittenSpan.ToArray();
+        byte[] bytes = output.WrittenSpan.ToArray();
         Assert.NotEmpty(bytes);
         Assert.Contains("\x1b[2J"u8.ToArray(), bytes);
         Assert.Contains("\x1b[?25l"u8.ToArray(), bytes);
@@ -377,7 +384,7 @@ public class TerminalBackendTests
         renderer.Render(frame, output2);
 
         // Should emit nothing (no changes)
-        var bytes2 = output2.WrittenSpan.ToArray();
+        byte[] bytes2 = output2.WrittenSpan.ToArray();
         Assert.Empty(bytes2);
     }
 
@@ -397,7 +404,7 @@ public class TerminalBackendTests
         renderer.Render(frame, output);
 
         // Should contain cursor positioning + glyph
-        var text = Encoding.UTF8.GetString(output.WrittenSpan);
+        string text = Encoding.UTF8.GetString(output.WrittenSpan);
         Assert.Contains("\x1b[3;4H", text); // row 3, col 4 (1-based)
         Assert.Contains("X", text);
     }
@@ -436,7 +443,7 @@ public class TerminalBackendTests
         // First render — full frame
         var output1 = new ArrayBufferWriter();
         renderer.Render(frame, output1);
-        var text1 = Encoding.UTF8.GetString(output1.WrittenSpan);
+        string text1 = Encoding.UTF8.GetString(output1.WrittenSpan);
         // Should contain the CJK glyph bytes (0xE4 0xB8 0x80)
         Assert.Contains("\u4E00", text1);
 
@@ -450,7 +457,7 @@ public class TerminalBackendTests
         frame.SetText(1, 0, "hello"u8, TextStyle.Default);
         var output3 = new ArrayBufferWriter();
         renderer.Render(frame, output3);
-        var text3 = Encoding.UTF8.GetString(output3.WrittenSpan);
+        string text3 = Encoding.UTF8.GetString(output3.WrittenSpan);
         // The diff should still contain the 'h' from "hello" (row 2, col 1)
         Assert.Contains("\x1b[2;1H", text3); // cursor move to row 2
         Assert.Contains("h", text3);
@@ -471,7 +478,7 @@ public class TerminalBackendTests
         var output = new ArrayBufferWriter();
         renderer.Render(frame, output);
 
-        var bytes = output.WrittenSpan.ToArray();
+        byte[] bytes = output.WrittenSpan.ToArray();
         // Should contain a space byte
         Assert.Contains((byte)' ', bytes);
     }
@@ -484,7 +491,7 @@ public class TerminalBackendTests
     public void TuiLayout_ThreePanelLayout_ComputesCorrectRects()
     {
         var terminalSize = new TerminalSize(80, 25);
-        var (transcript, statusBar, inputLine) = Omicron.CLI.Tui.TuiLayoutEngine.ComputeLayout(terminalSize);
+        (Rect transcript, Rect statusBar, Rect inputLine) = TuiLayoutEngine.ComputeLayout(terminalSize);
 
         Assert.Equal(0, transcript.X);
         Assert.Equal(0, transcript.Y);
@@ -506,10 +513,10 @@ public class TerminalBackendTests
     public void SimpleStatusBar_RendersIntoFrame()
     {
         var frame = new TerminalFrame(80, 25);
-        Omicron.CLI.Tui.SimpleStatusBar.Render(frame, "gpt-4", "openai", "tokens: 100");
+        SimpleStatusBar.Render(frame, "gpt-4", "openai", "tokens: 100");
 
         // Status bar renders in the last row
-        var statusRow = 24;
+        int statusRow = 24;
         // The first cell has Width=1, Glyph=space, Style=Inverted
         // It's technically empty (space) but should have inverted background style
         Assert.Equal(1, frame[statusRow, 0].Width);
@@ -525,28 +532,32 @@ public class TerminalBackendTests
 public class ArrayBufferWriter : IBufferWriter<byte>
 {
     private byte[] _buffer = new byte[1024];
-    private int _written;
 
-    public ReadOnlySpan<byte> WrittenSpan => _buffer.AsSpan(0, _written);
-    public int WrittenCount => _written;
+    public ReadOnlySpan<byte> WrittenSpan => _buffer.AsSpan(0, WrittenCount);
+    public int WrittenCount { get; private set; }
 
-    public void Advance(int count) => _written += count;
+    public void Advance(int count)
+    {
+        WrittenCount += count;
+    }
 
     public Memory<byte> GetMemory(int sizeHint = 0)
     {
         EnsureCapacity(sizeHint);
-        return _buffer.AsMemory(_written);
+        return _buffer.AsMemory(WrittenCount);
     }
 
     public Span<byte> GetSpan(int sizeHint = 0)
     {
         EnsureCapacity(sizeHint);
-        return _buffer.AsSpan(_written);
+        return _buffer.AsSpan(WrittenCount);
     }
 
     private void EnsureCapacity(int sizeHint)
     {
-        if (_buffer.Length - _written < sizeHint)
-            Array.Resize(ref _buffer, Math.Max(_buffer.Length * 2, _written + sizeHint));
+        if (_buffer.Length - WrittenCount < sizeHint)
+        {
+            Array.Resize(ref _buffer, Math.Max(_buffer.Length * 2, WrittenCount + sizeHint));
+        }
     }
 }

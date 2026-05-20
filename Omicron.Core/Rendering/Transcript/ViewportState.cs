@@ -1,8 +1,8 @@
 namespace Omicron.Core.Rendering.Transcript;
 
 /// <summary>
-/// Manages scroll position, follow-tail behavior, and new-line indicators
-/// for the transcript viewport.
+///     Manages scroll position, follow-tail behavior, and new-line indicators
+///     for the transcript viewport.
 /// </summary>
 public sealed class ViewportState
 {
@@ -24,10 +24,10 @@ public sealed class ViewportState
     public int UnseenLineCount { get; private set; }
 
     /// <summary>
-    /// Called when new content is appended to the transcript.
-    /// If <see cref="FollowTail"/> is true, auto-scrolls to show the bottom
-    /// (showing <paramref name="viewportHeight"/> rows).
-    /// Otherwise, increments <see cref="UnseenLineCount"/>.
+    ///     Called when new content is appended to the transcript.
+    ///     If <see cref="FollowTail" /> is true, auto-scrolls to show the bottom
+    ///     (showing <paramref name="viewportHeight" /> rows).
+    ///     Otherwise, increments <see cref="UnseenLineCount" />.
     /// </summary>
     public void OnContentAppended(int newTotalWrappedRows, int viewportHeight = 1)
     {
@@ -89,7 +89,7 @@ public sealed class ViewportState
     }
 
     /// <summary>
-    /// Update the total row count (called when the layout cache is reflowed).
+    ///     Update the total row count (called when the layout cache is reflowed).
     /// </summary>
     public void UpdateTotalRows(int totalWrappedRows, int viewportHeight = 1)
     {

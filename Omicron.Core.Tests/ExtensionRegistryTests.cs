@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Omicron.Core.Commands;
 using Omicron.Core.Extensions;
 using Omicron.Core.Models;
@@ -90,7 +89,7 @@ public class OmicronHostTests
             ProviderName = "test"
         };
 
-        var session = host.CreateSession(SessionConfig.Create(model, "You are a test."));
+        AgentSession session = host.CreateSession(SessionConfig.Create(model, "You are a test."));
 
         Assert.NotNull(session);
         Assert.Equal(model, session.Model);
@@ -119,8 +118,9 @@ public class ToolRegisteringExtension : IOmicronExtension
 
     public void Register(IExtensionContext context)
     {
-        context.RegisterTool(new ToolDefinition(
-            "test_tool", "A test tool", null,
+        context.RegisterTool(new ToolDefinition("test_tool",
+            "A test tool",
+            null,
             ctx => Task.FromResult(new ToolResult("done"))));
     }
 }
@@ -133,8 +133,9 @@ public class CommandRegisteringExtension : IOmicronExtension
 
     public void Register(IExtensionContext context)
     {
-        context.RegisterCommand(new CommandDefinition(
-            "test.command", "Test Command", "A test command",
+        context.RegisterCommand(new CommandDefinition("test.command",
+            "Test Command",
+            "A test command",
             CommandScope.Global,
             ctx => Task.FromResult(new CommandResult("done"))));
     }

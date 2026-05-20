@@ -1,12 +1,13 @@
 using System.Text.Json;
+using Omicron.Core.Models;
 using Omicron.Core.Providers;
 using Omicron.Core.Sessions;
 
 namespace Omicron.Core.Events;
 
 /// <summary>
-/// Shared metadata carried by every OmicronEvent.
-/// Replaces the repetitive Id/Sequence/Timestamp/SessionId constructor tail.
+///     Shared metadata carried by every OmicronEvent.
+///     Replaces the repetitive Id/Sequence/Timestamp/SessionId constructor tail.
 /// </summary>
 public sealed record EventEnvelope(
     EventId Id,
@@ -15,8 +16,10 @@ public sealed record EventEnvelope(
     SessionId SessionId)
 {
     /// <summary>Create a standard envelope for a session (sequence=0, now timestamp).</summary>
-    public static EventEnvelope ForSession(SessionId sessionId) =>
-        new(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId);
+    public static EventEnvelope ForSession(SessionId sessionId)
+    {
+        return new EventEnvelope(EventId.New(), 0, DateTimeOffset.UtcNow, sessionId);
+    }
 }
 
 // ============================================================
@@ -24,7 +27,7 @@ public sealed record EventEnvelope(
 // ============================================================
 
 /// <summary>
-/// Snapshot of provider turn state, used by ProviderStateUpdatedEvent.
+///     Snapshot of provider turn state, used by ProviderStateUpdatedEvent.
 /// </summary>
 public sealed record ProviderStateSnapshot(
     ProviderStateKey Key,
@@ -35,14 +38,13 @@ public sealed record ProviderStateSnapshot(
     ProviderStoragePolicy StoragePolicy = ProviderStoragePolicy.AllowProviderStateNoStore);
 
 /// <summary>
-/// Token usage summary, used by AssistantResponseCompleteEvent.
+///     Token usage summary, used by AssistantResponseCompleteEvent.
 /// </summary>
-public sealed record TokenUsage(
-    int InputTokens,
-    int OutputTokens)
+public sealed record TokenUsage(int InputTokens, int OutputTokens)
 {
     /// <summary>Create a TokenUsage from an optional UsageInfo (LLM provider response).</summary>
-    public static TokenUsage From(Models.UsageInfo? usage) => new(
-        usage?.InputTokens ?? 0,
-        usage?.OutputTokens ?? 0);
+    public static TokenUsage From(UsageInfo? usage)
+    {
+        return new TokenUsage(usage?.InputTokens ?? 0, usage?.OutputTokens ?? 0);
+    }
 }

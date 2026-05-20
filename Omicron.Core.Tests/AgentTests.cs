@@ -5,7 +5,7 @@ using Xunit;
 namespace Omicron.Core.Tests;
 
 /// <summary>
-/// Tests for core model types: Message, ToolSchema, Model, LlmResult, UsageInfo.
+///     Tests for core model types: Message, ToolSchema, Model, LlmResult, UsageInfo.
 /// </summary>
 public class CoreModelTests
 {
@@ -28,10 +28,12 @@ public class CoreModelTests
     [Fact]
     public void CreateMessage_AssistantToolCallMessage_HasToolCall()
     {
-        var toolCall = new ToolCallContent("call_1", "get_weather", new Dictionary<string, object?>
-        {
-            ["city"] = "London"
-        });
+        var toolCall = new ToolCallContent("call_1",
+            "get_weather",
+            new Dictionary<string, object?>
+            {
+                ["city"] = "London"
+            });
         var msg = Message.AssistantToolCallMessage(toolCall);
 
         Assert.Equal(MessageRole.Assistant, msg.Role);
@@ -55,7 +57,7 @@ public class CoreModelTests
     [Fact]
     public void CreateMessage_ToolResultMessage_WithError()
     {
-        var msg = Message.ToolResultMessage("call_1", "get_weather", "Failed", isError: true);
+        var msg = Message.ToolResultMessage("call_1", "get_weather", "Failed", true);
 
         Assert.True(msg.IsError);
         Assert.Equal("Failed", msg.GetTextString());
@@ -64,8 +66,8 @@ public class CoreModelTests
     [Fact]
     public void ToolSchema_StringProperty_GeneratesValidJson()
     {
-        var el = ToolSchema.StringProperty("A test string");
-        var json = el.GetRawText();
+        JsonElement el = ToolSchema.StringProperty("A test string");
+        string json = el.GetRawText();
 
         Assert.Contains("\"type\":\"string\"", json);
         Assert.Contains("\"description\":\"A test string\"", json);
@@ -74,16 +76,17 @@ public class CoreModelTests
     [Fact]
     public void ToolSchema_Object_CreatesParameterSchema()
     {
-        var schema = ToolSchema.Object(
-            new Dictionary<string, JsonElement>
+        JsonElement schema = ToolSchema.Object(new Dictionary<string, JsonElement>
             {
                 ["name"] = ToolSchema.StringProperty("The name"),
                 ["age"] = ToolSchema.IntegerProperty("The age")
             },
-            required: new[] { "name" }
-        );
+            new[]
+            {
+                "name"
+            });
 
-        var json = schema.GetRawText();
+        string json = schema.GetRawText();
         Assert.Contains("\"type\":\"object\"", json);
         Assert.Contains("\"name\"", json);
         Assert.Contains("\"age\"", json);
@@ -93,9 +96,9 @@ public class CoreModelTests
     [Fact]
     public void Message_Timestamps_AreSet()
     {
-        var before = DateTime.UtcNow.AddSeconds(-1);
+        DateTime before = DateTime.UtcNow.AddSeconds(-1);
         var msg = Message.UserMessage("test");
-        var after = DateTime.UtcNow.AddSeconds(1);
+        DateTime after = DateTime.UtcNow.AddSeconds(1);
 
         Assert.InRange(msg.Timestamp, before, after);
     }
@@ -103,7 +106,7 @@ public class CoreModelTests
     [Fact]
     public void UsageInfo_RecordsTokens()
     {
-        var usage = new UsageInfo(InputTokens: 10, OutputTokens: 20);
+        var usage = new UsageInfo(10, 20);
         Assert.Equal(10, usage.InputTokens);
         Assert.Equal(20, usage.OutputTokens);
         Assert.Null(usage.CacheReadTokens);
@@ -113,7 +116,10 @@ public class CoreModelTests
     [Fact]
     public void UsageInfo_WithCache()
     {
-        var usage = new UsageInfo(InputTokens: 10, OutputTokens: 20, CacheReadTokens: 5, CacheWriteTokens: 3);
+        var usage = new UsageInfo(10,
+            20,
+            5,
+            3);
         Assert.Equal(5, usage.CacheReadTokens);
         Assert.Equal(3, usage.CacheWriteTokens);
     }
@@ -138,7 +144,12 @@ public class CoreModelTests
             Text = "Let me check",
             ToolCalls = new List<ToolCallContent>
             {
-                new("call_1", "get_weather", new Dictionary<string, object?> { ["city"] = "Paris" })
+                new("call_1",
+                    "get_weather",
+                    new Dictionary<string, object?>
+                    {
+                        ["city"] = "Paris"
+                    })
             },
             StopReason = StopReason.ToolUse
         };

@@ -1,18 +1,24 @@
 using System.Text;
+using MimeKit;
 using Omicron.Core.Content;
 using Omicron.Core.Text;
 
 namespace Omicron.Core.IO;
 
 /// <summary>
-/// Processes email files (.eml) by extracting headers and body.
-/// Uses MimeKit when available; falls back to simple header/body split.
+///     Processes email files (.eml) by extracting headers and body.
+///     Uses MimeKit when available; falls back to simple header/body split.
 /// </summary>
 public sealed class EmailProcessor : IContentProcessor
 {
     public string Id => "email";
-    public IReadOnlySet<DetectedFileType> SupportedTypes { get; }
-        = new HashSet<DetectedFileType> { DetectedFileType.Email };
+
+    public IReadOnlySet<DetectedFileType> SupportedTypes { get; } =
+        new HashSet<DetectedFileType>
+        {
+            DetectedFileType.Email
+        };
+
     public OutputModality OutputModality => OutputModality.Text;
 
     public ValueTask<ContentProcessorResult> ProcessAsync(
@@ -21,18 +27,21 @@ public sealed class EmailProcessor : IContentProcessor
     {
         ct.ThrowIfCancellationRequested();
 
-        var bytes = context.Bytes;
+        ReadOnlyMemory<byte> bytes = context.Bytes;
 
         if (bytes.IsEmpty)
         {
-            return ValueTask.FromResult(new ContentProcessorResult(
-                $"[FILE] {context.RelativePath}  (empty)", OutputModality.Text));
+            return ValueTask.FromResult(new ContentProcessorResult($"[FILE] {context.RelativePath}  (empty)",
+                OutputModality.Text));
         }
 
-        var output = Utf8Text.CreateBuilder();
+        Utf8Builder output = Utf8Text.CreateBuilder();
         try
         {
-            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "[FILE] {0}  ({1}, email)"u8, context.RelativePath, FormatSize.Format(bytes.Length));
+            Utf8CompositeFormat.AppendFormatUtf8Slow(ref output,
+                "[FILE] {0}  ({1}, email)"u8,
+                context.RelativePath,
+                FormatSize.Format(bytes.Length));
             output.AppendLine();
             output.AppendLine();
 
@@ -40,17 +49,23 @@ public sealed class EmailProcessor : IContentProcessor
             try
             {
                 using var ms = new MemoryStream(bytes.ToArray());
-                using var mimeMessage = MimeKit.MimeMessage.Load(ms);
+                using var mimeMessage = MimeMessage.Load(ms);
 
                 output.AppendLiteral("--- Headers ---"u8);
                 output.AppendLine();
-                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "From: {0}"u8, mimeMessage.From);
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output,
+                    "From: {0}"u8,
+                    mimeMessage.From);
                 output.AppendLine();
                 Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "To: {0}"u8, mimeMessage.To);
                 output.AppendLine();
-                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "Subject: {0}"u8, mimeMessage.Subject);
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output,
+                    "Subject: {0}"u8,
+                    mimeMessage.Subject);
                 output.AppendLine();
-                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "Date: {0}"u8, mimeMessage.Date);
+                Utf8CompositeFormat.AppendFormatUtf8Slow(ref output,
+                    "Date: {0}"u8,
+                    mimeMessage.Date);
                 output.AppendLine();
                 output.AppendLine();
 
@@ -59,9 +74,9 @@ public sealed class EmailProcessor : IContentProcessor
                 output.Append(mimeMessage.Body?.ToString() ?? "(no text body)");
                 output.AppendLine();
 
-                return ValueTask.FromResult(new ContentProcessorResult(
-                    output.ToString().TrimEnd(), OutputModality.Text,
-                    Utf8Data: output.AsSpan().ToArray()));
+                return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
+                    OutputModality.Text,
+                    output.AsSpan().ToArray()));
             }
             catch
             {
@@ -69,18 +84,19 @@ public sealed class EmailProcessor : IContentProcessor
             }
 
             // Fallback: manual RFC 822 parsing
-            var text = Encoding.UTF8.GetString(bytes.Span);
-            var (headers, body) = SplitEmail(text);
+            string text = Encoding.UTF8.GetString(bytes.Span);
+            (List<(string Key, string Value)> headers, string body) = SplitEmail(text);
 
             if (headers.Count > 0)
             {
                 output.AppendLiteral("--- Headers ---"u8);
                 output.AppendLine();
-                foreach (var (key, value) in headers)
+                foreach ((string key, string value) in headers)
                 {
                     Utf8CompositeFormat.AppendFormatUtf8Slow(ref output, "{0}: {1}"u8, key, value);
                     output.AppendLine();
                 }
+
                 output.AppendLine();
             }
 
@@ -92,16 +108,19 @@ public sealed class EmailProcessor : IContentProcessor
                 output.AppendLine();
             }
 
-            return ValueTask.FromResult(new ContentProcessorResult(
-                output.ToString().TrimEnd(), OutputModality.Text,
-                Utf8Data: output.AsSpan().ToArray()));
+            return ValueTask.FromResult(new ContentProcessorResult(output.ToString().TrimEnd(),
+                OutputModality.Text,
+                output.AsSpan().ToArray()));
         }
-        finally { output.Dispose(); }
+        finally
+        {
+            output.Dispose();
+        }
     }
 
     /// <summary>
-    /// Split RFC 822 email into headers and body.
-    /// Returns headers as key-value pairs and the body text.
+    ///     Split RFC 822 email into headers and body.
+    ///     Returns headers as key-value pairs and the body text.
     /// </summary>
     internal static (List<(string Key, string Value)> Headers, string Body) SplitEmail(string text)
     {
@@ -122,20 +141,27 @@ public sealed class EmailProcessor : IContentProcessor
             body = text[bodyStart..].Trim();
         }
 
-        var headerSection = text[..Math.Max(0, bodyStart - 2)];
-        var headerLines = headerSection.Split('\n');
+        string headerSection = text[..Math.Max(0, bodyStart - 2)];
+        string[] headerLines = headerSection.Split('\n');
 
         string currentKey = "";
         var currentValue = new StringBuilder();
 
-        foreach (var line in headerLines)
+        foreach (string line in headerLines)
         {
-            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
 
             if (line[0] == ' ' || line[0] == '\t')
             {
                 // Continuation line
-                if (currentValue.Length > 0) currentValue.Append(' ');
+                if (currentValue.Length > 0)
+                {
+                    currentValue.Append(' ');
+                }
+
                 currentValue.Append(line.Trim());
             }
             else
@@ -162,6 +188,4 @@ public sealed class EmailProcessor : IContentProcessor
 
         return (headers, body);
     }
-
-
 }

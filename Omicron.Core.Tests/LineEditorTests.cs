@@ -15,10 +15,12 @@ public class LineEditorTests
     [Fact]
     public void TypingLetters_AppendsToBuffer()
     {
-        var (engine, state) = Create();
+        (LineEditorEngine engine, LineEditorState state) = Create();
 
-        foreach (var c in "hello")
+        foreach (char c in "hello")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         Assert.Equal("hello", state.Buffer.ToString());
         Assert.Equal(5, state.Cursor);
@@ -27,7 +29,7 @@ public class LineEditorTests
     [Fact]
     public void TypingMultipleLines_WithShiftEnter()
     {
-        var (engine, state) = Create();
+        (LineEditorEngine engine, LineEditorState state) = Create();
 
         engine.ProcessKey(EditorKeyInfo.Char('a'), state);
         engine.ProcessKey(EditorKeyInfo.ShiftEnter, state);
@@ -41,9 +43,11 @@ public class LineEditorTests
     [Fact]
     public void LeftArrow_MovesCursorBack()
     {
-        var (engine, state) = Create();
-        foreach (var c in "abc")
+        (LineEditorEngine engine, LineEditorState state) = Create();
+        foreach (char c in "abc")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         Assert.Equal(3, state.Cursor);
 
@@ -57,7 +61,7 @@ public class LineEditorTests
     [Fact]
     public void LeftArrow_AtStart_DoesNothing()
     {
-        var (engine, state) = Create();
+        (LineEditorEngine engine, LineEditorState state) = Create();
         engine.ProcessKey(EditorKeyInfo.LeftArrow, state);
         Assert.Equal(0, state.Cursor);
     }
@@ -65,9 +69,11 @@ public class LineEditorTests
     [Fact]
     public void RightArrow_MovesCursorForward()
     {
-        var (engine, state) = Create();
-        foreach (var c in "abc")
+        (LineEditorEngine engine, LineEditorState state) = Create();
+        foreach (char c in "abc")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         engine.ProcessKey(EditorKeyInfo.LeftArrow, state);
         engine.ProcessKey(EditorKeyInfo.LeftArrow, state);
@@ -80,9 +86,11 @@ public class LineEditorTests
     [Fact]
     public void Home_MovesToStart()
     {
-        var (engine, state) = Create();
-        foreach (var c in "test")
+        (LineEditorEngine engine, LineEditorState state) = Create();
+        foreach (char c in "test")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         engine.ProcessKey(EditorKeyInfo.Home, state);
         Assert.Equal(0, state.Cursor);
@@ -91,9 +99,11 @@ public class LineEditorTests
     [Fact]
     public void End_MovesToEnd()
     {
-        var (engine, state) = Create();
-        foreach (var c in "test")
+        (LineEditorEngine engine, LineEditorState state) = Create();
+        foreach (char c in "test")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         engine.ProcessKey(EditorKeyInfo.Home, state);
         engine.ProcessKey(EditorKeyInfo.End, state);
@@ -105,9 +115,11 @@ public class LineEditorTests
     [Fact]
     public void Backspace_RemovesPreviousCharacter()
     {
-        var (engine, state) = Create();
-        foreach (var c in "abcd")
+        (LineEditorEngine engine, LineEditorState state) = Create();
+        foreach (char c in "abcd")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         engine.ProcessKey(EditorKeyInfo.Backspace, state);
         Assert.Equal("abc", state.Buffer.ToString());
@@ -117,7 +129,7 @@ public class LineEditorTests
     [Fact]
     public void Backspace_AtStart_DoesNothing()
     {
-        var (engine, state) = Create();
+        (LineEditorEngine engine, LineEditorState state) = Create();
         engine.ProcessKey(EditorKeyInfo.Backspace, state);
         Assert.Equal("", state.Buffer.ToString());
         Assert.Equal(0, state.Cursor);
@@ -126,9 +138,11 @@ public class LineEditorTests
     [Fact]
     public void Delete_RemovesCharacterAtCursor()
     {
-        var (engine, state) = Create();
-        foreach (var c in "abcd")
+        (LineEditorEngine engine, LineEditorState state) = Create();
+        foreach (char c in "abcd")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         engine.ProcessKey(EditorKeyInfo.LeftArrow, state);
         engine.ProcessKey(EditorKeyInfo.Delete, state);
@@ -142,16 +156,16 @@ public class LineEditorTests
     [Fact]
     public void Enter_ReturnsSubmitAction()
     {
-        var (engine, state) = Create();
-        var result = engine.ProcessKey(EditorKeyInfo.Enter, state);
+        (LineEditorEngine engine, LineEditorState state) = Create();
+        LineEditorAction result = engine.ProcessKey(EditorKeyInfo.Enter, state);
         Assert.Equal(LineEditorAction.Submit, result);
     }
 
     [Fact]
     public void CtrlC_ReturnsCancelAction()
     {
-        var (engine, state) = Create();
-        var result = engine.ProcessKey(EditorKeyInfo.CtrlC, state);
+        (LineEditorEngine engine, LineEditorState state) = Create();
+        LineEditorAction result = engine.ProcessKey(EditorKeyInfo.CtrlC, state);
         Assert.Equal(LineEditorAction.Cancel, result);
     }
 
@@ -160,13 +174,15 @@ public class LineEditorTests
     [Fact]
     public void Escape_ClearsBuffer()
     {
-        var (engine, state) = Create();
-        foreach (var c in "hello")
+        (LineEditorEngine engine, LineEditorState state) = Create();
+        foreach (char c in "hello")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         Assert.Equal("hello", state.Buffer.ToString());
 
-        var result = engine.ProcessKey(EditorKeyInfo.Escape, state);
+        LineEditorAction result = engine.ProcessKey(EditorKeyInfo.Escape, state);
         Assert.Equal(LineEditorAction.None, result);
         Assert.Equal("", state.Buffer.ToString());
         Assert.Equal(0, state.Cursor);
@@ -180,14 +196,19 @@ public class LineEditorTests
     {
         var completions = new Dictionary<string, IReadOnlyList<string>>
         {
-            ["hel"] = new[] { "help" }
+            ["hel"] = new[]
+            {
+                "help"
+            }
         };
         var engine = new LineEditorEngine(text =>
-            completions.TryGetValue(text, out var c) ? c : []);
+            completions.TryGetValue(text, out IReadOnlyList<string>? c) ? c : []);
         var state = new LineEditorState();
 
-        foreach (var c in "hel")
+        foreach (char c in "hel")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         Assert.Equal("hel", state.Buffer.ToString());
 
@@ -199,12 +220,18 @@ public class LineEditorTests
     [Fact]
     public void TabCompletion_MultipleMatches_CompletesCommonPrefix()
     {
-        var engine = new LineEditorEngine(text =>
-            text == "he" ? new[] { "help", "hello" } : []);
+        var engine = new LineEditorEngine(text => text == "he"
+            ? new[]
+            {
+                "help", "hello"
+            }
+            : []);
         var state = new LineEditorState();
 
-        foreach (var c in "he")
+        foreach (char c in "he")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         Assert.Equal("he", state.Buffer.ToString());
 
@@ -216,8 +243,12 @@ public class LineEditorTests
     [Fact]
     public void TabCompletion_MultipleMatchesNoCommonPrefix_DoesNotModifyBuffer()
     {
-        var engine = new LineEditorEngine(text =>
-            text == "x" ? new[] { "xyz", "xab" } : []);
+        var engine = new LineEditorEngine(text => text == "x"
+            ? new[]
+            {
+                "xyz", "xab"
+            }
+            : []);
         var state = new LineEditorState();
 
         engine.ProcessKey(EditorKeyInfo.Char('x'), state);
@@ -234,8 +265,10 @@ public class LineEditorTests
         var engine = new LineEditorEngine(_ => []);
         var state = new LineEditorState();
 
-        foreach (var c in "xyz")
+        foreach (char c in "xyz")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         Assert.Equal("xyz", state.Buffer.ToString());
 
@@ -248,9 +281,11 @@ public class LineEditorTests
     [Fact]
     public void InsertionInMiddle_ShiftsTextRight()
     {
-        var (engine, state) = Create();
-        foreach (var c in "acd")
+        (LineEditorEngine engine, LineEditorState state) = Create();
+        foreach (char c in "acd")
+        {
             engine.ProcessKey(EditorKeyInfo.Char(c), state);
+        }
 
         engine.ProcessKey(EditorKeyInfo.LeftArrow, state);
         engine.ProcessKey(EditorKeyInfo.LeftArrow, state);

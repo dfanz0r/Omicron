@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Omicron.Core.Content;
 using Xunit;
@@ -44,9 +43,13 @@ public sealed class Utf8StringTests
         var s = Utf8String.FromString(text);
         Assert.Equal(text, s.ToString());
         if (text.Length == 0)
+        {
             Assert.Same(Utf8String.Empty, s);
+        }
         else
+        {
             Assert.Equal(Utf8StringStorageKind.ManagedArray, s.Kind);
+        }
     }
 
     [Fact]
@@ -68,7 +71,7 @@ public sealed class Utf8StringTests
     [Fact]
     public void FromUtf8_RoundTrips()
     {
-        var bytes = "héllo"u8.ToArray();
+        byte[] bytes = "héllo"u8.ToArray();
         var s = Utf8String.FromUtf8(bytes);
         Assert.Equal("héllo", s.ToString());
         Assert.True(s.Utf8Span.SequenceEqual(bytes));
@@ -78,7 +81,7 @@ public sealed class Utf8StringTests
     [Fact]
     public void FromUtf8_DoesNotAliasInput()
     {
-        var arr = "hello"u8.ToArray();
+        byte[] arr = "hello"u8.ToArray();
         var s = Utf8String.FromUtf8(arr);
         arr[0] = (byte)'x';
         Assert.Equal('h', (char)s.Utf8Span[0]);
@@ -98,7 +101,7 @@ public sealed class Utf8StringTests
     [Fact]
     public void FromOwnedArray_UsesArrayDirectly()
     {
-        var arr = "hello"u8.ToArray();
+        byte[] arr = "hello"u8.ToArray();
         var s = Utf8String.FromOwnedArray(arr, arr.Length);
         Assert.Equal("hello", s.ToString());
         Assert.Equal(Utf8StringStorageKind.ManagedArray, s.Kind);
@@ -108,7 +111,7 @@ public sealed class Utf8StringTests
     public void FromOwnedArray_LengthLessThanArrayLength()
     {
         // Simulate oversized buffer from ArrayPool
-        var oversized = "hello world"u8.ToArray();
+        byte[] oversized = "hello world"u8.ToArray();
         // Only use first 5 bytes
         var s = Utf8String.FromOwnedArray(oversized, 5);
         Assert.Equal("hello", s.ToString());
@@ -138,17 +141,17 @@ public sealed class Utf8StringTests
     // ============================================================
 
     [Fact]
-    public unsafe void FromTrustedUtf8Literal_StorageKind()
+    public void FromTrustedUtf8Literal_StorageKind()
     {
         // StaticLiteral kind proves no managed array copy was made
-        ReadOnlySpan<byte> literal = "static data"u8;
+        var literal = "static data"u8;
         var s = Utf8String.FromTrustedUtf8Literal(literal);
         Assert.Equal(Utf8StringStorageKind.StaticLiteral, s.Kind);
         Assert.Equal("static data", s.ToString());
     }
 
     [Fact]
-    public unsafe void FromTrustedUtf8Literal_ModifyOriginalDoesNotAffectInstance()
+    public void FromTrustedUtf8Literal_ModifyOriginalDoesNotAffectInstance()
     {
         // A true u8 literal is in read-only memory and cannot be modified.
         // This test verifies that after construction, the span produces the
@@ -158,7 +161,7 @@ public sealed class Utf8StringTests
     }
 
     [Fact]
-    public unsafe void FromTrustedUtf8Literal_VaryingLengths()
+    public void FromTrustedUtf8Literal_VaryingLengths()
     {
         Assert.Equal("a", Utf8String.FromTrustedUtf8Literal("a"u8).ToString());
         Assert.Equal("ab", Utf8String.FromTrustedUtf8Literal("ab"u8).ToString());
@@ -166,7 +169,7 @@ public sealed class Utf8StringTests
     }
 
     [Fact]
-    public unsafe void FromTrustedUtf8Literal_Empty_ReturnsEmpty()
+    public void FromTrustedUtf8Literal_Empty_ReturnsEmpty()
     {
         Assert.Same(Utf8String.Empty, Utf8String.FromTrustedUtf8Literal([]));
     }
@@ -186,8 +189,8 @@ public sealed class Utf8StringTests
     public void ToString_CachesResult()
     {
         var s = Utf8String.FromString("hello");
-        var s1 = s.ToString();
-        var s2 = s.ToString();
+        string s1 = s.ToString();
+        string s2 = s.ToString();
         Assert.Same(s1, s2);
     }
 
@@ -202,7 +205,7 @@ public sealed class Utf8StringTests
     public void CopyTo_WritesToDestination()
     {
         var s = Utf8String.FromString("abc");
-        var dest = new byte[3];
+        byte[] dest = new byte[3];
         s.CopyTo(dest);
         Assert.True(dest.AsSpan().SequenceEqual("abc"u8));
     }
@@ -273,14 +276,14 @@ public sealed class Utf8StringTests
     [Fact]
     public void JsonSerialize_Null()
     {
-        var json = JsonSerializer.Serialize<Utf8String?>(null);
+        string json = JsonSerializer.Serialize<Utf8String?>(null);
         Assert.Equal("null", json);
     }
 
     [Fact]
     public void JsonSerialize_Empty()
     {
-        var json = JsonSerializer.Serialize(Utf8String.Empty);
+        string json = JsonSerializer.Serialize(Utf8String.Empty);
         Assert.Equal("\"\"", json);
     }
 
@@ -288,21 +291,21 @@ public sealed class Utf8StringTests
     public void JsonSerialize_NonEmpty()
     {
         var s = Utf8String.FromString("hello");
-        var json = JsonSerializer.Serialize(s);
+        string json = JsonSerializer.Serialize(s);
         Assert.Equal("\"hello\"", json);
     }
 
     [Fact]
     public void JsonDeserialize_Null()
     {
-        var result = JsonSerializer.Deserialize<Utf8String?>("null");
+        Utf8String? result = JsonSerializer.Deserialize<Utf8String?>("null");
         Assert.Null(result);
     }
 
     [Fact]
     public void JsonDeserialize_EmptyString()
     {
-        var result = JsonSerializer.Deserialize<Utf8String?>("\"\"");
+        Utf8String? result = JsonSerializer.Deserialize<Utf8String?>("\"\"");
         Assert.NotNull(result);
         Assert.Same(Utf8String.Empty, result);
     }
@@ -310,7 +313,7 @@ public sealed class Utf8StringTests
     [Fact]
     public void JsonDeserialize_NonEmpty()
     {
-        var result = JsonSerializer.Deserialize<Utf8String?>("\"hello\"");
+        Utf8String? result = JsonSerializer.Deserialize<Utf8String?>("\"hello\"");
         Assert.NotNull(result);
         Assert.Equal("hello", result.ToString());
     }
@@ -318,7 +321,7 @@ public sealed class Utf8StringTests
     [Fact]
     public void JsonDeserialize_NonAscii()
     {
-        var result = JsonSerializer.Deserialize<Utf8String?>("\"héllo 🌍\"");
+        Utf8String? result = JsonSerializer.Deserialize<Utf8String?>("\"héllo 🌍\"");
         Assert.NotNull(result);
         Assert.Equal("héllo 🌍", result.ToString());
     }
@@ -326,8 +329,8 @@ public sealed class Utf8StringTests
     [Fact]
     public void JsonDeserialize_EscapedString()
     {
-        var json = "\"line1\\nline2\\tend\"";
-        var result = JsonSerializer.Deserialize<Utf8String?>(json);
+        string json = "\"line1\\nline2\\tend\"";
+        Utf8String? result = JsonSerializer.Deserialize<Utf8String?>(json);
         Assert.NotNull(result);
         Assert.Equal("line1\nline2\tend", result.ToString());
     }
@@ -336,8 +339,8 @@ public sealed class Utf8StringTests
     public void JsonRoundTrip_NonAscii()
     {
         var original = Utf8String.FromString("héllo wörld");
-        var json = JsonSerializer.Serialize(original);
-        var restored = JsonSerializer.Deserialize<Utf8String?>(json);
+        string json = JsonSerializer.Serialize(original);
+        Utf8String? restored = JsonSerializer.Deserialize<Utf8String?>(json);
         Assert.NotNull(restored);
         Assert.Equal(original.ToString(), restored.ToString());
     }
@@ -345,8 +348,8 @@ public sealed class Utf8StringTests
     [Fact]
     public void JsonRoundTrip_Empty()
     {
-        var json = JsonSerializer.Serialize(Utf8String.Empty);
-        var restored = JsonSerializer.Deserialize<Utf8String?>(json);
+        string json = JsonSerializer.Serialize(Utf8String.Empty);
+        Utf8String? restored = JsonSerializer.Deserialize<Utf8String?>(json);
         Assert.NotNull(restored);
         Assert.Same(Utf8String.Empty, restored);
     }

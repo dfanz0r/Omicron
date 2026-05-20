@@ -1,4 +1,3 @@
-using System;
 using System.Text;
 using Omicron.Core.Content;
 using Omicron.Core.Events;
@@ -11,68 +10,195 @@ using Omicron.Core.Text;
 namespace Omicron.CLI.Tui;
 
 /// <summary>
-/// Renders the conversation transcript into a <see cref="TerminalFrame"/> sub-rectangle.
-/// Owns the <see cref="TranscriptStore"/>, <see cref="TranscriptLayoutCache"/>,
-/// and <see cref="ViewportState"/>.
+///     Renders the conversation transcript into a <see cref="TerminalFrame" /> sub-rectangle.
+///     Owns the <see cref="TranscriptStore" />, <see cref="TranscriptLayoutCache" />,
+///     and <see cref="ViewportState" />.
 /// </summary>
 public sealed class TranscriptViewportWidget : ITuiWidget
 {
-    private readonly TranscriptStore _store = new();
-    private readonly TranscriptLayoutCache _layout = new();
-    private readonly ViewportState _viewport = new();
+    private const int ScrollbarTimeoutMs = 2000;
     private readonly Dictionary<BlockId, TranscriptBlock> _blockById = new();
-    private Rect _bounds;
-    private bool _assistantPrefixAdded;
 
-    public TranscriptStore Store => _store;
+    private readonly List<SearchMatch> _searchMatches = [];
+    private bool _assistantPrefixAdded;
+    private Rect _bounds;
+
+    private DateTime _lastScrollTime = DateTime.MinValue;
+
+    // Long-lived builder with disposeImmediately: false to keep buffer outside the pool
+    private Utf8Builder _pendingAssistantText = new(false);
+
+    public TranscriptStore Store { get; } = new();
+
     public int ViewportHeight => _bounds.Height;
-    public TranscriptLayoutCache Layout => _layout;
-    public ViewportState Viewport => _viewport;
+    public TranscriptLayoutCache Layout { get; } = new();
+
+    public ViewportState Viewport { get; } = new();
+
     public Action? RequestRender { get; set; }
     public Rect Bounds => _bounds;
 
-    private DateTime _lastScrollTime = DateTime.MinValue;
-    private const int ScrollbarTimeoutMs = 2000;
-
     private bool IsScrollbarVisible =>
-        _layout.TotalWrappedRows > _bounds.Height &&
-        (DateTime.UtcNow - _lastScrollTime).TotalMilliseconds < ScrollbarTimeoutMs;
+        Layout.TotalWrappedRows > _bounds.Height
+        && (DateTime.UtcNow - _lastScrollTime).TotalMilliseconds < ScrollbarTimeoutMs;
+
+    /// <summary>Current find query (empty if not searching).</summary>
+    public string FindQuery { get; private set; } = "";
+
+    /// <summary>Number of matches for the current query.</summary>
+    public int MatchCount => _searchMatches.Count;
+
+    /// <summary>Index of the currently highlighted match (-1 if none).</summary>
+    public int CurrentMatchIndex { get; private set; } = -1;
+
+    /// <summary>Whether find mode is active.</summary>
+    public bool IsFindActive => FindQuery.Length > 0;
+
+    public Size Measure(Size available)
+    {
+        return available;
+    }
+
+    public void Arrange(Rect bounds)
+    {
+        _bounds = bounds;
+        if (bounds.Width > 0 && Layout.TerminalWidth != bounds.Width)
+        {
+            Layout.ReflowForWidth(bounds.Width, Store);
+            Viewport.ScrollToBottom(Layout.TotalWrappedRows, _bounds.Height);
+            RebuildBlockIndex();
+        }
+
+        Viewport.UpdateTotalRows(Layout.TotalWrappedRows, _bounds.Height);
+    }
+
+    public void Render(RenderContext context)
+    {
+        FlushPending();
+        if (
+            _assistantPrefixAdded
+            && Store.Blocks.Count > 0
+            && Store.Blocks[^1] is AssistantMessageBlock
+        )
+        {
+            InvalidateLastBlock();
+        }
+
+        int visibleHeight = _bounds.Height;
+        if (visibleHeight <= 0)
+        {
+            return;
+        }
+
+        int firstRow = Viewport.FirstVisibleWrappedRow;
+        IReadOnlyList<WrappedLineInfo> visibleLines = Layout.GetVisibleLines(firstRow, visibleHeight);
+        int row = 0;
+        foreach (WrappedLineInfo line in visibleLines)
+        {
+            if (row >= visibleHeight)
+            {
+                break;
+            }
+
+            TextStyle style = GetStyleForBlock(line.BlockId);
+            _blockById.TryGetValue(line.BlockId, out TranscriptBlock? blk);
+            bool hasAmberAccent = blk switch
+            {
+                UserMessageBlock => true,
+                SeparatorBlock sep => sep.BgR == 75,
+                _ => false
+            };
+
+            if (hasAmberAccent)
+            {
+                var barCell = new RenderCell
+                {
+                    Glyph = GlyphRef.Ascii((byte)' '),
+                    Width = 1,
+                    Style = new TextStyle(235, 195, 80, 75, 55, 20, false, false, false)
+                };
+                int barWidth = Math.Min(3, _bounds.Width);
+                context.FillRect(new Rect(_bounds.X, _bounds.Y + row, barWidth, 1), barCell);
+            }
+
+            if (!(blk is SeparatorBlock))
+            {
+                ReadOnlyMemory<byte> bytes = Store.Text.Slice(line.ByteStart, line.ByteLength);
+                if (bytes.Length > 0)
+                {
+                    int textOffset = hasAmberAccent ? 3 : 0;
+                    context.DrawText(_bounds.X + textOffset, _bounds.Y + row, bytes.Span, style);
+                }
+            }
+
+            row++;
+        }
+
+        if (Viewport.UnseenLineCount > 0 && !Viewport.FollowTail)
+        {
+            string indicator = $" ↓ {Viewport.UnseenLineCount} new ";
+            int indicatorX = _bounds.X + _bounds.Width - GetDisplayWidth(indicator);
+            if (indicatorX >= _bounds.X && row > 0)
+            {
+                context.DrawText(indicatorX,
+                    _bounds.Y + row - 1,
+                    Encoding.UTF8.GetBytes(indicator),
+                    new TextStyle(235, 195, 80, 75, 55, 20, false, false, false));
+            }
+        }
+
+        // Draw scrollbar overlay on the right edge
+        if (IsScrollbarVisible)
+        {
+            DrawScrollbar(context);
+        }
+    }
 
     /// <summary>
-    /// Whether the given terminal coordinate is within the scrollbar column.
+    ///     Whether the given terminal coordinate is within the scrollbar column.
     /// </summary>
-    public bool IsScrollbarHit(int row, int col) =>
-        IsScrollbarVisible &&
-        col == _bounds.X + _bounds.Width - 1 &&
-        row >= _bounds.Y && row < _bounds.Bottom;
+    public bool IsScrollbarHit(int row, int col)
+    {
+        return IsScrollbarVisible
+               && col == _bounds.X + _bounds.Width - 1
+               && row >= _bounds.Y
+               && row < _bounds.Bottom;
+    }
 
     /// <summary>
-    /// Whether the given terminal coordinate is on the scrollbar thumb.
+    ///     Whether the given terminal coordinate is on the scrollbar thumb.
     /// </summary>
     public bool IsScrollbarThumbHit(int row, int col)
     {
-        if (!IsScrollbarHit(row, col)) return false;
+        if (!IsScrollbarHit(row, col))
+        {
+            return false;
+        }
 
-        int totalRows = _layout.TotalWrappedRows;
+        int totalRows = Layout.TotalWrappedRows;
         int viewportHeight = _bounds.Height;
         int thumbHeight = Math.Max(1, viewportHeight * viewportHeight / totalRows);
         int maxScroll = Math.Max(1, totalRows - viewportHeight);
-        int thumbStart = _viewport.FirstVisibleWrappedRow * (viewportHeight - thumbHeight) / maxScroll;
+        int thumbStart =
+            Viewport.FirstVisibleWrappedRow * (viewportHeight - thumbHeight) / maxScroll;
 
         int relativeY = row - _bounds.Y;
         return relativeY >= thumbStart && relativeY < thumbStart + thumbHeight;
     }
 
     /// <summary>
-    /// Scroll so the scrollbar thumb centres on the given mouse Y (terminal row).
-    /// Clicking anywhere on the scrollbar track jumps to that proportional
-    /// position.
+    ///     Scroll so the scrollbar thumb centres on the given mouse Y (terminal row).
+    ///     Clicking anywhere on the scrollbar track jumps to that proportional
+    ///     position.
     /// </summary>
     public void ScrollToMouseY(int mouseY)
     {
-        int totalRows = _layout.TotalWrappedRows;
+        int totalRows = Layout.TotalWrappedRows;
         int viewportHeight = _bounds.Height;
-        if (totalRows <= viewportHeight) return;
+        if (totalRows <= viewportHeight)
+        {
+            return;
+        }
 
         int thumbHeight = Math.Max(1, viewportHeight * viewportHeight / totalRows);
         int maxScroll = Math.Max(1, totalRows - viewportHeight);
@@ -82,32 +208,32 @@ public sealed class TranscriptViewportWidget : ITuiWidget
         int targetRow = relativeY * maxScroll / trackLength;
         targetRow = Math.Clamp(targetRow, 0, maxScroll);
 
-        _viewport.FirstVisibleWrappedRow = targetRow;
-        _viewport.FollowTail = false;
+        Viewport.FirstVisibleWrappedRow = targetRow;
+        Viewport.FollowTail = false;
         _lastScrollTime = DateTime.UtcNow;
     }
 
     public void ScrollUp(int rows)
     {
-        _viewport.ScrollUp(rows);
+        Viewport.ScrollUp(rows);
         _lastScrollTime = DateTime.UtcNow;
     }
 
     public void ScrollDown(int rows)
     {
-        _viewport.ScrollDown(rows);
+        Viewport.ScrollDown(rows);
         _lastScrollTime = DateTime.UtcNow;
     }
 
     public void ScrollToTop()
     {
-        _viewport.ScrollToTop();
+        Viewport.ScrollToTop();
         _lastScrollTime = DateTime.UtcNow;
     }
 
     public void ScrollToBottom()
     {
-        _viewport.ScrollToBottom(_layout.TotalWrappedRows, _bounds.Height);
+        Viewport.ScrollToBottom(Layout.TotalWrappedRows, _bounds.Height);
         _lastScrollTime = DateTime.UtcNow;
     }
 
@@ -117,20 +243,23 @@ public sealed class TranscriptViewportWidget : ITuiWidget
         {
             case UserMessageEvent ue:
                 FlushPending();
-                _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
+                Store.AppendSeparator(75, 55, 20);
+
+            {
+                Utf8Builder msgBuilder = Utf8Text.CreateBuilder();
+                try
                 {
-                    var msgBuilder = Utf8Text.CreateBuilder();
-                    try
-                    {
-                        Utf8CompositeFormat.AppendFormatUtf8(ref msgBuilder, "  You: {0}"u8, ue.Text);
-                        _store.AppendUserMessage(msgBuilder.AsSpan());
-                    }
-                    finally
-                    {
-                        msgBuilder.Dispose();
-                    }
+                    Utf8CompositeFormat.AppendFormatUtf8(ref msgBuilder,
+                        "  You: {0}"u8,
+                        ue.Text);
+                    Store.AppendUserMessage(msgBuilder.AsSpan());
                 }
-                _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
+                finally
+                {
+                    msgBuilder.Dispose();
+                }
+            }
+                Store.AppendSeparator(75, 55, 20);
                 RebuildLayout();
                 RequestRender?.Invoke();
                 break;
@@ -138,27 +267,31 @@ public sealed class TranscriptViewportWidget : ITuiWidget
             case AssistantTextDeltaEvent delta:
                 if (!_assistantPrefixAdded)
                 {
-                    _store.AppendSeparator();
+                    Store.AppendSeparator();
                     _pendingAssistantText.AppendLiteral("  Agent: "u8);
                     _assistantPrefixAdded = true;
                 }
+
                 _pendingAssistantText.AppendLiteral(delta.Delta.Utf8Span);
                 RequestRender?.Invoke();
                 break;
 
             case AssistantResponseCompleteEvent:
                 FlushPending();
-                if (_store.Blocks.Count > 0 && _store.Blocks[^1] is AssistantMessageBlock)
-                    _store.CompleteLastAssistantBlock();
+                if (Store.Blocks.Count > 0 && Store.Blocks[^1] is AssistantMessageBlock)
+                {
+                    Store.CompleteLastAssistantBlock();
+                }
+
                 _assistantPrefixAdded = false;
-                _store.AppendSeparator();
+                Store.AppendSeparator();
                 RebuildLayout();
                 break;
 
             case ToolInvocationStartedEvent tis:
                 FlushPending();
                 AppendSeparatorBeforeToolCallIfNeeded();
-                _store.AppendToolCall(tis.ToolName, tis.ToolCallId.Value);
+                Store.AppendToolCall(tis.ToolName, tis.ToolCallId.Value);
                 RebuildLayout();
                 break;
 
@@ -171,36 +304,51 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                     // Match by ToolCallId (precise). The TranscriptStore's
                     // UpdateToolCall handles idempotency internally, so
                     // duplicate completions for the same block are a no-op.
-                    for (int i = _store.Blocks.Count - 1; i >= 0; i--)
+                    for (int i = Store.Blocks.Count - 1; i >= 0; i--)
                     {
-                        if (_store.Blocks[i] is ToolCallBlock tcb &&
-                            tcb.ToolCallId == tic.ToolCallId.Value)
+                        if (
+                            Store.Blocks[i] is ToolCallBlock tcb
+                            && tcb.ToolCallId == tic.ToolCallId.Value
+                        )
                         {
-                            _store.UpdateToolCall(tcb.Id, tic.IsError ? ToolCallState.Failed : ToolCallState.Completed, bytes, blocks);
+                            Store.UpdateToolCall(tcb.Id,
+                                tic.IsError ? ToolCallState.Failed : ToolCallState.Completed,
+                                bytes,
+                                blocks);
                             return;
                         }
                     }
 
                     // Fallback: match by tool name + Running/Pending (legacy/replay
                     // safety for out-of-order events where the start hasn't arrived).
-                    for (int i = _store.Blocks.Count - 1; i >= 0; i--)
+                    for (int i = Store.Blocks.Count - 1; i >= 0; i--)
                     {
-                        if (_store.Blocks[i] is ToolCallBlock tcb &&
-                            tcb.ToolName == tic.ToolName &&
-                            tcb.State is ToolCallState.Running or ToolCallState.Pending)
+                        if (
+                            Store.Blocks[i] is ToolCallBlock tcb
+                            && tcb.ToolName == tic.ToolName
+                            && tcb.State is ToolCallState.Running or ToolCallState.Pending
+                        )
                         {
-                            _store.UpdateToolCall(tcb.Id, tic.IsError ? ToolCallState.Failed : ToolCallState.Completed, bytes, blocks);
+                            Store.UpdateToolCall(tcb.Id,
+                                tic.IsError ? ToolCallState.Failed : ToolCallState.Completed,
+                                bytes,
+                                blocks);
                             return;
                         }
                     }
 
                     // Last resort: match any Running/Pending tool block.
-                    for (int i = _store.Blocks.Count - 1; i >= 0; i--)
+                    for (int i = Store.Blocks.Count - 1; i >= 0; i--)
                     {
-                        if (_store.Blocks[i] is ToolCallBlock tcb &&
-                            tcb.State is ToolCallState.Running or ToolCallState.Pending)
+                        if (
+                            Store.Blocks[i] is ToolCallBlock tcb
+                            && tcb.State is ToolCallState.Running or ToolCallState.Pending
+                        )
                         {
-                            _store.UpdateToolCall(tcb.Id, tic.IsError ? ToolCallState.Failed : ToolCallState.Completed, bytes, blocks);
+                            Store.UpdateToolCall(tcb.Id,
+                                tic.IsError ? ToolCallState.Failed : ToolCallState.Completed,
+                                bytes,
+                                blocks);
                             return;
                         }
                     }
@@ -210,7 +358,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 // buffers avoiding the string → UTF-8 roundtrip.
                 if (ticBlocks is { Count: > 0 })
                 {
-                    var blockSb = Utf8Text.CreateBuilder();
+                    Utf8Builder blockSb = Utf8Text.CreateBuilder();
                     try
                     {
                         blockSb.AppendLine();
@@ -227,13 +375,15 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 else
                 {
                     // Use Utf8String directly — no string allocation
-                    var resultSpan = tic.Result.Utf8Span;
+                    ReadOnlySpan<byte> resultSpan = tic.Result.Utf8Span;
                     if (tic.IsError)
                     {
-                        var errBuilder = Utf8Text.CreateBuilder();
+                        Utf8Builder errBuilder = Utf8Text.CreateBuilder();
                         try
                         {
-                            Utf8CompositeFormat.AppendFormatUtf8(ref errBuilder, "\n[Error: {0}]"u8, tic.Result);
+                            Utf8CompositeFormat.AppendFormatUtf8(ref errBuilder,
+                                "\n[Error: {0}]"u8,
+                                tic.Result);
                             UpdateWithSpan(errBuilder.AsSpan(), null);
                         }
                         finally
@@ -243,7 +393,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                     }
                     else
                     {
-                        var bytes = new byte[resultSpan.Length + 1];
+                        byte[] bytes = new byte[resultSpan.Length + 1];
                         bytes[0] = (byte)'\n';
                         resultSpan.CopyTo(bytes.AsSpan(1));
                         UpdateWithSpan(bytes.AsSpan(), null);
@@ -255,26 +405,28 @@ public sealed class TranscriptViewportWidget : ITuiWidget
 
             case SessionErrorEvent err:
                 FlushPending();
-                _store.AppendNotice($"[Error: {err.Message}]");
+                Store.AppendNotice($"[Error: {err.Message}]");
                 RebuildLayout();
                 break;
 
             case SessionResetEvent:
                 FlushPending();
-                _store.Clear();
+                Store.Clear();
                 _assistantPrefixAdded = false;
-                _viewport.ScrollToBottom(0, _bounds.Height);
-                _layout.ReflowForWidth(Math.Max(1, _bounds.Width), _store);
+                Viewport.ScrollToBottom(0, _bounds.Height);
+                Layout.ReflowForWidth(Math.Max(1, _bounds.Width), Store);
                 break;
         }
     }
 
     public void LoadMessages(IEnumerable<Message> messages)
     {
-        _store.Clear();
+        Store.Clear();
         _assistantPrefixAdded = false;
-        foreach (var msg in messages)
+        foreach (Message msg in messages)
+        {
             AppendMessage(msg);
+        }
 
         RebuildLayout();
         ScrollToBottom();
@@ -285,121 +437,118 @@ public sealed class TranscriptViewportWidget : ITuiWidget
         switch (msg.Role)
         {
             case MessageRole.User:
-                _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
+                Store.AppendSeparator(75, 55, 20);
+
+            {
+                Utf8Builder builder = Utf8Text.CreateBuilder();
+                try
                 {
-                    var builder = Utf8Text.CreateBuilder();
-                    try
-                    {
-                        Utf8CompositeFormat.AppendFormatUtf8(ref builder, "  You: {0}"u8, msg.TextData ?? Utf8String.Empty);
-                        _store.AppendUserMessage(builder.AsSpan());
-                    }
-                    finally
-                    {
-                        builder.Dispose();
-                    }
+                    Utf8CompositeFormat.AppendFormatUtf8(ref builder,
+                        "  You: {0}"u8,
+                        msg.TextData ?? Utf8String.Empty);
+                    Store.AppendUserMessage(builder.AsSpan());
                 }
-                _store.AppendSeparator(bgR: 75, bgG: 55, bgB: 20);
+                finally
+                {
+                    builder.Dispose();
+                }
+            }
+                Store.AppendSeparator(75, 55, 20);
                 break;
             case MessageRole.Assistant:
-                _store.AppendSeparator();
+                Store.AppendSeparator();
+
+            {
+                Utf8Builder builder = Utf8Text.CreateBuilder();
+                try
                 {
-                    var builder = Utf8Text.CreateBuilder();
-                    try
-                    {
-                        Utf8CompositeFormat.AppendFormatUtf8(ref builder, "  Agent: {0}"u8, msg.TextData ?? Utf8String.Empty);
-                        _store.AppendAssistantDelta(builder.AsSpan());
-                    }
-                    finally
-                    {
-                        builder.Dispose();
-                    }
+                    Utf8CompositeFormat.AppendFormatUtf8(ref builder,
+                        "  Agent: {0}"u8,
+                        msg.TextData ?? Utf8String.Empty);
+                    Store.AppendAssistantDelta(builder.AsSpan());
                 }
-                _store.CompleteLastAssistantBlock();
-                _store.AppendSeparator();
+                finally
+                {
+                    builder.Dispose();
+                }
+            }
+                Store.CompleteLastAssistantBlock();
+                Store.AppendSeparator();
                 break;
             case MessageRole.ToolResult:
                 AppendSeparatorBeforeToolCallIfNeeded();
-                _store.AppendToolCall(msg.ToolName ?? "tool", msg.ToolCallId);
-                for (int i = _store.Blocks.Count - 1; i >= 0; i--)
+                Store.AppendToolCall(msg.ToolName ?? "tool", msg.ToolCallId);
+                for (int i = Store.Blocks.Count - 1; i >= 0; i--)
                 {
-                    if (_store.Blocks[i] is ToolCallBlock tcb &&
-                        tcb.ToolCallId == msg.ToolCallId &&
-                        tcb.State is ToolCallState.Running or ToolCallState.Pending)
+                    if (
+                        Store.Blocks[i] is ToolCallBlock tcb
+                        && tcb.ToolCallId == msg.ToolCallId
+                        && tcb.State is ToolCallState.Running or ToolCallState.Pending
+                    )
                     {
                         // TextUtf8 returns empty span when TextData is null, same result
-                        _store.UpdateToolCall(tcb.Id, msg.IsError ? ToolCallState.Failed : ToolCallState.Completed, msg.TextUtf8);
+                        Store.UpdateToolCall(tcb.Id,
+                            msg.IsError ? ToolCallState.Failed : ToolCallState.Completed,
+                            msg.TextUtf8);
                         break;
                     }
                 }
+
                 break;
         }
     }
 
     private void AppendSeparatorBeforeToolCallIfNeeded()
     {
-        if (_store.Blocks.Count > 0 && _store.Blocks[^1] is not SeparatorBlock)
-            _store.AppendSeparator();
+        if (Store.Blocks.Count > 0 && Store.Blocks[^1] is not SeparatorBlock)
+        {
+            Store.AppendSeparator();
+        }
     }
 
     private void InvalidateLastBlock()
     {
-        if (_store.Blocks.Count > 0)
+        if (Store.Blocks.Count > 0)
         {
-            var lastBlock = _store.Blocks[^1];
-            _layout.ReflowBlock(lastBlock, _store, Math.Max(1, _bounds.Width));
-            _viewport.OnContentAppended(_layout.TotalWrappedRows, _bounds.Height);
+            TranscriptBlock lastBlock = Store.Blocks[^1];
+            Layout.ReflowBlock(lastBlock, Store, Math.Max(1, _bounds.Width));
+            Viewport.OnContentAppended(Layout.TotalWrappedRows, _bounds.Height);
             RebuildBlockIndex();
         }
     }
 
-    // ── Search / Find state ──
-
     /// <summary>
-    /// A match found during search. Stores the wrapped line and byte offset.
-    /// </summary>
-    public readonly record struct SearchMatch(int WrappedRow, long ByteOffset, int Length);
-
-    private readonly List<SearchMatch> _searchMatches = [];
-    private int _currentMatchIndex = -1;
-    private string _findQuery = "";
-
-    /// <summary>Current find query (empty if not searching).</summary>
-    public string FindQuery => _findQuery;
-
-    /// <summary>Number of matches for the current query.</summary>
-    public int MatchCount => _searchMatches.Count;
-
-    /// <summary>Index of the currently highlighted match (-1 if none).</summary>
-    public int CurrentMatchIndex => _currentMatchIndex;
-
-    /// <summary>Whether find mode is active.</summary>
-    public bool IsFindActive => _findQuery.Length > 0;
-
-    /// <summary>
-    /// Perform a search for the given query. Scrolls to the first match.
-    /// Returns the number of matches found.
+    ///     Perform a search for the given query. Scrolls to the first match.
+    ///     Returns the number of matches found.
     /// </summary>
     public int Find(string query)
     {
-        _findQuery = query ?? "";
+        FindQuery = query ?? "";
         _searchMatches.Clear();
-        _currentMatchIndex = -1;
+        CurrentMatchIndex = -1;
 
-        if (string.IsNullOrEmpty(_findQuery))
+        if (string.IsNullOrEmpty(FindQuery))
+        {
             return 0;
+        }
 
-        var pattern = System.Text.Encoding.UTF8.GetBytes(_findQuery.ToLowerInvariant());
+        byte[] pattern = Encoding.UTF8.GetBytes(FindQuery.ToLowerInvariant());
         if (pattern.Length == 0)
+        {
             return 0;
+        }
 
-        var allText = _store.Text.ToArray();
-        var allTextLower = ToLowerBytes(allText);
+        byte[] allText = Store.Text.ToArray();
+        byte[] allTextLower = ToLowerBytes(allText);
 
         int searchStart = 0;
         while (true)
         {
             int idx = IndexOfBytes(allTextLower, pattern, searchStart);
-            if (idx < 0) break;
+            if (idx < 0)
+            {
+                break;
+            }
 
             // Find which wrapped row this byte offset falls into
             int wrappedRow = FindWrappedRowForOffset(idx);
@@ -413,7 +562,7 @@ public sealed class TranscriptViewportWidget : ITuiWidget
 
         if (_searchMatches.Count > 0)
         {
-            _currentMatchIndex = 0;
+            CurrentMatchIndex = 0;
             GoToMatch(0);
         }
 
@@ -423,48 +572,67 @@ public sealed class TranscriptViewportWidget : ITuiWidget
     /// <summary>Go to the next match. Returns true if there was a next match.</summary>
     public bool FindNext()
     {
-        if (_searchMatches.Count == 0) return false;
-        _currentMatchIndex = (_currentMatchIndex + 1) % _searchMatches.Count;
-        GoToMatch(_currentMatchIndex);
+        if (_searchMatches.Count == 0)
+        {
+            return false;
+        }
+
+        CurrentMatchIndex = (CurrentMatchIndex + 1) % _searchMatches.Count;
+        GoToMatch(CurrentMatchIndex);
         return true;
     }
 
     /// <summary>Go to the previous match. Returns true if there was a previous match.</summary>
     public bool FindPrevious()
     {
-        if (_searchMatches.Count == 0) return false;
-        _currentMatchIndex = (_currentMatchIndex - 1 + _searchMatches.Count) % _searchMatches.Count;
-        GoToMatch(_currentMatchIndex);
+        if (_searchMatches.Count == 0)
+        {
+            return false;
+        }
+
+        CurrentMatchIndex = (CurrentMatchIndex - 1 + _searchMatches.Count) % _searchMatches.Count;
+        GoToMatch(CurrentMatchIndex);
         return true;
     }
 
     /// <summary>Clear search state.</summary>
     public void ClearFind()
     {
-        _findQuery = "";
+        FindQuery = "";
         _searchMatches.Clear();
-        _currentMatchIndex = -1;
+        CurrentMatchIndex = -1;
     }
 
     private void GoToMatch(int index)
     {
-        if (index < 0 || index >= _searchMatches.Count) return;
-        var match = _searchMatches[index];
+        if (index < 0 || index >= _searchMatches.Count)
+        {
+            return;
+        }
+
+        SearchMatch match = _searchMatches[index];
         // Scroll to the wrapped row of the match
         int targetRow = match.WrappedRow - _bounds.Height / 3;
-        if (targetRow < 0) targetRow = 0;
-        _viewport.FirstVisibleWrappedRow = targetRow;
-        _viewport.FollowTail = false;
+        if (targetRow < 0)
+        {
+            targetRow = 0;
+        }
+
+        Viewport.FirstVisibleWrappedRow = targetRow;
+        Viewport.FollowTail = false;
     }
 
     private int FindWrappedRowForOffset(long byteOffset)
     {
-        for (int i = 0; i < _layout.WrappedLines.Count; i++)
+        for (int i = 0; i < Layout.WrappedLines.Count; i++)
         {
-            var line = _layout.WrappedLines[i];
+            WrappedLineInfo line = Layout.WrappedLines[i];
             if (byteOffset >= line.ByteStart && byteOffset < line.ByteStart + line.ByteLength)
+            {
                 return i;
+            }
         }
+
         return -1;
     }
 
@@ -473,21 +641,30 @@ public sealed class TranscriptViewportWidget : ITuiWidget
         // Simple ASCII-only lowercasing. For full Unicode case folding,
         // we'd need a proper case-folding implementation, but ASCII covers
         // most search scenarios.
-        var result = new byte[utf8.Length];
+        byte[] result = new byte[utf8.Length];
         for (int i = 0; i < utf8.Length; i++)
         {
             byte b = utf8[i];
             if (b >= (byte)'A' && b <= (byte)'Z')
+            {
                 result[i] = (byte)(b + 32);
+            }
             else
+            {
                 result[i] = b;
+            }
         }
+
         return result;
     }
 
     private static int IndexOfBytes(byte[] haystack, byte[] needle, int start)
     {
-        if (needle.Length == 0) return -1;
+        if (needle.Length == 0)
+        {
+            return -1;
+        }
+
         int end = haystack.Length - needle.Length;
         for (int i = start; i <= end; i++)
         {
@@ -500,168 +677,133 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                     break;
                 }
             }
-            if (found) return i;
+
+            if (found)
+            {
+                return i;
+            }
         }
+
         return -1;
     }
-
-    // Long-lived builder with disposeImmediately: false to keep buffer outside the pool
-    private Utf8Builder _pendingAssistantText = new Utf8Builder(false);
 
     private void FlushPending()
     {
         if (_pendingAssistantText.Length > 0)
         {
-            _store.AppendAssistantDelta(_pendingAssistantText.AsSpan());
+            Store.AppendAssistantDelta(_pendingAssistantText.AsSpan());
             _pendingAssistantText.Clear();
         }
     }
 
     private void RebuildLayout()
     {
-        _layout.InvalidateFrom(BlockId.None);
-        _layout.ReflowForWidth(Math.Max(1, _bounds.Width), _store);
-        _viewport.UpdateTotalRows(_layout.TotalWrappedRows, _bounds.Height);
+        Layout.InvalidateFrom(BlockId.None);
+        Layout.ReflowForWidth(Math.Max(1, _bounds.Width), Store);
+        Viewport.UpdateTotalRows(Layout.TotalWrappedRows, _bounds.Height);
         RebuildBlockIndex();
     }
 
     private void RebuildBlockIndex()
     {
         _blockById.Clear();
-        foreach (var block in _store.Blocks)
+        foreach (TranscriptBlock block in Store.Blocks)
+        {
             _blockById[block.Id] = block;
-    }
-
-    public Size Measure(Size available) => available;
-
-    public void Arrange(Rect bounds)
-    {
-        _bounds = bounds;
-        if (bounds.Width > 0 && _layout.TerminalWidth != bounds.Width)
-        {
-            _layout.ReflowForWidth(bounds.Width, _store);
-            _viewport.ScrollToBottom(_layout.TotalWrappedRows, _bounds.Height);
-            RebuildBlockIndex();
         }
-
-        _viewport.UpdateTotalRows(_layout.TotalWrappedRows, _bounds.Height);
-    }
-
-    public void Render(RenderContext context)
-    {
-        FlushPending();
-        if (_assistantPrefixAdded && _store.Blocks.Count > 0 && _store.Blocks[^1] is AssistantMessageBlock)
-            InvalidateLastBlock();
-
-        int visibleHeight = _bounds.Height;
-        if (visibleHeight <= 0) return;
-
-        int firstRow = _viewport.FirstVisibleWrappedRow;
-        var visibleLines = _layout.GetVisibleLines(firstRow, visibleHeight);
-        int row = 0;
-        foreach (var line in visibleLines)
-        {
-            if (row >= visibleHeight)
-                break;
-
-            var style = GetStyleForBlock(line.BlockId);
-            _blockById.TryGetValue(line.BlockId, out var blk);
-            bool hasAmberAccent = blk switch
-            {
-                UserMessageBlock => true,
-                SeparatorBlock sep => sep.BgR == 75,
-                _ => false
-            };
-
-            if (hasAmberAccent)
-            {
-                var barCell = new RenderCell
-                {
-                    Glyph = GlyphRef.Ascii((byte)' '),
-                    Width = 1,
-                    Style = new TextStyle(235, 195, 80, 75, 55, 20, false, false, false),
-                };
-                int barWidth = Math.Min(3, _bounds.Width);
-                context.FillRect(new Rect(_bounds.X, _bounds.Y + row, barWidth, 1), barCell);
-            }
-
-            if (!(blk is SeparatorBlock))
-            {
-                var bytes = _store.Text.Slice(line.ByteStart, line.ByteLength);
-                if (bytes.Length > 0)
-                {
-                    int textOffset = hasAmberAccent ? 3 : 0;
-                    context.DrawText(_bounds.X + textOffset, _bounds.Y + row, bytes.Span, style);
-                }
-            }
-            row++;
-        }
-
-        if (_viewport.UnseenLineCount > 0 && !_viewport.FollowTail)
-        {
-            string indicator = $" ↓ {_viewport.UnseenLineCount} new ";
-            int indicatorX = _bounds.X + _bounds.Width - GetDisplayWidth(indicator);
-            if (indicatorX >= _bounds.X && row > 0)
-            {
-                context.DrawText(indicatorX, _bounds.Y + row - 1, Encoding.UTF8.GetBytes(indicator), new TextStyle(235, 195, 80, 75, 55, 20, false, false, false));
-            }
-        }
-
-        // Draw scrollbar overlay on the right edge
-        if (IsScrollbarVisible)
-            DrawScrollbar(context);
     }
 
     private void DrawScrollbar(RenderContext context)
     {
-        int totalRows = _layout.TotalWrappedRows;
+        int totalRows = Layout.TotalWrappedRows;
         int viewportHeight = _bounds.Height;
-        if (totalRows <= viewportHeight) return;
+        if (totalRows <= viewportHeight)
+        {
+            return;
+        }
 
         int thumbHeight = Math.Max(1, viewportHeight * viewportHeight / totalRows);
         int maxScroll = Math.Max(1, totalRows - viewportHeight);
-        int thumbStart = _viewport.FirstVisibleWrappedRow * (viewportHeight - thumbHeight) / maxScroll;
+        int thumbStart =
+            Viewport.FirstVisibleWrappedRow * (viewportHeight - thumbHeight) / maxScroll;
 
         int scrollbarCol = _bounds.X + _bounds.Width - 1;
-        if (scrollbarCol < context.Clip.X || scrollbarCol >= context.Clip.Right) return;
-        if (scrollbarCol >= context.Frame.Width) return;
+        if (scrollbarCol < context.Clip.X || scrollbarCol >= context.Clip.Right)
+        {
+            return;
+        }
 
-        var trackBg = TuiColors.ScrollbarTrackBg;
-        var thumbBg = TuiColors.ScrollbarThumbBg;
+        if (scrollbarCol >= context.Frame.Width)
+        {
+            return;
+        }
+
+        (byte R, byte G, byte B) trackBg = TuiColors.ScrollbarTrackBg;
+        (byte R, byte G, byte B) thumbBg = TuiColors.ScrollbarThumbBg;
 
         for (int i = 0; i < viewportHeight; i++)
         {
             int row = _bounds.Y + i;
-            if (row < context.Clip.Y || row >= context.Clip.Bottom) continue;
-            if (row < 0 || row >= context.Frame.Height) continue;
+            if (row < context.Clip.Y || row >= context.Clip.Bottom)
+            {
+                continue;
+            }
+
+            if (row < 0 || row >= context.Frame.Height)
+            {
+                continue;
+            }
 
             bool isThumb = i >= thumbStart && i < thumbStart + thumbHeight;
-            var bg = isThumb ? thumbBg : trackBg;
+            (byte R, byte G, byte B) bg = isThumb ? thumbBg : trackBg;
             int idx = row * context.Frame.Width + scrollbarCol;
-            var existing = context.Frame.Cells[idx];
+            RenderCell existing = context.Frame.Cells[idx];
             context.Frame.Cells[idx] = new RenderCell
             {
                 Glyph = GlyphRef.Ascii((byte)' '),
                 Width = 1,
-                Style = new TextStyle(existing.Style.FgR, existing.Style.FgG, existing.Style.FgB,
-                    bg.R, bg.G, bg.B, false, false, false),
+                Style = new TextStyle(existing.Style.FgR,
+                    existing.Style.FgG,
+                    existing.Style.FgB,
+                    bg.R,
+                    bg.G,
+                    bg.B,
+                    false,
+                    false,
+                    false)
             };
         }
     }
 
     private TextStyle GetStyleForBlock(BlockId blockId)
     {
-        if (_blockById.TryGetValue(blockId, out var block))
+        if (_blockById.TryGetValue(blockId, out TranscriptBlock? block))
         {
             // If this is a tool call with content blocks, render based on type
             if (block is ToolCallBlock tcb && tcb.ContentBlocks is { Count: > 0 })
             {
                 return tcb.ContentBlocks[0] switch
                 {
-                    FilePreviewContentBlock f when f.IsBinary => new TextStyle(150, 135, 100, 40, 25, 15, false, false, false),
-                    FilePreviewContentBlock => new TextStyle(150, 155, 120, 0, 0, 0, false, false, false),
+                    FilePreviewContentBlock f when f.IsBinary => new TextStyle(150,
+                        135,
+                        100,
+                        40,
+                        25,
+                        15,
+                        false,
+                        false,
+                        false),
+                    FilePreviewContentBlock => new TextStyle(150,
+                        155,
+                        120,
+                        0,
+                        0,
+                        0,
+                        false,
+                        false,
+                        false),
                     ErrorContentBlock => TextStyle.ForegroundOnly(255, 120, 100),
-                    _ => TextStyle.ForegroundOnly(150, 135, 100),
+                    _ => TextStyle.ForegroundOnly(150, 135, 100)
                 };
             }
 
@@ -671,7 +813,15 @@ public sealed class TranscriptViewportWidget : ITuiWidget
                 AssistantMessageBlock => TextStyle.ForegroundOnly(200, 200, 200),
                 ToolCallBlock => TextStyle.ForegroundOnly(150, 135, 100),
                 SystemNoticeBlock => TextStyle.ForegroundOnly(255, 200, 80),
-                SeparatorBlock sep => new TextStyle(235, 195, 80, sep.BgR, sep.BgG, sep.BgB, false, false, false),
+                SeparatorBlock sep => new TextStyle(235,
+                    195,
+                    80,
+                    sep.BgR,
+                    sep.BgG,
+                    sep.BgB,
+                    false,
+                    false,
+                    false),
                 _ => TextStyle.Default
             };
         }
@@ -682,8 +832,18 @@ public sealed class TranscriptViewportWidget : ITuiWidget
     private static int GetDisplayWidth(string text)
     {
         int width = 0;
-        foreach (var rune in text.EnumerateRunes())
+        foreach (Rune rune in text.EnumerateRunes())
+        {
             width += CellWidthCalculator.GetWidth(rune);
+        }
+
         return width;
     }
+
+    // ── Search / Find state ──
+
+    /// <summary>
+    ///     A match found during search. Stores the wrapped line and byte offset.
+    /// </summary>
+    public readonly record struct SearchMatch(int WrappedRow, long ByteOffset, int Length);
 }

@@ -7,9 +7,9 @@ namespace Omicron.Core.Tests;
 
 public class JsonlConcurrencyTests : IDisposable
 {
-    private readonly string _tempDir;
-    private readonly JsonlSessionStore _store;
     private readonly SessionId _sessionId;
+    private readonly JsonlSessionStore _store;
+    private readonly string _tempDir;
 
     public JsonlConcurrencyTests()
     {
@@ -17,16 +17,21 @@ public class JsonlConcurrencyTests : IDisposable
         _store = new JsonlSessionStore(_tempDir);
         _sessionId = SessionId.New();
 
-        var request = new SessionCreateRequest(
-            "test-model", "test-provider", ApiType.OpenAiChat,
-            SessionId: _sessionId);
+        var request = new SessionCreateRequest("test-model",
+            "test-provider",
+            ApiType.OpenAiChat,
+            _sessionId);
         _store.CreateSessionAsync(request).GetAwaiter().GetResult();
     }
 
     public void Dispose()
     {
         _store.Dispose();
-        try { Directory.Delete(_tempDir, true); } catch { }
+        try
+        {
+            Directory.Delete(_tempDir, true);
+        }
+        catch { }
     }
 
     [Fact]
@@ -38,14 +43,15 @@ public class JsonlConcurrencyTests : IDisposable
 
         for (int t = 0; t < taskCount; t++)
         {
-            var taskId = t;
+            int taskId = t;
             tasks[t] = Task.Run(async () =>
             {
                 for (int i = 0; i < eventsPerTask; i++)
                 {
-                    var evt = new SessionStartedEvent(
-                        EventEnvelope.ForSession(_sessionId),
-                        AgentId.New(), "test-model", "test-provider");
+                    var evt = new SessionStartedEvent(EventEnvelope.ForSession(_sessionId),
+                        AgentId.New(),
+                        "test-model",
+                        "test-provider");
                     await _store.AppendEventsAsync(_sessionId, [evt]);
                 }
             });
@@ -55,8 +61,10 @@ public class JsonlConcurrencyTests : IDisposable
 
         // Read back all events
         var allEvents = new List<OmicronEvent>();
-        await foreach (var e in _store.ReadEventsAsync(_sessionId, EventSequenceRange.All))
+        await foreach (OmicronEvent e in _store.ReadEventsAsync(_sessionId, EventSequenceRange.All))
+        {
             allEvents.Add(e);
+        }
 
         Assert.Equal(taskCount * eventsPerTask, allEvents.Count);
 

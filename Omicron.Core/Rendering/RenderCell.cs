@@ -1,9 +1,9 @@
 namespace Omicron.Core.Rendering;
 
 /// <summary>
-/// A single cell in the <see cref="TerminalFrame"/>.
-/// Uses <see cref="GlyphRef"/> for memory-efficient storage.
-/// Struct for dense array layout (no GC pressure).
+///     A single cell in the <see cref="TerminalFrame" />.
+///     Uses <see cref="GlyphRef" /> for memory-efficient storage.
+///     Struct for dense array layout (no GC pressure).
 /// </summary>
 public struct RenderCell
 {
@@ -17,13 +17,15 @@ public struct RenderCell
     public TextStyle Style;
 
     /// <summary>True if this cell should be skipped during rendering (empty or continuation).</summary>
-    public readonly bool IsEmpty => Width == 0 || (Width >= 1 && Glyph.IsAscii && Glyph.AsciiValue == (byte)' ');
+    public readonly bool IsEmpty =>
+        Width == 0 || (Width >= 1 && Glyph.IsAscii && Glyph.AsciiValue == (byte)' ');
 
     /// <summary>Create a default empty cell.</summary>
-    public static RenderCell Empty => new()
-    {
-        Glyph = GlyphRef.Ascii((byte)' '),
-        Width = 1,
-        Style = TextStyle.Default,
-    };
+    public static RenderCell Empty =>
+        new()
+        {
+            Glyph = GlyphRef.Ascii((byte)' '),
+            Width = 1,
+            Style = TextStyle.Default
+        };
 }

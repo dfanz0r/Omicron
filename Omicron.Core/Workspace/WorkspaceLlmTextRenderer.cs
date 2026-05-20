@@ -4,7 +4,7 @@ using Omicron.Core.Text;
 namespace Omicron.Core.Workspace;
 
 /// <summary>
-/// Renders WorkspaceReadContent into deterministic LLM-context text.
+///     Renders WorkspaceReadContent into deterministic LLM-context text.
 /// </summary>
 public interface IWorkspaceReadRenderer<out T>
 {
@@ -12,22 +12,21 @@ public interface IWorkspaceReadRenderer<out T>
 }
 
 /// <summary>
-/// LLM-text renderer producing read_path output:
-/// [FILE]/[DIR] headers, line numbers, truncation, etc.
+///     LLM-text renderer producing read_path output:
+///     [FILE]/[DIR] headers, line numbers, truncation, etc.
 /// </summary>
 public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceReadResult>
 {
     public WorkspaceReadResult Render(WorkspaceReadContent content)
     {
-        var sb = Utf8Text.CreateBuilder();
+        Utf8Builder sb = Utf8Text.CreateBuilder();
         try
         {
             AppendUtf8To(ref sb, content);
-            return new WorkspaceReadResult(
-                sb.ToString(),
-                IsDirectory: content is WorkspaceDirectoryContent,
-                IsBinary: content is WorkspaceBinaryFileContent,
-                Truncated: content is WorkspaceFileContent { Truncated: true });
+            return new WorkspaceReadResult(sb.ToString(),
+                content is WorkspaceDirectoryContent,
+                content is WorkspaceBinaryFileContent,
+                content is WorkspaceFileContent { Truncated: true });
         }
         finally
         {
@@ -36,9 +35,9 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
     }
 
     /// <summary>
-    /// Append the LLM text representation directly as UTF-8 into a caller-owned builder.
-    /// Hot paths can reuse the builder across render operations and avoid
-    /// intermediate <see cref="string"/> allocations.
+    ///     Append the LLM text representation directly as UTF-8 into a caller-owned builder.
+    ///     Hot paths can reuse the builder across render operations and avoid
+    ///     intermediate <see cref="string" /> allocations.
     /// </summary>
     public static void AppendUtf8To(ref Utf8Builder sb, WorkspaceReadContent content)
     {
@@ -73,16 +72,20 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
 
         if (file.Lines.Count > 0)
         {
-            Utf8CompositeFormat.AppendFormatUtf8(ref sb, "  Showing: lines {0}-{1} of {2:N0}"u8, file.Lines[0].Number, file.Lines[^1].Number, file.TotalLines);
+            Utf8CompositeFormat.AppendFormatUtf8(ref sb,
+                "  Showing: lines {0}-{1} of {2:N0}"u8,
+                file.Lines[0].Number,
+                file.Lines[^1].Number,
+                file.TotalLines);
             sb.AppendLine();
         }
 
         sb.AppendLiteral("---"u8);
 
-        foreach (var line in file.Lines)
+        foreach (WorkspaceTextLine line in file.Lines)
         {
             sb.AppendLine();
-            AppendNumberPaddedLeftUtf8(ref sb, line.Number, width: 6);
+            AppendNumberPaddedLeftUtf8(ref sb, line.Number, 6);
             sb.AppendLiteral("| "u8);
             sb.Append(line.Text);
         }
@@ -92,11 +95,16 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
             sb.AppendLine();
             sb.AppendLiteral("---"u8);
             sb.AppendLine();
-            Utf8CompositeFormat.AppendFormatUtf8(ref sb, "[Output truncated to {0:N0} lines / {1:N0} KB.]"u8, WorkspaceReadService.MaxOutputLines, WorkspaceReadService.MaxOutputBytes / 1024);
+            Utf8CompositeFormat.AppendFormatUtf8(ref sb,
+                "[Output truncated to {0:N0} lines / {1:N0} KB.]"u8,
+                WorkspaceReadService.MaxOutputLines,
+                WorkspaceReadService.MaxOutputBytes / 1024);
             if (file.NextOffset.HasValue)
             {
                 sb.AppendLine();
-                Utf8CompositeFormat.AppendFormatUtf8(ref sb, "[Use offset={0} to continue.]"u8, file.NextOffset.Value);
+                Utf8CompositeFormat.AppendFormatUtf8(ref sb,
+                    "[Use offset={0} to continue.]"u8,
+                    file.NextOffset.Value);
             }
         }
     }
@@ -115,32 +123,35 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
     {
         sb.AppendLiteral("[DIR] "u8);
         sb.Append(dir.RequestedPath);
-        Utf8CompositeFormat.AppendFormatUtf8(ref sb, "  ({0} files, {1} dirs)"u8, dir.TotalFileCount, dir.TotalDirCount);
+        Utf8CompositeFormat.AppendFormatUtf8(ref sb,
+            "  ({0} files, {1} dirs)"u8,
+            dir.TotalFileCount,
+            dir.TotalDirCount);
 
-        foreach (var e in dir.Entries)
+        foreach (DirectoryEntry e in dir.Entries)
         {
             sb.AppendLine();
             if (e.IsDirectory)
             {
                 sb.AppendLiteral("  [DIR]  "u8);
-                AppendPaddedRightUtf8(ref sb, e.Name, width: 40);
+                AppendPaddedRightUtf8(ref sb, e.Name, 40);
             }
             else if (e.LineCount.HasValue)
             {
                 sb.AppendLiteral("  [FILE] "u8);
-                AppendPaddedRightUtf8(ref sb, e.Name, width: 40);
+                AppendPaddedRightUtf8(ref sb, e.Name, 40);
                 sb.Append(' ');
-                AppendSizePaddedLeft(ref sb, e.Size, width: 10);
+                AppendSizePaddedLeft(ref sb, e.Size, 10);
                 sb.AppendLiteral("  "u8);
-                AppendNumberPaddedLeftUtf8(ref sb, e.LineCount.Value, width: 6);
+                AppendNumberPaddedLeftUtf8(ref sb, e.LineCount.Value, 6);
                 sb.AppendLiteral(" lines"u8);
             }
             else
             {
                 sb.AppendLiteral("  [FILE] "u8);
-                AppendPaddedRightUtf8(ref sb, e.Name, width: 40);
+                AppendPaddedRightUtf8(ref sb, e.Name, 40);
                 sb.Append(' ');
-                AppendSizePaddedLeft(ref sb, e.Size, width: 10);
+                AppendSizePaddedLeft(ref sb, e.Size, 10);
                 sb.AppendLiteral("  (binary)"u8);
             }
         }
@@ -148,7 +159,9 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         if (dir.Truncated)
         {
             sb.AppendLine();
-            Utf8CompositeFormat.AppendFormatUtf8(ref sb, "  ... (listing truncated at {0} entries)"u8, WorkspaceReadService.MaxDirEntries);
+            Utf8CompositeFormat.AppendFormatUtf8(ref sb,
+                "  ... (listing truncated at {0} entries)"u8,
+                WorkspaceReadService.MaxDirEntries);
         }
     }
 
@@ -159,9 +172,9 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
     }
 
     /// <summary>
-    /// Convert a workspace read result into a list of semantic content blocks.
-    /// The existing <see cref="Render"/> method remains the primary text path;
-    /// this is an optional structured alternative for future UI consumers.
+    ///     Convert a workspace read result into a list of semantic content blocks.
+    ///     The existing <see cref="Render" /> method remains the primary text path;
+    ///     this is an optional structured alternative for future UI consumers.
     /// </summary>
     public static List<IContentBlock> ToContentBlocks(WorkspaceReadContent content)
     {
@@ -177,24 +190,34 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
 
     private static List<IContentBlock> ToFileBlocks(WorkspaceFileContent file)
     {
-        var previewSb = Utf8Text.CreateBuilder();
+        Utf8Builder previewSb = Utf8Text.CreateBuilder();
         AppendFilePreviewLinesUtf8(ref previewSb, file);
 
-        var preview = new FilePreviewContentBlock(
-            Path: file.RequestedPath,
+        var preview = new FilePreviewContentBlock(file.RequestedPath,
             ref previewSb,
-            Size: file.Stat.Size,
-            LineCount: file.TotalLines,
-            IsBinary: false);
+            file.Stat.Size,
+            file.TotalLines,
+            false);
 
-        var blocks = new List<IContentBlock> { preview };
+        var blocks = new List<IContentBlock>
+        {
+            preview
+        };
 
         if (file.Truncated)
         {
-            var sb = Utf8Text.CreateBuilder();
-            Utf8CompositeFormat.AppendFormatUtf8(ref sb, "Output truncated — showing {0} of {1:N0} lines."u8, file.Lines.Count, file.TotalLines);
+            Utf8Builder sb = Utf8Text.CreateBuilder();
+            Utf8CompositeFormat.AppendFormatUtf8(ref sb,
+                "Output truncated — showing {0} of {1:N0} lines."u8,
+                file.Lines.Count,
+                file.TotalLines);
             if (file.NextOffset.HasValue)
-                Utf8CompositeFormat.AppendFormatUtf8(ref sb, " Use offset={0} to continue."u8, file.NextOffset.Value);
+            {
+                Utf8CompositeFormat.AppendFormatUtf8(ref sb,
+                    " Use offset={0} to continue."u8,
+                    file.NextOffset.Value);
+            }
+
             var warning = new PlainTextContentBlock(ref sb);
             blocks.Add(warning);
         }
@@ -206,17 +229,16 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
     {
         return
         [
-            new FilePreviewContentBlock(
-                Path: binary.RequestedPath,
-                Size: binary.Stat.Size,
-                LineCount: null,
-                IsBinary: true)
+            new FilePreviewContentBlock(binary.RequestedPath,
+                binary.Stat.Size,
+                null,
+                true)
         ];
     }
 
     private static List<IContentBlock> ToDirectoryBlock(WorkspaceDirectoryContent dir)
     {
-        var sb = Utf8Text.CreateBuilder();
+        Utf8Builder sb = Utf8Text.CreateBuilder();
         AppendDirectoryPreviewUtf8(ref sb, dir);
 
         var block = new PlainTextContentBlock(ref sb);
@@ -232,20 +254,26 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
     {
         for (int i = 0; i < file.Lines.Count; i++)
         {
-            if (i > 0) sb.AppendLine();
-            var line = file.Lines[i];
-            AppendNumberPaddedLeftUtf8(ref sb, line.Number, width: 6);
+            if (i > 0)
+            {
+                sb.AppendLine();
+            }
+
+            WorkspaceTextLine line = file.Lines[i];
+            AppendNumberPaddedLeftUtf8(ref sb, line.Number, 6);
             sb.AppendLiteral("| "u8);
             sb.Append(line.Text);
         }
     }
 
-    private static void AppendDirectoryPreviewUtf8(ref Utf8Builder sb, WorkspaceDirectoryContent dir)
+    private static void AppendDirectoryPreviewUtf8(
+        ref Utf8Builder sb,
+        WorkspaceDirectoryContent dir)
     {
         sb.AppendLiteral("[DIR] "u8);
         sb.Append(dir.RequestedPath);
 
-        foreach (var e in dir.Entries)
+        foreach (DirectoryEntry e in dir.Entries)
         {
             sb.AppendLine();
             if (e.IsDirectory)
@@ -285,7 +313,9 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         sb.Append(value);
         int padding = width - value.Length;
         if (padding > 0)
+        {
             sb.Append(' ', padding);
+        }
     }
 
     private static void AppendNumberPaddedLeftUtf8(ref Utf8Builder sb, int value, int width)
@@ -293,20 +323,26 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
         int digits = CountDecimalDigits(value);
         int padding = width - digits;
         if (padding > 0)
+        {
             sb.Append(' ', padding);
+        }
+
         sb.Append(value);
     }
 
     private static void AppendSizePaddedLeft(ref Utf8Builder sb, long bytes, int width)
     {
         // Format size into a temp builder to measure its length, then pad.
-        var temp = Utf8Text.CreateBuilder();
+        Utf8Builder temp = Utf8Text.CreateBuilder();
         try
         {
             FormatSize.AppendUtf8To(ref temp, bytes);
             int padding = width - temp.Length;
             if (padding > 0)
+            {
                 sb.Append(' ', padding);
+            }
+
             sb.AppendLiteral(temp.AsSpan());
         }
         finally
@@ -317,7 +353,10 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
 
     private static int CountDecimalDigits(int value)
     {
-        if (value == 0) return 1;
+        if (value == 0)
+        {
+            return 1;
+        }
 
         int digits = value < 0 ? 1 : 0;
         uint remaining = value < 0 ? (uint)-value : (uint)value;
@@ -326,6 +365,7 @@ public sealed class WorkspaceLlmTextRenderer : IWorkspaceReadRenderer<WorkspaceR
             remaining /= 10;
             digits++;
         }
+
         return digits;
     }
 }

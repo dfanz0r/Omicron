@@ -1,5 +1,4 @@
 using System.Text;
-using System.Threading.Tasks;
 using Omicron.Core.Text;
 using Xunit;
 
@@ -15,7 +14,7 @@ public class Utf8TextStoreTests
     public void Append_EmptyStore_ReturnsPositionZero()
     {
         var store = new Utf8TextStore(128);
-        var pos = store.Append("hello"u8);
+        TextPosition pos = store.Append("hello"u8);
         Assert.Equal(0, pos.GlobalByteOffset);
         Assert.Equal(0, pos.ChunkIndex);
         Assert.Equal(0, pos.ChunkByteOffset);
@@ -45,11 +44,11 @@ public class Utf8TextStoreTests
         Assert.Equal(2, store.ChunkCount);
         Assert.Equal(67, store.LengthBytes);
 
-        var chunk1 = store.GetChunk(0);
+        TextChunk chunk1 = store.GetChunk(0);
         Assert.Equal(0, chunk1.Index);
         Assert.Equal(64, chunk1.Length);
 
-        var chunk2 = store.GetChunk(1);
+        TextChunk chunk2 = store.GetChunk(1);
         Assert.Equal(1, chunk2.Index);
         Assert.Equal(3, chunk2.Length);
         Assert.Equal(64, chunk2.GlobalByteStart);
@@ -60,7 +59,7 @@ public class Utf8TextStoreTests
     {
         var store = new Utf8TextStore(128);
         store.Append("abc"u8);
-        var pos = store.Append(ReadOnlySpan<byte>.Empty);
+        TextPosition pos = store.Append(ReadOnlySpan<byte>.Empty);
         Assert.Equal(3, pos.GlobalByteOffset);
         Assert.Equal(3, store.LengthBytes);
     }
@@ -70,10 +69,10 @@ public class Utf8TextStoreTests
     {
         var store = new Utf8TextStore(128);
         store.Append("Hello, World!"u8);
-        var slice = store.Slice(0, 5);
+        ReadOnlyMemory<byte> slice = store.Slice(0, 5);
         Assert.Equal("Hello"u8.ToArray(), slice.ToArray());
         // Should reference chunk memory directly
-        var chunk0 = store.GetChunk(0);
+        TextChunk chunk0 = store.GetChunk(0);
         Assert.True(slice.Span[0] == chunk0.AsSpan()[0]);
     }
 
@@ -86,7 +85,7 @@ public class Utf8TextStoreTests
         store.Append("BCD"u8); // goes to second chunk: 3 bytes
         // Slice across chunk boundary (last 3 of chunk0 + first 3 of chunk1)
         // Chunks: [0..63] = 'A'*64, [64..66] = 'B','C','D'
-        var slice = store.Slice(61, 6);
+        ReadOnlyMemory<byte> slice = store.Slice(61, 6);
         Assert.Equal("AAABCD"u8.ToArray(), slice.ToArray());
     }
 
@@ -104,7 +103,7 @@ public class Utf8TextStoreTests
     {
         var store = new Utf8TextStore(128);
         store.Append("hello"u8);
-        var slice = store.Slice(2, 0);
+        ReadOnlyMemory<byte> slice = store.Slice(2, 0);
         Assert.True(slice.IsEmpty);
     }
 
@@ -124,16 +123,19 @@ public class Utf8TextStoreTests
     public async Task Append_ThreadSafe()
     {
         var store = new Utf8TextStore(64);
-        var tasks = new List<System.Threading.Tasks.Task>();
+        var tasks = new List<Task>();
         for (int i = 0; i < 10; i++)
         {
-            tasks.Add(System.Threading.Tasks.Task.Run(() =>
+            tasks.Add(Task.Run(() =>
             {
                 for (int j = 0; j < 100; j++)
+                {
                     store.Append("line\n"u8);
+                }
             }));
         }
-        await System.Threading.Tasks.Task.WhenAll([.. tasks]);
+
+        await Task.WhenAll([.. tasks]);
         // Each of 10 threads × 100 iterations × 5 bytes = 5000
         Assert.Equal(5000, store.LengthBytes);
     }
@@ -155,8 +157,8 @@ public class Utf8TextStoreTests
         var index = new LogicalLineIndex();
         index.AppendScan("hello\nworld\n"u8, 0);
         Assert.Equal(2, index.LineCount);
-        Assert.Equal(new LogicalLineInfo(0, 5, 0), index.Lines[0]);  // "hello" (LF excluded)
-        Assert.Equal(new LogicalLineInfo(6, 5, 1), index.Lines[1]);  // "world" (LF excluded)
+        Assert.Equal(new LogicalLineInfo(0, 5, 0), index.Lines[0]); // "hello" (LF excluded)
+        Assert.Equal(new LogicalLineInfo(6, 5, 1), index.Lines[1]); // "world" (LF excluded)
     }
 
     [Fact]
@@ -165,8 +167,8 @@ public class Utf8TextStoreTests
         var index = new LogicalLineIndex();
         index.AppendScan("hello\r\nworld\r\n"u8, 0);
         Assert.Equal(2, index.LineCount);
-        Assert.Equal(new LogicalLineInfo(0, 5, 0), index.Lines[0]);  // "hello"
-        Assert.Equal(new LogicalLineInfo(7, 5, 1), index.Lines[1]);  // "world"
+        Assert.Equal(new LogicalLineInfo(0, 5, 0), index.Lines[0]); // "hello"
+        Assert.Equal(new LogicalLineInfo(7, 5, 1), index.Lines[1]); // "world"
     }
 
     [Fact]
@@ -175,8 +177,8 @@ public class Utf8TextStoreTests
         var index = new LogicalLineIndex();
         index.AppendScan("hello\rworld\r"u8, 0);
         Assert.Equal(2, index.LineCount);
-        Assert.Equal(new LogicalLineInfo(0, 5, 0), index.Lines[0]);  // "hello"
-        Assert.Equal(new LogicalLineInfo(6, 5, 1), index.Lines[1]);  // "world"
+        Assert.Equal(new LogicalLineInfo(0, 5, 0), index.Lines[0]); // "hello"
+        Assert.Equal(new LogicalLineInfo(6, 5, 1), index.Lines[1]); // "world"
     }
 
     [Fact]
@@ -241,7 +243,7 @@ public class Utf8TextStoreTests
         var index = new LogicalLineIndex();
         index.AppendScan("hello\nworld\nfoo\n"u8, 0);
         // Offset 0 → line 0
-        var line = index.FindLineContaining(0);
+        LogicalLineInfo? line = index.FindLineContaining(0);
         Assert.NotNull(line);
         Assert.Equal(0, line.Value.LineIndex);
         Assert.Equal(0, line.Value.ByteStart);
@@ -279,12 +281,12 @@ public class Utf8TextStoreTests
     public void LineIndex_StreamingMidLine_DoesNotEmitUntilNewline()
     {
         var index = new LogicalLineIndex();
-        index.AppendScan("hello "u8, 0);          // streaming: no newline yet
-        Assert.Equal(1, index.LineCount);           // 1 pending
-        Assert.Empty(index.Lines);                  // nothing committed
+        index.AppendScan("hello "u8, 0); // streaming: no newline yet
+        Assert.Equal(1, index.LineCount); // 1 pending
+        Assert.Empty(index.Lines); // nothing committed
 
-        index.AppendScan("world"u8, 6);            // still no newline
-        Assert.Equal(1, index.LineCount);           // still 1 pending
+        index.AppendScan("world"u8, 6); // still no newline
+        Assert.Equal(1, index.LineCount); // still 1 pending
         Assert.Empty(index.Lines);
     }
 
@@ -306,7 +308,7 @@ public class Utf8TextStoreTests
         var index = new LogicalLineIndex();
         index.AppendScan("line1\n"u8, 0);
         index.AppendScan("line2\n"u8, 6);
-        index.AppendScan("line3"u8, 12);            // pending — no trailing newline
+        index.AppendScan("line3"u8, 12); // pending — no trailing newline
         Assert.Equal(3, index.LineCount);
         Assert.Equal(2, index.Lines.Count);
 
@@ -345,17 +347,17 @@ public class Utf8TextStoreTests
         store.Append(Encoding.UTF8.GetBytes(new string('A', 64))); // chunk 0
         store.Append(Encoding.UTF8.GetBytes(new string('B', 64))); // chunk 1
         store.Append(Encoding.UTF8.GetBytes(new string('C', 64))); // chunk 2
-        store.Append("XYZ"u8);                                     // chunk 3 start
+        store.Append("XYZ"u8); // chunk 3 start
 
         // Slice across chunks 1-2: from chunk1[16] to chunk2[50] = 48 + 51 = 99 bytes
-        var slice = store.Slice(80, 99);
+        ReadOnlyMemory<byte> slice = store.Slice(80, 99);
         Assert.Equal(99, slice.Length);
         // Chunk 1 starts at offset 64, so offset 80 = chunk1[16] = 'B'
         // 99 bytes: 48 'B's (offsets 80-127) + 51 'C's (offsets 128-178)
         Assert.Equal('B', (char)slice.Span[0]);
-        Assert.Equal('B', (char)slice.Span[47]);  // last 'B' at chunk boundary
-        Assert.Equal('C', (char)slice.Span[48]);  // first 'C' in next chunk
-        Assert.Equal('C', (char)slice.Span[98]);  // last byte of slice
+        Assert.Equal('B', (char)slice.Span[47]); // last 'B' at chunk boundary
+        Assert.Equal('C', (char)slice.Span[48]); // first 'C' in next chunk
+        Assert.Equal('C', (char)slice.Span[98]); // last byte of slice
     }
 
     // ── Stress test (Observation 4) ──
@@ -368,7 +370,9 @@ public class Utf8TextStoreTests
         int lineCount = 1_000_000;
 
         for (int i = 0; i < lineCount; i++)
+        {
             store.Append(line);
+        }
 
         // Verify basics
         Assert.True(store.LengthBytes > 0);
@@ -382,6 +386,7 @@ public class Utf8TextStoreTests
             index.AppendScan(line, offset);
             offset += line.Length;
         }
+
         index.Flush(offset);
         Assert.Equal(lineCount, index.LineCount);
         Assert.Equal(lineCount, index.Lines.Count);
@@ -518,7 +523,7 @@ public class Utf8TextStoreTests
         // emoji modifier sequence. Let's use a real ZWJ emoji:
         // '👨‍👩‍👧' (family: man + ZWJ + woman + ZWJ + girl)
         // U+1F468 U+200D U+1F469 U+200D U+1F467
-        var utf8 = Encoding.UTF8.GetBytes("\U0001F468\u200D\U0001F469\u200D\U0001F467");
+        byte[] utf8 = Encoding.UTF8.GetBytes("\U0001F468\u200D\U0001F469\u200D\U0001F467");
         var clusters = GraphemeSegmenter.SegmentUtf8(utf8).ToList();
 
         // ZWJ sequences should merge into one cluster
@@ -531,7 +536,7 @@ public class Utf8TextStoreTests
     public void GraphemeSegmenter_CombiningMark_MergedWithBase()
     {
         // 'é' as 'e' + combining acute accent
-        var utf8 = Encoding.UTF8.GetBytes("e\u0301");
+        byte[] utf8 = Encoding.UTF8.GetBytes("e\u0301");
         var clusters = GraphemeSegmenter.SegmentUtf8(utf8).ToList();
         Assert.Single(clusters);
         Assert.Equal(utf8.Length, clusters[0].ByteLength);
@@ -549,7 +554,7 @@ public class Utf8TextStoreTests
     public void GraphemeSegmenter_RegionalIndicators_Paired()
     {
         // US flag: U+1F1FA U+1F1F8
-        var utf8 = Encoding.UTF8.GetBytes("\U0001F1FA\U0001F1F8");
+        byte[] utf8 = Encoding.UTF8.GetBytes("\U0001F1FA\U0001F1F8");
         var clusters = GraphemeSegmenter.SegmentUtf8(utf8).ToList();
         Assert.Single(clusters);
         Assert.Equal(utf8.Length, clusters[0].ByteLength);
@@ -560,7 +565,7 @@ public class Utf8TextStoreTests
     public void GraphemeSegmenter_MixedContent()
     {
         // "A" + "e\u0301" (é) + "B"
-        var utf8 = Encoding.UTF8.GetBytes("Ae\u0301B");
+        byte[] utf8 = Encoding.UTF8.GetBytes("Ae\u0301B");
         var clusters = GraphemeSegmenter.SegmentUtf8(utf8).ToList();
         Assert.Equal(3, clusters.Count); // A, é (merged), B
         Assert.Equal(1, clusters[0].ByteLength);
