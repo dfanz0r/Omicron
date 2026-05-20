@@ -1,10 +1,9 @@
 using System;
 using System.Buffers;
-using System.Buffers.Text;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using System.Text;
 using Omicron.Core.Content;
+using Omicron.Core.Text;
 
 namespace Omicron.Core.Text
 {
@@ -327,7 +326,8 @@ namespace Omicron.Core.Text
 
             // Quick attempt into a stackalloc buffer for small values
             Span<byte> scratch = stackalloc byte[256];
-            if (TryFormatOne(value, scratch, out int written) && written <= scratch.Length)
+            var result = Utf8ValueFormatter.TryFormat(value, scratch, out int written);
+            if (result == Utf8FormatResult.Success && written <= scratch.Length)
             {
                 if (written <= _buffer!.Length - _index)
                 {
@@ -343,23 +343,25 @@ namespace Omicron.Core.Text
 
             // Exponential-growth retry loop for large values
             int sizeHint = Math.Max(256, written);
-            int safetyLimit = 100 * 1024 * 1024; // 100 MB safety limit
+            int safetyLimit = 100 * 1024 * 1024;
 
             for (int retry = 0; ; retry++)
             {
                 Grow(sizeHint);
-                if (TryFormatOne(value, _buffer.AsSpan(_index), out written))
+                result = Utf8ValueFormatter.TryFormat(value, _buffer.AsSpan(_index), out written);
+                if (result == Utf8FormatResult.Success)
                 {
                     _index += written;
                     return;
                 }
+                if (result == Utf8FormatResult.NoFormatter)
+                    break;
                 sizeHint = Math.Max(sizeHint * 2, written);
                 if (sizeHint > safetyLimit)
                     break;
             }
 
-            // If the value implements IUtf8SpanFormattable and we exhausted retries, throw.
-            // Only fall back to ToString() for types without IUtf8SpanFormattable support.
+            // NoFormatter or exceeded safety limit
             if (value is IUtf8SpanFormattable)
             {
                 throw new InvalidOperationException(
@@ -477,129 +479,7 @@ namespace Omicron.Core.Text
             return Utf8NoBom.GetString(span);
         }
 
-        // ---- TryFormatOne (inline value formatting) ----
 
-        /// <summary>
-        /// Attempts to format a value into the destination span.
-        /// Returns <c>true</c> on success with <paramref name="written"/> set to bytes written.
-        /// On failure (<c>false</c>), <paramref name="written"/> is set to a capacity estimate.
-        /// Known <see cref="IUtf8SpanFormattable"/> types are retried with exponential growth.
-        /// </summary>
-        private static bool TryFormatOne<T>(T value, Span<byte> dest, out int written)
-        {
-            // Fast path for common types via Unsafe.As + Utf8Formatter
-            if (typeof(T) == typeof(int))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, int>(ref value), dest, out written);
-            if (typeof(T) == typeof(long))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, long>(ref value), dest, out written);
-            if (typeof(T) == typeof(uint))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, uint>(ref value), dest, out written);
-            if (typeof(T) == typeof(ulong))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, ulong>(ref value), dest, out written);
-            if (typeof(T) == typeof(short))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, short>(ref value), dest, out written);
-            if (typeof(T) == typeof(ushort))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, ushort>(ref value), dest, out written);
-            if (typeof(T) == typeof(byte))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, byte>(ref value), dest, out written);
-            if (typeof(T) == typeof(sbyte))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, sbyte>(ref value), dest, out written);
-            if (typeof(T) == typeof(float))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, float>(ref value), dest, out written);
-            if (typeof(T) == typeof(double))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, double>(ref value), dest, out written);
-            if (typeof(T) == typeof(decimal))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, decimal>(ref value), dest, out written);
-            if (typeof(T) == typeof(Guid))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, Guid>(ref value), dest, out written);
-            if (typeof(T) == typeof(DateTime))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, DateTime>(ref value), dest, out written);
-            if (typeof(T) == typeof(DateTimeOffset))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, DateTimeOffset>(ref value), dest, out written);
-            if (typeof(T) == typeof(TimeSpan))
-                return Utf8Formatter.TryFormat(Unsafe.As<T, TimeSpan>(ref value), dest, out written);
-            if (typeof(T) == typeof(bool))
-            {
-                var text = Unsafe.As<T, bool>(ref value) ? "True"u8 : "False"u8;
-                return Utf8TryCopy(text, dest, out written);
-            }
-            if (typeof(T) == typeof(Utf8String))
-            {
-                var us = Unsafe.As<T, Utf8String>(ref value);
-                if (us is null) { written = 0; return true; }
-                return Utf8TryCopy(us.Utf8Span, dest, out written);
-            }
-            if (typeof(T) == typeof(string))
-            {
-                var s = Unsafe.As<T, string>(ref value);
-                if (s is null) { written = 0; return true; }
-                int maxLen = Utf8NoBom.GetMaxByteCount(s.Length);
-                if (maxLen > dest.Length)
-                {
-                    written = maxLen;
-                    return false;
-                }
-                written = Utf8NoBom.GetBytes(s.AsSpan(), dest);
-                return true;
-            }
-            if (typeof(T) == typeof(char))
-            {
-                ushort raw = Unsafe.As<T, ushort>(ref value);
-                char c = (char)raw;
-                int maxLen = Utf8NoBom.GetMaxByteCount(1);
-                if (maxLen > dest.Length)
-                {
-                    written = maxLen;
-                    return false;
-                }
-                written = Utf8NoBom.GetBytes(stackalloc char[1] { c }, dest);
-                return true;
-            }
-
-            // IUtf8SpanFormattable runtime check (may box value types)
-            if (value is IUtf8SpanFormattable f)
-            {
-                // Try the provided buffer first; if it fails, grow via caller
-                if (f.TryFormat(dest, out written, default, null))
-                    return true;
-                // Estimate: allocate dest.Length * 2 on the caller side
-                written = dest.Length * 2;
-                return false;
-            }
-
-            // ISpanFormattable fallback (via string)
-            if (value is ISpanFormattable sf)
-            {
-                Span<char> charBuf = stackalloc char[256];
-                if (sf.TryFormat(charBuf, out var charsWritten, default, null))
-                {
-                    int maxLen = Utf8NoBom.GetMaxByteCount(charsWritten);
-                    if (maxLen > dest.Length)
-                    {
-                        written = maxLen;
-                        return false;
-                    }
-                    written = Utf8NoBom.GetBytes(charBuf[..charsWritten], dest);
-                    return true;
-                }
-            }
-
-            // No supported formatter; caller will fall back to ToString()
-            written = 0;
-            return false;
-        }
-
-        private static bool Utf8TryCopy(ReadOnlySpan<byte> source, Span<byte> dest, out int written)
-        {
-            if (source.Length <= dest.Length)
-            {
-                source.CopyTo(dest);
-                written = source.Length;
-                return true;
-            }
-            written = source.Length;
-            return false;
-        }
 
         private static void ThrowNestedException()
         {

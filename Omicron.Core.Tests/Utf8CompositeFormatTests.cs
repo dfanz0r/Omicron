@@ -743,6 +743,23 @@ public class Utf8CompositeFormatPhase4Tests
     }
 
     [Fact]
+    public void SlowPath_FormatSpecifier_IntHex()
+    {
+        Span<byte> dest = stackalloc byte[64];
+        // Format specifier :X2 through the slow path should produce "FF" not "255"
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0:X2}"u8, dest, out var written, 255));
+        Assert.Equal("FF", Encoding.UTF8.GetString(dest[..written]));
+    }
+
+    [Fact]
+    public void SlowPath_FormatSpecifier_IntDecimal()
+    {
+        Span<byte> dest = stackalloc byte[64];
+        Assert.True(Utf8CompositeFormat.TryFormatSlow("{0:D5}"u8, dest, out var written, 42));
+        Assert.Equal("00042", Encoding.UTF8.GetString(dest[..written]));
+    }
+
+    [Fact]
     public void NonAsciiSpecifier_Throws()
     {
         var dest = new byte[64];

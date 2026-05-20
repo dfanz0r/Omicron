@@ -37,14 +37,6 @@ namespace Omicron.Core.Text;
 ///   - Slow path handles format specifiers for <see cref="IUtf8SpanFormattable"/> types
 ///     only; <c>string</c>/<c>char</c>/<c>bool</c> alignment works but specifiers have no effect
 /// </summary>
-/// <summary>Internal result codes for the formatting pipeline.</summary>
-internal enum Utf8FormatResult
-{
-    Success,
-    InsufficientSpace,
-    UnsupportedType,
-}
-
 /// <summary>Parsed placeholder info including alignment and format specifier.</summary>
 internal readonly struct Utf8PlaceholderInfo
 {
@@ -444,7 +436,7 @@ public static partial class Utf8CompositeFormat
                 var info = ParsePlaceholder(format, ref offset);
                 switch (info.Index)
                 {
-                    case 0: { var fmtResult = TryFormatValue(arg1, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
+                    case 0: { var fmtResult = Utf8ValueFormatter.TryFormatAligned(arg1, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
                     default: ThrowIndexOutOfRange(info.Index); break;
                 }
             }
@@ -488,8 +480,8 @@ public static partial class Utf8CompositeFormat
                 var info = ParsePlaceholder(format, ref offset);
                 switch (info.Index)
                 {
-                    case 0: { var fmtResult = TryFormatValue(arg1, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
-                    case 1: { var fmtResult = TryFormatValue(arg2, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
+                    case 0: { var fmtResult = Utf8ValueFormatter.TryFormatAligned(arg1, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
+                    case 1: { var fmtResult = Utf8ValueFormatter.TryFormatAligned(arg2, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
                     default: ThrowIndexOutOfRange(info.Index); break;
                 }
             }
@@ -533,9 +525,9 @@ public static partial class Utf8CompositeFormat
                 var info = ParsePlaceholder(format, ref offset);
                 switch (info.Index)
                 {
-                    case 0: { var fmtResult = TryFormatValue(arg1, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
-                    case 1: { var fmtResult = TryFormatValue(arg2, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
-                    case 2: { var fmtResult = TryFormatValue(arg3, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
+                    case 0: { var fmtResult = Utf8ValueFormatter.TryFormatAligned(arg1, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
+                    case 1: { var fmtResult = Utf8ValueFormatter.TryFormatAligned(arg2, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
+                    case 2: { var fmtResult = Utf8ValueFormatter.TryFormatAligned(arg3, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
                     default: ThrowIndexOutOfRange(info.Index); break;
                 }
             }
@@ -579,10 +571,10 @@ public static partial class Utf8CompositeFormat
                 var info = ParsePlaceholder(format, ref offset);
                 switch (info.Index)
                 {
-                    case 0: { var fmtResult = TryFormatValue(arg1, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
-                    case 1: { var fmtResult = TryFormatValue(arg2, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
-                    case 2: { var fmtResult = TryFormatValue(arg3, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
-                    case 3: { var fmtResult = TryFormatValue(arg4, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
+                    case 0: { var fmtResult = Utf8ValueFormatter.TryFormatAligned(arg1, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
+                    case 1: { var fmtResult = Utf8ValueFormatter.TryFormatAligned(arg2, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
+                    case 2: { var fmtResult = Utf8ValueFormatter.TryFormatAligned(arg3, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
+                    case 3: { var fmtResult = Utf8ValueFormatter.TryFormatAligned(arg4, destination, ref written, info.GetFormatSpec(format), info.Alignment); if (fmtResult != Utf8FormatResult.Success) return fmtResult; break; }
                     default: ThrowIndexOutOfRange(info.Index); break;
                 }
             }
@@ -720,15 +712,9 @@ public static partial class Utf8CompositeFormat
             return true;
         }
 
-        // Non-empty specifier: validate ASCII and transcode to chars
+        // Use shared TranscodeFormatSpec for specifier validation
         Span<char> charBuf = stackalloc char[formatSpec.Length];
-        for (int i = 0; i < formatSpec.Length; i++)
-        {
-            byte sb = formatSpec[i];
-            if (sb > 127)
-                throw new FormatException("Non-ASCII format specifier is not supported.");
-            charBuf[i] = (char)sb;
-        }
+        Utf8ValueFormatter.TranscodeFormatSpec(formatSpec, charBuf);
 
         if (!value.TryFormat(destination.Slice(written), out var n2, charBuf, null)) return false;
         written += n2;
@@ -747,26 +733,8 @@ public static partial class Utf8CompositeFormat
         if (alignment == 0)
             return true;
 
-        int valueLen = written - before;
-        int absAlign = alignment < 0 ? -alignment : alignment;
-        if (valueLen >= absAlign)
-            return true;
-
-        int padding = absAlign - valueLen;
-        if (written + padding > destination.Length)
-            return false;
-
-        if (alignment > 0) // Right-justify: shift value right, fill left with spaces
-        {
-            destination.Slice(before, valueLen).CopyTo(destination.Slice(before + padding));
-            destination.Slice(before, padding).Fill((byte)' ');
-        }
-        else // Left-justify: append spaces after value
-        {
-            destination.Slice(written, padding).Fill((byte)' ');
-        }
-        written += padding;
-        return true;
+        // Delegate to shared ApplyAlignment
+        return Utf8ValueFormatter.ApplyAlignment(destination, ref written, before, alignment) == Utf8FormatResult.Success;
     }
 
     // ──────────────────────────────────────────────
@@ -775,129 +743,7 @@ public static partial class Utf8CompositeFormat
     //  as fallback for non-IUtf8SpanFormattable types
     // ──────────────────────────────────────────────
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Utf8FormatResult TryFormatValue<T>(T value, Span<byte> destination, ref int written,
-        ReadOnlySpan<byte> formatSpec = default, int alignment = 0)
-    {
-        if (typeof(T) == typeof(Utf8String))
-        {
-            var us = Unsafe.As<T, Utf8String>(ref value);
-            if (us is null) return Utf8FormatResult.Success;
-            int before = written;
-            var span = us.Utf8Span;
-            if (span.Length > destination.Length - written)
-                return Utf8FormatResult.InsufficientSpace;
-            span.CopyTo(destination.Slice(written));
-            written += span.Length;
-            return alignment != 0 ? ApplyAlignment(destination, ref written, before, alignment) : Utf8FormatResult.Success;
-        }
-        if (typeof(T) == typeof(string))
-        {
-            var s = Unsafe.As<T, string>(ref value);
-            if (s is null) return Utf8FormatResult.Success;
-            int before = written;
-            int byteCount = Encoding.UTF8.GetByteCount(s);
-            if (byteCount > destination.Length - written)
-                return Utf8FormatResult.InsufficientSpace;
-            written += Encoding.UTF8.GetBytes(s, destination.Slice(written));
-            return alignment != 0 ? ApplyAlignment(destination, ref written, before, alignment) : Utf8FormatResult.Success;
-        }
-        if (typeof(T) == typeof(char))
-        {
-            ushort raw = Unsafe.As<T, ushort>(ref value);
-            char c = (char)raw;
-            int before = written;
-            int byteCount = Encoding.UTF8.GetByteCount(stackalloc char[1] { c });
-            if (byteCount > destination.Length - written)
-                return Utf8FormatResult.InsufficientSpace;
-            written += Encoding.UTF8.GetBytes(stackalloc char[1] { c }, destination.Slice(written));
-            return alignment != 0 ? ApplyAlignment(destination, ref written, before, alignment) : Utf8FormatResult.Success;
-        }
-        if (typeof(T) == typeof(bool))
-        {
-            bool b = Unsafe.As<T, bool>(ref value);
-            int before = written;
-            var text = b ? "True"u8 : "False"u8;
-            if (text.Length > destination.Length - written)
-                return Utf8FormatResult.InsufficientSpace;
-            text.CopyTo(destination.Slice(written));
-            written += text.Length;
-            return alignment != 0 ? ApplyAlignment(destination, ref written, before, alignment) : Utf8FormatResult.Success;
-        }
-
-        // Fallback to formatter cache (for types in the explicit list)
-        var formatter = FormatterCache<T>.Writer;
-        if (formatter is not null)
-        {
-            int before = written;
-            if (formatter(value, destination.Slice(written), out var n))
-            {
-                written += n;
-                return alignment != 0 ? ApplyAlignment(destination, ref written, before, alignment) : Utf8FormatResult.Success;
-            }
-            return Utf8FormatResult.InsufficientSpace;
-        }
-
-        // Check IUtf8SpanFormattable at runtime (may box value types)
-        if (value is IUtf8SpanFormattable formattable)
-        {
-            int before = written;
-            if (formatSpec.IsEmpty)
-            {
-                if (!formattable.TryFormat(destination.Slice(written), out var n, default, null))
-                    return Utf8FormatResult.InsufficientSpace;
-                written += n;
-            }
-            else
-            {
-                // Transcode ASCII specifier bytes to chars inline
-                Span<char> charBuf = stackalloc char[formatSpec.Length];
-                for (int j = 0; j < formatSpec.Length; j++)
-                {
-                    byte sb = formatSpec[j];
-                    if (sb > 127)
-                        return Utf8FormatResult.UnsupportedType;
-                    charBuf[j] = (char)sb;
-                }
-                if (!formattable.TryFormat(destination.Slice(written), out var n, charBuf, null))
-                    return Utf8FormatResult.InsufficientSpace;
-                written += n;
-            }
-
-            // Apply alignment
-            if (alignment != 0)
-                return ApplyAlignment(destination, ref written, before, alignment);
-            return Utf8FormatResult.Success;
-        }
-
-        // Unsupported type
-        return Utf8FormatResult.UnsupportedType;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static Utf8FormatResult ApplyAlignment(Span<byte> destination, ref int written, int before, int alignment)
-    {
-        int valueLen = written - before;
-        int absAlign = alignment < 0 ? -alignment : alignment;
-        if (valueLen >= absAlign)
-            return Utf8FormatResult.Success;
-
-        int padding = absAlign - valueLen;
-        if (written + padding > destination.Length)
-            return Utf8FormatResult.InsufficientSpace;
-
-        if (alignment > 0) // Right-justify
-        {
-            destination.Slice(before, valueLen).CopyTo(destination.Slice(before + padding));
-            destination.Slice(before, padding).Fill((byte)' ');
-        }
-        else // Left-justify
-        {
-            destination.Slice(written, padding).Fill((byte)' ');
-        }
-        written += padding;
-        return Utf8FormatResult.Success;
-    }
+    // TryFormatValue and ApplyAlignment have moved to Utf8ValueFormatter.
 
     // ──────────────────────────────────────────────
     //  Helpers
@@ -1321,135 +1167,5 @@ public static partial class Utf8CompositeFormat
             capacity = Math.Min(capacity * 2, maxCap);
         }
     }
-    //  Formatter cache (per-type delegate dispatch)
-    //  Used by TryFormatValue to avoid boxing in
-    //  the IUtf8SpanFormattable fallback path.
-    // ──────────────────────────────────────────────
-
-    /// <summary>Delegate type for cached formatters.</summary>
-    internal delegate bool CachedFormatter<T>(T value, Span<byte> destination, out int written);
-
-    /// <summary>
-    /// Per-type formatter cache. Initialized once per unique T.
-    /// Covers all BCL types known to implement <see cref="IUtf8SpanFormattable"/>,
-    /// plus <c>string</c> and <c>Utf8String</c>.
-    /// </summary>
-    internal static class FormatterCache<T>
-    {
-        public static readonly CachedFormatter<T>? Writer;
-
-        static FormatterCache()
-        {
-            var t = typeof(T);
-
-            if (t == typeof(Utf8String))
-            {
-                var inner = new CachedFormatter<Utf8String>(FormatUtf8String);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(string))
-            {
-                var inner = new CachedFormatter<string>(FormatPlainString);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(int))
-            {
-                CachedFormatter<int> inner = static (int v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(uint))
-            {
-                CachedFormatter<uint> inner = static (uint v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(long))
-            {
-                CachedFormatter<long> inner = static (long v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(ulong))
-            {
-                CachedFormatter<ulong> inner = static (ulong v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(byte))
-            {
-                CachedFormatter<byte> inner = static (byte v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(sbyte))
-            {
-                CachedFormatter<sbyte> inner = static (sbyte v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(short))
-            {
-                CachedFormatter<short> inner = static (short v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(ushort))
-            {
-                CachedFormatter<ushort> inner = static (ushort v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(float))
-            {
-                CachedFormatter<float> inner = static (float v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(double))
-            {
-                CachedFormatter<double> inner = static (double v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(decimal))
-            {
-                CachedFormatter<decimal> inner = static (decimal v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(Guid))
-            {
-                CachedFormatter<Guid> inner = static (Guid v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(DateTime))
-            {
-                CachedFormatter<DateTime> inner = static (DateTime v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(DateTimeOffset))
-            {
-                CachedFormatter<DateTimeOffset> inner = static (DateTimeOffset v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(TimeSpan))
-            {
-                CachedFormatter<TimeSpan> inner = static (TimeSpan v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            else if (t == typeof(char))
-            {
-                CachedFormatter<char> inner = static (char v, Span<byte> d, out int w) => Utf8Formatter.TryFormat(v, d, out w);
-                Writer = (CachedFormatter<T>)(object)inner;
-            }
-            // else: Writer stays null (unsupported type; TryFormatValue handles
-            // IUtf8SpanFormattable fallback externally)
-        }
-
-        private static bool FormatUtf8String(Utf8String val, Span<byte> dest, out int w)
-        {
-            if (val is null) { w = 0; return true; }
-            var s = val.Utf8Span;
-            if (s.Length > dest.Length) { w = 0; return false; }
-            s.CopyTo(dest); w = s.Length; return true;
-        }
-
-        private static bool FormatPlainString(string val, Span<byte> dest, out int w)
-        {
-            if (val is null) { w = 0; return true; }
-            int bc = Encoding.UTF8.GetByteCount(val);
-            if (bc > dest.Length) { w = 0; return false; }
-            w = Encoding.UTF8.GetBytes(val, dest); return true;
-        }
-    }
+    // CachedFormatter<T> and FormatterCache<T> have moved to Utf8ValueFormatter.
 }
