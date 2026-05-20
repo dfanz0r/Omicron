@@ -3,14 +3,19 @@ using System.Text;
 using Omicron.Core.Text;
 using Xunit;
 
-// Register custom structs for source-generated fast paths
-[assembly: Utf8Formatter<Omicron.Core.Generators.Tests.TestFormattable>]
-[assembly: Utf8Formatter<Omicron.Core.Generators.Tests.TestSpanFormattable>]
-[assembly: Utf8Formatter<Omicron.Core.Generators.Tests.Utf8FormatterGeneratorTests.LargeFormattable>]
+// Note: [assembly: Utf8Formatter<...>] attributes in this file would NOT
+// produce generated fast paths because the partial method defining declaration
+// for TryFormatGenerated lives in Omicron.Core, which is already compiled.
+// Partial method implementations must be in the SAME compilation as the
+// defining declaration. Real generator integration tests are in Omicron.Core.Tests
+// where the generator runs during the Omicron.Core compilation itself.
+//
+// Tests here validate Utf8ValueFormatter's runtime dispatch for IUtf8SpanFormattable
+// types, which is the fallback path when no generated fast path exists.
 
 namespace Omicron.Core.Generators.Tests;
 
-/// <summary>A custom IUtf8SpanFormattable struct for generator testing.</summary>
+/// <summary>A custom IUtf8SpanFormattable struct for testing runtime dispatch.</summary>
 public readonly struct TestFormattable : IUtf8SpanFormattable
 {
     private readonly int _value;
@@ -34,37 +39,13 @@ public readonly struct TestFormattable : IUtf8SpanFormattable
     public override string ToString() => $"WRONG:{_value}"; // deliberately different
 }
 
-/// <summary>An ISpanFormattable-only struct for testing the slow bridge.</summary>
-public readonly struct TestSpanFormattable : ISpanFormattable
-{
-    private readonly int _value;
-
-    public TestSpanFormattable(int value) => _value = value;
-
-    public bool TryFormat(Span<char> destination, out int charsWritten, ReadOnlySpan<char> format, IFormatProvider? provider)
-    {
-        var text = $"SPAN:{_value}";
-        if (text.Length > destination.Length)
-        {
-            charsWritten = text.Length;
-            return false;
-        }
-        text.AsSpan().CopyTo(destination);
-        charsWritten = text.Length;
-        return true;
-    }
-
-    public string ToString(string? format, IFormatProvider? formatProvider) => $"WRONG_SPAN:{_value}";
-    public override string ToString() => $"WRONG_SPAN:{_value}";
-}
-
 public class Utf8FormatterGeneratorTests
 {
     [Fact]
-    public void Generated_IUtf8SpanFormattable_FastPath_Used()
+    public void IUtf8SpanFormattable_RuntimeDispatch_Works()
     {
-        // The generator should produce a fast path for TestFormattable
-        // that uses TryFormat (VAL:...) not ToString() (WRONG:...)
+        // When no generator fast path is available, Utf8ValueFormatter
+        // falls back to runtime IUtf8SpanFormattable dispatch.
         var value = new TestFormattable(42);
         Span<byte> dest = stackalloc byte[64];
         var result = Utf8ValueFormatter.TryFormat(value, dest, out var written);
@@ -75,27 +56,15 @@ public class Utf8FormatterGeneratorTests
     }
 
     [Fact]
-    public void Generated_ISpanFormattable_BridgePath_Used()
+    public void Large_IUtf8SpanFormattable_ReturnsInsufficientSpace()
     {
-        // The generator should produce a bridge path for TestSpanFormattable
-        var value = new TestSpanFormattable(99);
-        Span<byte> dest = stackalloc byte[64];
-        var result = Utf8ValueFormatter.TryFormat(value, dest, out var written);
+        // IUtf8SpanFormattable types with large output should correctly
+        // report InsufficientSpace and propagate a size hint via written.
+        var value = new LargeFormattable(3_000_000);
+        var result = Utf8ValueFormatter.TryFormat(value, Span<byte>.Empty, out var written);
 
-        Assert.Equal(Utf8FormatResult.Success, result);
-        var output = Encoding.UTF8.GetString(dest[..written]);
-        Assert.Equal("SPAN:99", output);
-    }
-
-    [Fact]
-    public void Large_IUtf8SpanFormattable_RetriesAndSucceeds()
-    {
-        // Create a formattable that produces 3MB of output
-        var big = new LargeFormattable(3_000_000);
-        var result = Utf8ValueFormatter.TryFormat(big, Span<byte>.Empty, out var written);
-
-        // Should return InsufficientSpace (or Success with a large enough buffer)
         Assert.Equal(Utf8FormatResult.InsufficientSpace, result);
+        Assert.True(written > 0);
     }
 
     /// <summary>Large formattable for testing retry behavior.</summary>

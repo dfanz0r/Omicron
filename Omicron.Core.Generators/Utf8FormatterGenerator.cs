@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 
 namespace Omicron.Core.Generators;
@@ -17,39 +18,100 @@ public class Utf8FormatterGenerator : IIncrementalGenerator
     private const string AttributeFullName = "Omicron.Core.Text.Utf8FormatterAttribute`1";
     private const string IUtf8SpanFormattableName = "System.IUtf8SpanFormattable";
     private const string ISpanFormattableName = "System.ISpanFormattable";
+    private const string FormatterClassName = "Omicron.Core.Text.Utf8ValueFormatter";
     private const string GeneratedHookMethod = "TryFormatGenerated";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
-        // Scan assembly-level attributes for Utf8FormatterAttribute<T> usage
-        var registrations = context.CompilationProvider.SelectMany(static (compilation, _) =>
+        // Combine compilation info with registration scanning
+        var generatorState = context.CompilationProvider.Select(static (compilation, _) =>
         {
-            var results = new List<Registration>();
-            var attrType = compilation.GetTypeByMetadataName(AttributeFullName);
-            if (attrType is null)
-                return results;
+            var registrations = new List<Registration>();
 
-            foreach (var attr in compilation.Assembly.GetAttributes())
+            // Only emit when the defining declaration exists in this compilation.
+            // Partial method definitions and implementations must be in the same
+            // compilation. If Utf8ValueFormatter is only a metadata reference
+            // (e.g. in the test project), we must not emit an implementation.
+            bool shouldEmit = HasDefiningDeclaration(compilation);
+
+            if (shouldEmit)
             {
-                if (!SymbolEqualityComparer.Default.Equals(attr.AttributeClass?.OriginalDefinition, attrType))
-                    continue;
+                var attrType = compilation.GetTypeByMetadataName(AttributeFullName);
+                if (attrType is not null)
+                {
+                    foreach (var attr in compilation.Assembly.GetAttributes())
+                    {
+                        if (!SymbolEqualityComparer.Default.Equals(attr.AttributeClass?.OriginalDefinition, attrType))
+                            continue;
 
-                var typeArg = attr.AttributeClass?.TypeArguments.FirstOrDefault();
-                if (typeArg is null)
-                    continue;
+                        var typeArg = attr.AttributeClass?.TypeArguments.FirstOrDefault();
+                        if (typeArg is null)
+                            continue;
 
-                var reg = CreateRegistration(typeArg, compilation);
-                if (reg is not null)
-                    results.Add(reg.Value);
+                        var reg = CreateRegistration(typeArg, compilation);
+                        if (reg is not null)
+                            registrations.Add(reg.Value);
+                    }
+                }
             }
 
-            return results;
+            return new GeneratorState(registrations, shouldEmit);
         });
 
-        // Collect all registrations into a single list
-        var allRegistrations = registrations.Collect();
+        context.RegisterSourceOutput(generatorState, EmitSource);
+    }
 
-        context.RegisterSourceOutput(allRegistrations, EmitSource);
+    /// <summary>
+    /// Check whether the current compilation contains source declarations for
+    /// <c>Utf8ValueFormatter.TryFormatGenerated</c> — i.e. the partial method
+    /// defining declaration exists in source (not just in a referenced assembly).
+    /// </summary>
+    private static bool HasDefiningDeclaration(Compilation compilation)
+    {
+        // Walk syntax trees looking for a partial class Utf8ValueFormatter
+        // inside namespace Omicron.Core.Text that declares TryFormatGenerated.
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            var root = tree.GetRoot();
+            if (root is null)
+                continue;
+
+            var model = compilation.GetSemanticModel(tree);
+            if (model is null)
+                continue;
+
+            // Find class declarations named Utf8ValueFormatter
+            var classDecls = root.DescendantNodes()
+                .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.ClassDeclarationSyntax>()
+                .Where(c => c.Identifier.ValueText == "Utf8ValueFormatter");
+
+            foreach (var classDecl in classDecls)
+            {
+                var symbol = model.GetDeclaredSymbol(classDecl);
+                if (symbol is null)
+                    continue;
+
+                // Verify it's the right namespace
+                if (symbol.ContainingNamespace?.ToDisplayString() != "Omicron.Core.Text")
+                    continue;
+
+                // Check for a partial method declaration named TryFormatGenerated
+                // with no body (i.e. the defining declaration).
+                var members = classDecl.Members;
+                foreach (var member in members)
+                {
+                    if (member is Microsoft.CodeAnalysis.CSharp.Syntax.MethodDeclarationSyntax methodDecl
+                        && methodDecl.Identifier.ValueText == GeneratedHookMethod
+                        && methodDecl.Body is null
+                        && methodDecl.ExpressionBody is null)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     private static Registration? CreateRegistration(ITypeSymbol typeArg, Compilation compilation)
@@ -103,10 +165,12 @@ public class Utf8FormatterGenerator : IIncrementalGenerator
         return false;
     }
 
-    private static void EmitSource(SourceProductionContext context, ImmutableArray<Registration> registrations)
+    private static void EmitSource(SourceProductionContext context, GeneratorState state)
     {
-        // Always emit TryFormatGenerated even with zero registrations,
-        // otherwise the partial method has no implementation.
+        if (!state.ShouldEmit)
+            return;
+
+        var registrations = state.Registrations;
 
         var sb = new StringBuilder();
         sb.AppendLine("// <auto-generated> by Omicron.Core.Generators.Utf8FormatterGenerator</auto-generated>");
@@ -274,6 +338,18 @@ public class Utf8FormatterGenerator : IIncrementalGenerator
         sb.AppendLine("}");
 
         context.AddSource("Utf8ValueFormatter.Generated.g.cs", SourceText.From(sb.ToString(), Encoding.UTF8));
+    }
+
+    internal readonly struct GeneratorState
+    {
+        public readonly ImmutableArray<Registration> Registrations;
+        public readonly bool ShouldEmit;
+
+        public GeneratorState(List<Registration> registrations, bool shouldEmit)
+        {
+            Registrations = registrations.ToImmutableArray();
+            ShouldEmit = shouldEmit;
+        }
     }
 
     internal readonly struct Registration

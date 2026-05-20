@@ -239,6 +239,8 @@ internal static partial class Utf8ValueFormatter
                         provider)
                 )
                 {
+                    if (n > written)
+                        written = n;
                     return Utf8FormatResult.InsufficientSpace;
                 }
 
