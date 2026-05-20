@@ -761,13 +761,23 @@ Potential API:
 ```csharp
 public sealed class Utf8Buffer : IDisposable
 {
+    public Utf8Buffer();
+    public Utf8Buffer(int initialCapacity); // throws on negative
+
     public int WrittenCount { get; }
     public ReadOnlySpan<byte> WrittenSpan { get; }
-    public ReadOnlyMemory<byte> WrittenMemory { get; }
     public byte[] ToArray();
     public Utf8String ToUtf8String();
+    public void Append(ReadOnlySpan<byte> data);
+    public void Append(byte b);
+    public bool TryCopyTo(Span<byte> destination, out int bytesWritten);
     public void CopyTo<TBufferWriter>(ref TBufferWriter writer) where TBufferWriter : IBufferWriter<byte>;
+    public override string ToString();
+    public void Dispose();
 }
+
+// WrittenMemory intentionally omitted — ReadOnlyMemory<byte> over a rented array
+// can outlive the buffer and observe stale/corrupt data after Grow() or Dispose().
 ```
 
 Use cases:
